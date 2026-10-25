@@ -1,0 +1,46 @@
+# SearXNG settings — MetaSearch (mount vào /etc/searxng/settings.yml)
+# Nguyên tắc: dùng default settings của SearXNG, chỉ override phần cần thiết.
+# Bắt buộc: formats gồm "json" để biến SearXNG thành Unified Search API (docs/02 §2).
+
+use_default_settings: true
+
+server:
+  secret_key: "${SEARXNG_SECRET}"
+  base_url: "${SEARXNG_BASE_URL}"
+  limiter: false        # nội bộ, không public — limiter off (docs/08 §1)
+  image_proxy: false
+  public_instance: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "vi"
+  formats:
+    - html
+    - json
+
+# Tắt các engine nặng/không cần cho AI search để giảm latency fan-out.
+# Danh sách tối giản: giữ web + news + wikipedia; thêm/sửa qua Engine Registry (PATCH /v1/engines/{id}).
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: google news
+    disabled: false
+  - name: google scholar
+    disabled: false
+  - name: qwant
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: mojeek
+    disabled: true
+  - name: marginalia
+    disabled: true

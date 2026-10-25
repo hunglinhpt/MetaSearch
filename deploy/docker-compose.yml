@@ -1,0 +1,162 @@
+# MetaSearch — docker-compose (dev laptop 16GB / prod VPS 4vCPU-8GB)
+# Xem docs/08-deployment.md. Trên máy 16GB: cap WSL2 6GB trước (%UserProfile%\.wslconfig).
+name: metasearch
+
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: metasearch-searxng
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-changeme-generate-a-random-secret}
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  crawl4ai:
+    image: ghcr.io/unclecode/crawl4ai:latest
+    container_name: metasearch-crawl4ai
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11222:11222"
+    environment:
+      - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-}
+      - MAX_CONCURRENT_TASKS=2   # dev 16GB: concurrency 2, 1 browser instance
+    mem_limit: 1.5g
+    shm_size: 512m               # Chromium cần shm đủ lớn
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11222/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: metasearch-redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: metasearch-postgres
+    restart: unless-stopped
+    command: ["postgres", "-c", "shared_buffers=256MB"]
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-metasearch}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-metasearch}
+      - POSTGRES_DB=${POSTGRES_DB:-metasearch}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-metasearch} -d ${POSTGRES_DB:-metasearch}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ../api
+    container_name: metasearch-api
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    env_file: .env
+    environment:
+      - SEARXNG_URL=http://searxng:8080
+      - CRAWL4AI_URL=http://crawl4ai:11222
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-metasearch}:${POSTGRES_PASSWORD:-metasearch}@postgres:5432/${POSTGRES_DB:-metasearch}
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+      crawl4ai:
+        condition: service_started
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    build: ../api
+    container_name: metasearch-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    environment:
+      - SEARXNG_URL=http://searxng:8080
+      - CRAWL4AI_URL=http://crawl4ai:11222
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-metasearch}:${POSTGRES_PASSWORD:-metasearch}@postgres:5432/${POSTGRES_DB:-metasearch}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    mem_limit: 512m
+
+  frontend:
+    build: ../frontend
+    container_name: metasearch-frontend
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 256m
+
+  # Observability (prod, bật khi cần): docker compose --profile observability up -d
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: metasearch-prometheus
+    profiles: ["observability"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
+    mem_limit: 512m
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: metasearch-grafana
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    mem_limit: 512m
+
+volumes:
+  pgdata:
