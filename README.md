@@ -2,7 +2,7 @@
 
 > Hệ thống tìm kiếm đa nguồn phục vụ AI: **Meta-Search (SearXNG) → Crawl & Extract → Dedup & Rerank → Synthesize có trích dẫn**, đóng gói thành REST API + SSE Streaming + MCP Server + Web UI.
 
-Trạng thái: **Design phase** — toàn bộ thiết kế nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
+Trạng thái: **Phase 0 — Scaffold hoàn tất** (monorepo `api/` + `frontend/` + `deploy/` + CI xanh: 23 test PASS, ruff/bandit sạch, Next.js build OK). Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
 
 ---
 
@@ -102,10 +102,26 @@ MetaSearch/
 │   ├── 11-testing-strategy.md
 │   ├── 12-roadmap-plan.md     ← plan chi tiết 8 tuần (gồm KPI + rủi ro)
 │   └── adr/                   ← 8 Architecture Decision Records
-└── deploy/
-    ├── docker-compose.yml     ← reference stack đầy đủ
-    ├── searxng/settings.yml   ← cấu hình SearXNG (bật JSON API)
-    └── .env.example
+├── api/                       ← FastAPI orchestration (lớp mỏng ~2–3k LOC)
+│   ├── app/
+│   │   ├── core/              ← config, logging, errors, middleware, metrics
+│   │   ├── db/                ← SQLAlchemy models + async session
+│   │   ├── api/               ← ops (/healthz, /readyz, /metrics) + v1 routers
+│   │   ├── retrieval/         ← SearXNG adapter, engine registry, merger (Phase 1)
+│   │   ├── extraction/        ← trafilatura + crawl4ai client + SSRF guard (Phase 1)
+│   │   ├── orchestration/     ← query understanding, planner, executor (Phase 1+)
+│   │   └── llm/               ← LLM gateway (Phase 1)
+│   ├── alembic/versions/      ← migration schema v1 (12 bảng + pgvector)
+│   ├── tests/                 ← pytest suite
+│   └── pyproject.toml         ← deps + ruff/pytest/bandit config
+├── frontend/                  ← Next.js 15 + React 19 (Web UI)
+│   ├── app/                   ← App Router (layout, page, globals.css)
+│   └── package.json
+├── deploy/
+│   ├── docker-compose.yml     ← reference stack đầy đủ
+│   ├── searxng/settings.yml   ← cấu hình SearXNG (bật JSON API)
+│   └── .env.example
+└── .github/workflows/ci.yml   ← CI: lint + unit test + security scan + build
 ```
 
 ## 5. Bản đồ tài liệu

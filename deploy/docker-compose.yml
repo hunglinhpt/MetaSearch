@@ -30,9 +30,11 @@ services:
       - "127.0.0.1:11222:11222"
     environment:
       - CRAWL4AI_API_TOKEN=${CRAWL4AI_API_TOKEN:-}
-      - MAX_CONCURRENT_TASKS=2   # dev 16GB: concurrency 2, 1 browser instance
+      # dev 16GB: concurrency 2, 1 browser instance
+      - MAX_CONCURRENT_TASKS=2
     mem_limit: 1.5g
-    shm_size: 512m               # Chromium cần shm đủ lớn
+    # Chromium cần shm đủ lớn
+    shm_size: 512m
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:11222/health"]
       interval: 30s

@@ -12,12 +12,27 @@
 
 ## 2. Task breakdown chi tiết
 
-### Phase 0 — Scaffold (tuần 0)
-- [ ] Monorepo: `api/` (FastAPI), `frontend/` (Next.js), `deploy/`, `docs/`
-- [ ] docker-compose (searxng + crawl4ai + pg + redis, mem_limits dev 16GB) + searxng settings (formats json) + .env.example
-- [ ] CI: lint + unit + security scan
-- [ ] `/healthz`, `/readyz`, cấu trúc settings (pydantic-settings)
-- [ ] Alembic init + schema v1 (bảng engines, queries, search_results)
+### Phase 0 — Scaffold (tuần 0) — ✅ HOÀN TẤT
+- [x] Monorepo: `api/` (FastAPI), `frontend/` (Next.js), `deploy/`, `docs/`
+- [x] docker-compose (searxng + crawl4ai + pg + redis, mem_limits dev 16GB) + searxng settings (formats json) + .env.example
+- [x] CI: lint + unit + security scan
+- [x] `/healthz`, `/readyz`, cấu trúc settings (pydantic-settings)
+- [x] Alembic init + schema v1 (bảng engines, queries, search_results)
+
+**Trạng thái verify (local, không có Docker):**
+
+| Hạng mục | Lệnh | Kết quả |
+|---|---|---|
+| Unit test | `pytest -q` | 23 passed |
+| Lint | `ruff check .` | All checks passed |
+| Format | `ruff format --check .` | 31 files already formatted |
+| Security scan | `bandit -q -r app -x tests` | 0 issue (exit 0) |
+| Frontend typecheck | `npm run typecheck` | exit 0 |
+| Frontend build | `npm run build` | exit 0 (Next.js 15, 4 static pages) |
+
+> Exit criteria `docker compose up` → `/readyz` 200 chưa verify được trên máy dev (không có Docker Desktop);
+> sẽ được xác nhận qua CI và trên máy có Docker. Phần `GET searxng/search?format=json` đã cấu hình sẵn
+> trong `deploy/searxng/settings.yml` (`formats: [html, json]`).
 
 ### Phase 1 — MVP (tuần 1–2)
 - [ ] SearXNG adapter (async httpx, timeout 3s, retry 1)
