@@ -15,6 +15,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
 from app.db.session import dispose_engine
+from app.http import dispose_http_client
 
 logger = get_logger(__name__)
 
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await dispose_engine()
+        await dispose_http_client()
         logger.info("service_stopped")
 
 

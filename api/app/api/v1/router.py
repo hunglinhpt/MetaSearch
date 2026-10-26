@@ -1,24 +1,22 @@
 """v1 router.
 
-Phase 0 only exposes ``GET /v1/meta`` so the service can be smoke-tested
-without a database. Search, answer, scrape, research and engine-registry
-routes land in Phase 1-3 (see docs/12-roadmap-plan.md).
+Phase 1 exposes search/answer/scrape/engines; deep research arrives in
+Phase 3 (docs/12-roadmap-plan.md).
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter
 
 from app import __version__
+from app.api.v1 import answer, engines, search
 from app.config import get_settings
 
 router = APIRouter(prefix="/v1", tags=["v1"])
 
 
 @router.get("/meta", summary="Service metadata and giants configuration")
-async def meta() -> dict[str, Any]:
+async def meta() -> dict:
     settings = get_settings()
     return {
         "name": settings.app_name,
@@ -32,3 +30,8 @@ async def meta() -> dict[str, Any]:
             "scrape_concurrency": settings.scrape_concurrency,
         },
     }
+
+
+router.include_router(search.router)
+router.include_router(answer.router)
+router.include_router(engines.router)

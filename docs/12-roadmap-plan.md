@@ -34,16 +34,27 @@
 > sẽ được xác nhận qua CI và trên máy có Docker. Phần `GET searxng/search?format=json` đã cấu hình sẵn
 > trong `deploy/searxng/settings.yml` (`formats: [html, json]`).
 
-### Phase 1 — MVP (tuần 1–2)
-- [ ] SearXNG adapter (async httpx, timeout 3s, retry 1)
-- [ ] Engine registry (config từ DB + env)
-- [ ] Merger: canonicalize, dedupe, consensus, diversity cap
-- [ ] Scoring v1: keyword + consensus + engine_weight
-- [ ] Scraper: trafilatura in-process → crawl4ai service fallback, SSRF guard v1
-- [ ] Chunking 512/64 + LLM answer với citation prompt
-- [ ] `/v1/search`, `/v1/answer` (JSON + SSE), error model
-- [ ] CLI: `metasearch search "query"`, `metasearch answer "query"`
-- [ ] Unit tests core modules
+### Phase 1 — MVP (tuần 1–2) — ✅ HOÀN TẤT
+- [x] SearXNG adapter (async httpx, timeout 3s, retry 1; 403 = config error không retry)
+- [x] Engine registry (config từ DB + env) — Phase 1: env-based, interface sẵn sàng cắm DB ở Phase 2
+- [x] Merger: canonicalize, dedupe, consensus, diversity cap
+- [x] Scoring v1: keyword (BM25-lite prefix-match) + consensus + engine_weight + freshness + snippet_quality
+- [x] Scraper: trafilatura in-process → crawl4ai service fallback → jina reader (nếu có key), SSRF guard v1 (scheme/userinfo/DNS/private-IP/IPv4-mapped-IPv6), robots.txt, cap 5MB, redirect re-check mỗi hop
+- [x] Chunking 512/64 heading-aware + LLM answer với citation prompt + post-validate citations
+- [x] `/v1/search`, `/v1/answer` (JSON + SSE: status/engine_done/sources/token/citations/done), error model RFC 7807-ish
+- [x] CLI: `metasearch search "query"`, `metasearch answer "query" [--stream]` (gọi REST API)
+- [x] Unit tests core modules
+
+**Trạng thái verify (local, không có Docker):**
+
+| Hạng mục | Lệnh | Kết quả |
+|---|---|---|
+| Unit test | `pytest -q` | 91 passed (từ 23 ở Phase 0) |
+| Lint | `ruff check .` + `ruff format --check .` | All checks passed, 60 files formatted |
+| Security scan | `bandit -q -r app -x tests` | 0 issue (exit 0) |
+| Smoke test live | uvicorn + curl /healthz, /v1/meta, /v1/engines, /v1/search, /v1/answer SSE | Graceful degradation đúng: 503 `no_results` + `engines_status` khi SearXNG vắng mặt; SSE event `status`/`error` đúng format; error model chuẩn |
+
+> Ghi chú triển khai: LLM gateway streaming qua httpx thuần (OpenAI-compatible + Anthropic), không thêm SDK; persist best-effort fire-and-forget (không bao giờ fail request); rerank heuristic-first để sẵn trong `scoring.heuristic_chunk_score`.
 
 ### Phase 2 — Quality & UI (tuần 3–4)
 - [ ] Rerank heuristic-first (0ms) + tuỳ chọn int8 ONNX ~300MB (`RERANKER=onnx`) + fallback giữ thứ tự heuristic

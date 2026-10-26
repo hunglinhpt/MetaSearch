@@ -2,7 +2,7 @@
 
 > Hệ thống tìm kiếm đa nguồn phục vụ AI: **Meta-Search (SearXNG) → Crawl & Extract → Dedup & Rerank → Synthesize có trích dẫn**, đóng gói thành REST API + SSE Streaming + MCP Server + Web UI.
 
-Trạng thái: **Phase 0 — Scaffold hoàn tất** (monorepo `api/` + `frontend/` + `deploy/` + CI xanh: 23 test PASS, ruff/bandit sạch, Next.js build OK). Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
+Trạng thái: **Phase 1 — MVP Search hoàn tất** (`/v1/search` + `/v1/answer` JSON/SSE, SearXNG adapter, merge/score, scrape trafilatura→crawl4ai→jina với SSRF guard, chunking + LLM citation, CLI; CI xanh: 91 test PASS, ruff/bandit sạch). Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
 
 ---
 
@@ -81,6 +81,10 @@ docker compose -f deploy/docker-compose.yml up -d
 curl -X POST http://localhost:8000/v1/search \
   -H "Content-Type: application/json" \
   -d '{"query": "So sánh PostgreSQL và MySQL 2025", "language": "vi"}'
+
+# CLI (đã có từ Phase 1)
+metasearch search "So sánh PostgreSQL và MySQL 2025"
+metasearch answer "So sánh PostgreSQL và MySQL 2025" --stream
 ```
 
 ## 4. Cấu trúc repo

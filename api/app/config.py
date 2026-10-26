@@ -35,8 +35,10 @@ class Settings(BaseSettings):
 
     # --- giants (upstream services) --------------------------------------
     searxng_url: str = "http://searxng:8080"
-    crawl4ai_url: str = "http://crawl4ai:11235"
+    # Port must match deploy/docker-compose.yml (crawl4ai publishes 11222).
+    crawl4ai_url: str = "http://crawl4ai:11222"
     crawl4ai_api_token: str = ""
+    jina_reader_base_url: str = "https://r.jina.ai"
 
     # --- storage ---------------------------------------------------------
     database_url: str = "postgresql+asyncpg://metasearch:metasearch@postgres:5432/metasearch"
@@ -46,8 +48,14 @@ class Settings(BaseSettings):
     llm_provider: Literal["openai", "anthropic", "none"] = "none"
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
     llm_quick_model: str = "gpt-4o-mini"
     llm_report_model: str = "gpt-4o"
+    llm_temperature: float = 0.2
+    llm_answer_max_tokens: int = 1024
+    # Context budget for /v1/answer measured in words (~0.75x tokens).
+    answer_context_words: int = 6000
 
     # --- optional search providers (fallback when SearXNG is degraded) ----
     tavily_api_key: str = ""
@@ -62,13 +70,19 @@ class Settings(BaseSettings):
     # --- timeouts / limits ------------------------------------------------
     request_timeout_s: float = 30.0
     searxng_timeout_s: float = 3.0
+    # Overall budget for the fan-out stage before falling back to partial results.
+    search_fanout_budget_s: float = 5.0
     scrape_timeout_s: float = 8.0
-    scrape_concurrency: int = 8
+    scrape_concurrency: int = 6
     max_scrape_bytes: int = 5 * 1024 * 1024
     max_redirects: int = 3
     user_agent: str = "MetaSearchBot/1.0 (+https://metasearch.example/bot)"
     rate_limit_rpm: int = 60
     readiness_timeout_s: float = 2.0
+    # Failed URLs are not retried for this long (negative cache, process-local).
+    negative_cache_ttl_s: float = 3600.0
+    robots_cache_ttl_s: float = 1800.0
+    robots_timeout_s: float = 3.0
 
     # --- deep research budgets -------------------------------------------
     research_max_iterations: int = 3
