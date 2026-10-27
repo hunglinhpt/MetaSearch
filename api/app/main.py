@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from app import __version__
 from app.api import ops
 from app.api.v1.router import router as v1_router
+from app.cache import dispose_redis
 from app.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await dispose_engine()
+        await dispose_redis()
         await dispose_http_client()
         logger.info("service_stopped")
 

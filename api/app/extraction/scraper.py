@@ -15,7 +15,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -24,6 +24,9 @@ from app.core.logging import get_logger
 from app.extraction import ssrf
 from app.extraction.robots import RobotsCache
 from app.http import get_http_client
+
+if TYPE_CHECKING:
+    from app.cache import CacheClient
 
 logger = get_logger(__name__)
 
@@ -55,11 +58,15 @@ class Scraper:
         settings: Settings | None = None,
         *,
         client: httpx.AsyncClient | None = None,
+        cache: CacheClient | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._client = client
         self._robots = RobotsCache(client)
-        self._negative: dict[str, float] = {}  # url -> monotonic timestamp of failure
+        self._cache = cache
+        # Process-local negative cache: fallback when Redis is unavailable and
+        # a fast path when it is up (multi-worker installs share via Redis).
+        self._negative: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
     # -- public API --------------------------------------------------------
@@ -88,7 +95,7 @@ class Scraper:
         self, url: str, *, timeout_s: float | None = None
     ) -> PageContent | PageFailure:
         timeout = self._settings.scrape_timeout_s if timeout_s is None else timeout_s
-        if self._is_negatively_cached(url):
+        if await self._is_negatively_cached(url):
             return PageFailure(url=url, status="failed", error="recently failed (negative cache)")
         try:
             page = await self._scrape_uncached(url, timeout)
@@ -99,11 +106,15 @@ class Scraper:
             logger.info("scrape_failed", url=url, error=type(exc).__name__)
             await self._mark_failed(url)
             return PageFailure(url=url, status="failed", error=type(exc).__name__)
+        await self._cache_page(page)
         return page
 
     # -- internals ---------------------------------------------------------
 
     async def _scrape_uncached(self, url: str, timeout_s: float) -> PageContent:
+        cached = await self._load_page_cache(url)
+        if cached is not None:
+            return cached
         body, final_url = await self._guarded_fetch(url, timeout_s)
         markdown, title, extractor = extract_static(body)
         if markdown:
@@ -222,9 +233,13 @@ class Scraper:
             fetched_at=_utcnow(),
         )
 
-    # -- negative cache ------------------------------------------------------
+    # -- negative cache + page cache ------------------------------------------
 
-    def _is_negatively_cached(self, url: str) -> bool:
+    async def _is_negatively_cached(self, url: str) -> bool:
+        from app.cache import negative_cache_key
+
+        if self._cache is not None and await self._cache.has_flag(negative_cache_key(url)):
+            return True
         failed_at = self._negative.get(url)
         if failed_at is None:
             return False
@@ -234,8 +249,47 @@ class Scraper:
         return True
 
     async def _mark_failed(self, url: str) -> None:
+        from app.cache import negative_cache_key
+
         async with self._lock:
             self._negative[url] = time.monotonic()
+        if self._cache is not None:
+            await self._cache.set_flag(
+                negative_cache_key(url), ttl_s=int(self._settings.negative_cache_ttl_s)
+            )
+
+    async def _load_page_cache(self, url: str) -> PageContent | None:
+        from app.cache import page_cache_key
+
+        if self._cache is None:
+            return None
+        payload = await self._cache.get_json(page_cache_key(url))
+        if not payload:
+            return None
+        return PageContent(
+            url=url,
+            final_url=str(payload.get("final_url") or url),
+            title=str(payload.get("title") or url),
+            markdown=str(payload.get("markdown") or ""),
+            extractor_used=str(payload.get("extractor_used") or "cache"),
+            fetched_at=_utcnow(),
+        )
+
+    async def _cache_page(self, page: PageContent) -> None:
+        from app.cache import page_cache_key
+
+        if self._cache is None or not page.markdown:
+            return
+        await self._cache.set_json(
+            page_cache_key(page.url),
+            {
+                "final_url": page.final_url,
+                "title": page.title,
+                "markdown": page.markdown,
+                "extractor_used": page.extractor_used,
+            },
+            ttl_s=self._settings.cache_page_ttl_s,
+        )
 
 
 def _crawl4ai_markdown(payload: dict[str, Any]) -> tuple[str, str]:

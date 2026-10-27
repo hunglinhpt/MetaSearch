@@ -63,6 +63,7 @@ class AnswerResponse(BaseModel):
     model: str = ""
     latency_ms: int = 0
     status: str = "complete"
+    cached: bool = False
 
 
 def new_id() -> str:

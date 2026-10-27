@@ -192,7 +192,7 @@ def persist_search(
     task.add_done_callback(_log_task_exception)
 
 
-def persist_answer(
+async def persist_answer(
     answer_id: uuid.UUID,
     query_id: uuid.UUID,
     content_md: str,
@@ -203,23 +203,22 @@ def persist_answer(
     latency_ms: int,
     citations: list[tuple[int, str, str, str | None]],
 ) -> None:
-    task = asyncio.create_task(
-        _run(
-            "answer",
-            _persist_answer(
-                answer_id,
-                query_id,
-                content_md,
-                model,
-                input_tokens,
-                output_tokens,
-                cost_usd,
-                latency_ms,
-                citations,
-            ),
-        )
+    """Awaited by the answer pipeline after the ``done`` event so the
+    semantic-cache write (which references the answers FK) runs safely."""
+    await _run(
+        "answer",
+        _persist_answer(
+            answer_id,
+            query_id,
+            content_md,
+            model,
+            input_tokens,
+            output_tokens,
+            cost_usd,
+            latency_ms,
+            citations,
+        ),
     )
-    task.add_done_callback(_log_task_exception)
 
 
 def persist_pages(pages: list[PageContent], chunks: list[Chunk]) -> None:
@@ -232,3 +231,21 @@ def _log_task_exception(task: asyncio.Task) -> None:
         exc = task.exception()
         if exc is not None:
             logger.warning("persist_task_failed", error=type(exc).__name__)
+
+
+async def load_citations(answer_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Citations for one answer (used by the L2 semantic-cache replay)."""
+    async with get_sessionmaker()() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(Citation).where(Citation.answer_id == answer_id).order_by(Citation.n)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [
+        {"n": row.n, "url": row.url or "", "title": "", "chunk_id": str(row.chunk_id or "")}
+        for row in rows
+    ]

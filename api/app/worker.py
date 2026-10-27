@@ -1,7 +1,7 @@
 """Background worker entrypoint: ``python -m app.worker``.
 
-Phase 0 keeps the loop intentionally small (heartbeat + graceful shutdown);
-Phase 1+ registers real jobs such as engine health probes and cache warming.
+Phase 2 jobs: heartbeat + engine recovery probe (re-enables engines that were
+auto-disabled after consecutive failures, docs/12-roadmap-plan.md Phase 2).
 """
 
 from __future__ import annotations
@@ -26,6 +26,52 @@ async def _heartbeat(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_INTERVAL_S)
 
 
+async def _probe_adapter(engine_id: str) -> bool:
+    """Cheap liveness check for one engine; True means it works again."""
+    import httpx
+
+    from app.api.deps import build_adapters
+    from app.retrieval.adapters.searxng import SearXNGAdapter
+
+    adapters = build_adapters(get_settings())
+    adapter = adapters.get(engine_id)
+    if adapter is None:
+        return False
+    try:
+        if isinstance(adapter, SearXNGAdapter):
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{adapter.base_url}/healthz")
+            return resp.status_code < 500
+        results = await adapter.search("metasearch recovery probe", max_results=1, timeout_s=5.0)
+        return bool(results)
+    except Exception as exc:
+        logger.info("engine_probe_failed", engine=engine_id, error=type(exc).__name__)
+        return False
+
+
+async def _recovery_loop(stop: asyncio.Event) -> None:
+    settings = get_settings()
+    from app.api.deps import get_engine_store, reset_pipelines
+
+    while not stop.is_set():
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=settings.engine_recovery_probe_s)
+        if stop.is_set():
+            return
+        reset_pipelines()
+        store = get_engine_store()
+        try:
+            candidates = await store.auto_disabled()
+        except Exception as exc:
+            logger.warning("recovery_probe_skipped", error=type(exc).__name__)
+            continue
+        for engine_id in candidates:
+            ok = await _probe_adapter(engine_id)
+            logger.info("engine_recovery_probe", engine=engine_id, recovered=ok)
+            if ok:
+                await store.update(engine_id, {"enabled": True})
+
+
 async def run() -> None:
     settings = get_settings()
     configure_logging()
@@ -40,9 +86,14 @@ async def run() -> None:
             # Windows' ProactorEventLoop has no signal handlers.
             signal.signal(sig, lambda *_: stop.set())
 
+    recovery = asyncio.create_task(_recovery_loop(stop))
     try:
         await _heartbeat(stop)
     finally:
+        stop.set()
+        recovery.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await recovery
         await dispose_engine()
         logger.info("worker_stopped")
 

@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
-from app.api.deps import get_answer_pipeline
+from app.api import deps
 from app.api.v1.schemas import AnswerRequest, AnswerResponse, CitationItem
 from app.core.errors import ErrorCode, MetaSearchError
 from app.orchestration.pipeline import Event, SearchParams
@@ -44,7 +44,7 @@ async def _json(params: SearchParams, model: str | None) -> AnswerResponse:
     meta: dict = {}
     error: dict | None = None
 
-    async for event, data in get_answer_pipeline().run(params, model=model):
+    async for event, data in deps.get_answer_pipeline().run(params, model=model):
         if event == "token":
             answer_md_parts.append(data["t"])
         elif event == "citations":
@@ -75,6 +75,7 @@ async def _json(params: SearchParams, model: str | None) -> AnswerResponse:
         model=meta.get("model", ""),
         latency_ms=meta.get("latency_ms", 0),
         status=meta.get("status", "complete"),
+        cached=bool(meta.get("cached", False)),
     )
 
 
@@ -91,7 +92,9 @@ async def _sse(params: SearchParams, model: str | None) -> AsyncIterator[dict]:
 
     async def producer() -> None:
         try:
-            async for event in get_answer_pipeline().run(params, model=model, on_event=on_event):
+            async for event in deps.get_answer_pipeline().run(
+                params, model=model, on_event=on_event
+            ):
                 await queue.put(event)
         except MetaSearchError as exc:
             await queue.put(("error", {"code": exc.code.value, "message": exc.message}))

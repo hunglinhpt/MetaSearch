@@ -31,6 +31,8 @@ def get_engine() -> AsyncEngine:
             pool_size=5,
             max_overflow=5,
             echo=False,
+            # Fail fast on an unreachable Postgres (fallback paths rely on it).
+            connect_args={"timeout": 3, "command_timeout": 10},
         )
     return _engine
 

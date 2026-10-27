@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -12,9 +13,11 @@ from app.config import get_settings
 from app.core.errors import MetaSearchError
 from app.extraction.scraper import PageContent, PageFailure
 from app.llm.gateway import LLMError, StreamDelta, Usage
+from app.orchestration.engine_store import InMemoryEngineStore
 from app.orchestration.pipeline import SearchParams, SearchPipeline
 from app.retrieval.models import EngineConfig, RawResult
 from app.retrieval.registry import EngineRegistry
+from app.retrieval.reranker import HeuristicReranker
 
 
 class FakeAdapter:
@@ -27,24 +30,6 @@ class FakeAdapter:
         if self.fail:
             raise RuntimeError("engine exploded")
         return self.results
-
-
-def fake_registry(*adapters: FakeAdapter) -> EngineRegistry:
-    entries = [(EngineConfig(id=a.id, name=a.id, category="general"), a) for a in adapters]
-    return EngineRegistry(entries)
-
-
-def raw(
-    url, engines=None, rank=0, title="PostgreSQL guide", snippet="postgres tutorial", adapter="fake"
-):
-    return RawResult(
-        url=url,
-        title=title,
-        snippet=snippet,
-        adapter=adapter,
-        source_engines=engines or [],
-        rank=rank,
-    )
 
 
 class FakeScraper:
@@ -73,27 +58,85 @@ class FakeGateway:
         yield StreamDelta(usage=Usage(input_tokens=50, output_tokens=12))
 
 
+class FakeEmbedder:
+    enabled = False
+
+    async def embed(self, text):
+        raise LLMError("embeddings disabled in tests")
+
+
+class FakeCache:
+    """In-memory CacheClient double with write recording."""
+
+    def __init__(self, store: dict[str, Any] | None = None):
+        self.enabled = True
+        self.store: dict[str, Any] = store or {}
+        self.flags: set[str] = set()
+        self.written: list[str] = []
+
+    async def get_json(self, key: str):
+        return self.store.get(key)
+
+    async def set_json(self, key: str, value: Any, *, ttl_s: int) -> None:
+        self.store[key] = value
+        self.written.append(key)
+
+    async def has_flag(self, key: str) -> bool:
+        return key in self.flags
+
+    async def set_flag(self, key: str, *, ttl_s: int) -> None:
+        self.flags.add(key)
+
+
 @pytest.fixture
 def stack(monkeypatch):
-    """Patch deps with a controllable fake stack; returns the fakes dict."""
+    """Patch deps with a controllable fake stack; returns the fakes holder."""
 
     class Stack:
         def __init__(self):
             self.adapters: list[FakeAdapter] = []
             self.pages: dict[str, PageContent] = {}
             self.gateway = FakeGateway()
+            self.cache = FakeCache()
 
         def install(self):
+            configs = {
+                a.id: EngineConfig(id=a.id, name=a.id, category="general", enabled=True)
+                for a in self.adapters
+            }
+            store = InMemoryEngineStore(configs)
+            monkeypatch.setattr(deps, "get_engine_store", lambda: store)
             monkeypatch.setattr(
-                deps.EngineRegistry,
-                "from_settings",
-                classmethod(lambda cls, settings: fake_registry(*self.adapters)),
+                deps, "build_adapters", lambda settings: {a.id: a for a in self.adapters}
             )
-            monkeypatch.setattr(deps, "Scraper", lambda settings: FakeScraper(self.pages))
-            monkeypatch.setattr(deps, "LLMGateway", lambda settings: self.gateway)
+            monkeypatch.setattr(deps, "get_cache", lambda: self.cache)
+            monkeypatch.setattr(deps, "get_scraper", lambda: FakeScraper(self.pages))
+            monkeypatch.setattr(deps, "get_gateway", lambda: self.gateway)
+            monkeypatch.setattr(deps, "get_embedder", lambda: FakeEmbedder())
+            monkeypatch.setattr(deps, "get_reranker", lambda: HeuristicReranker())
             deps.reset_pipelines()
 
     return Stack()
+
+
+def raw(
+    url, engines=None, rank=0, title="PostgreSQL guide", snippet="postgres tutorial", adapter="fake"
+):
+    return RawResult(
+        url=url,
+        title=title,
+        snippet=snippet,
+        adapter=adapter,
+        source_engines=engines or [],
+        rank=rank,
+    )
+
+
+def fake_registry(*adapters: FakeAdapter) -> EngineRegistry:
+    configs = {
+        a.id: EngineConfig(id=a.id, name=a.id, category="general", enabled=True) for a in adapters
+    }
+    return EngineRegistry(InMemoryEngineStore(configs), {a.id: a for a in adapters})
 
 
 def _page(url: str, title: str, md: str) -> PageContent:
@@ -157,7 +200,19 @@ class TestSearchEndpoint:
         assert data["results"][0]["consensus"] == 3
         assert data["results"][0]["found_by"] == ["searxng", "tavily"]
         assert data["results"][0]["engines"] == ["bing", "ddg", "google"]
+        assert data["cached"] is False
         assert data["latency_ms"] >= 0
+
+    def test_search_cache_hit_replays(self, client, stack):
+        stack.adapters = [FakeAdapter("searxng", [raw("https://a.com/1", rank=0)])]
+        stack.install()
+        # Warm the cache through a real request first.
+        client.post("/v1/search", json={"query": "postgres"})
+        assert stack.cache.written, "search result should be cached"
+        second = client.post("/v1/search", json={"query": "postgres"})
+        assert second.status_code == 200
+        assert second.json()["cached"] is True
+        assert second.json()["results"][0]["url"] == "https://a.com/1"
 
     def test_search_no_results_is_503(self, client, stack):
         stack.adapters = [FakeAdapter("searxng", [])]
@@ -180,8 +235,22 @@ class TestAnswerEndpoint:
             FakeAdapter(
                 "searxng",
                 [
-                    raw("https://one.example.com/a", engines=["google"], rank=0),
-                    raw("https://two.example.com/b", engines=["bing"], rank=1),
+                    raw(
+                        "https://one.example.com/a",
+                        adapter="searxng",
+                        engines=["google"],
+                        rank=0,
+                        title="PostgreSQL overview",
+                        snippet="postgres object relational database",
+                    ),
+                    raw(
+                        "https://two.example.com/b",
+                        adapter="searxng",
+                        engines=["bing"],
+                        rank=1,
+                        title="MySQL versus PostgreSQL",
+                        snippet="mysql comparison with postgres",
+                    ),
                 ],
             )
         ]
@@ -197,6 +266,7 @@ class TestAnswerEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "complete"
+        assert data["cached"] is False
         assert "Postgres is relational [1]." in data["answer_md"]
         assert {c["n"] for c in data["citations"]} == {1, 2}
         assert data["citations"][0]["url"] == "https://one.example.com/a"
@@ -217,13 +287,23 @@ class TestAnswerEndpoint:
         assert events.count("token") == 2
         assert events[-2:] == ["citations", "done"]
 
-        # spot check SSE payload shape
         tokens = [
             json.loads(line.split("data:", 1)[1])
             for line in resp.text.splitlines()
             if line.startswith("data:") and '"t"' in line
         ]
         assert "".join(t["t"] for t in tokens).startswith("Postgres is relational")
+
+    def test_answer_cache_replay(self, client, stack):
+        self._install(stack)
+        client.post("/v1/answer", json={"query": "what is postgres"})
+        assert any(k.startswith("an:") for k in stack.cache.written)
+        replay = client.post("/v1/answer", json={"query": "what is postgres"})
+        assert replay.status_code == 200
+        data = replay.json()
+        assert data["cached"] is True
+        assert "Postgres is relational [1]." in data["answer_md"]
+        assert {c["n"] for c in data["citations"]} == {1, 2}
 
     def test_answer_requires_llm(self, client, stack):
         self._install(stack)
@@ -250,13 +330,50 @@ class TestScrapeEndpoint:
 
 
 class TestEnginesEndpoint:
-    def test_lists_all_engines(self, client):
+    def test_lists_all_engines_with_health(self, client, stack):
+        stack.adapters = [FakeAdapter("searxng", [])]
+        stack.install()
         resp = client.get("/v1/engines")
         assert resp.status_code == 200
         engines = {e["id"]: e for e in resp.json()}
         assert engines["searxng"]["enabled"] is True
         assert engines["searxng"]["adapter_ready"] is True
-        assert engines["tavily"]["requires_key"] is True
+        assert engines["searxng"]["consecutive_failures"] == 0
+
+    def test_patch_engine_hot_config(self, client, stack):
+        stack.adapters = [FakeAdapter("searxng", [raw("https://a.com/1", rank=0)])]
+        stack.install()
+        resp = client.patch("/v1/engines/searxng", json={"weight": 2.5, "timeout_ms": 1500})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["weight"] == 2.5
+        assert data["timeout_ms"] == 1500
+
+        # Disable then verify it no longer fans out.
+        client.patch("/v1/engines/searxng", json={"enabled": False})
+        resp2 = client.post("/v1/search", json={"query": "postgres"})
+        assert resp2.status_code == 503  # no engines left
+
+        # Re-enable via PATCH.
+        client.patch("/v1/engines/searxng", json={"enabled": True})
+        resp3 = client.post("/v1/search", json={"query": "postgres"})
+        assert resp3.status_code == 200
+
+    def test_patch_unknown_engine_404(self, client, stack):
+        stack.install()
+        resp = client.patch("/v1/engines/nope", json={"weight": 1.0})
+        assert resp.status_code == 404
+
+    def test_health_endpoint(self, client, stack):
+        stack.adapters = [FakeAdapter("searxng", [raw("https://a.com/1", rank=0)])]
+        stack.install()
+        search_resp = client.post("/v1/search", json={"query": "postgres"})
+        assert search_resp.status_code == 200
+        resp = client.get("/v1/engines/health")
+        assert resp.status_code == 200
+        rows = {r["engine"]: r for r in resp.json()}
+        assert rows["searxng"]["calls"] >= 1
+        assert rows["searxng"]["successes"] >= 1
 
 
 class TestSearchPipelineFanout:
@@ -281,3 +398,30 @@ class TestSearchPipelineFanout:
         pipeline = SearchPipeline(get_settings(), fake_registry(ok))
         with pytest.raises(MetaSearchError):
             await pipeline.run(SearchParams(query="postgres", engines=["missing"]))
+
+    async def test_auto_disable_after_consecutive_failures(self):
+        bad = FakeAdapter("bad", [], fail=True)
+        registry = fake_registry(bad)
+        pipeline = SearchPipeline(get_settings(), registry)
+        # Each failing call is recorded; empty results never raise here.
+        for _ in range(3):
+            outcome = await pipeline.run(SearchParams(query="postgres"))
+            assert outcome.results == []
+        snapshot = await registry.store.snapshot()
+        assert snapshot["bad"].enabled is False
+        assert "auto:" in (snapshot["bad"].disabled_reason or "")
+        # With the only engine auto-disabled the next fan-out raises no_results.
+        with pytest.raises(MetaSearchError):
+            await pipeline.run(SearchParams(query="postgres"))
+
+    async def test_auto_disabled_engine_not_fanned_out(self):
+        bad = FakeAdapter("bad", [], fail=True)
+        ok = FakeAdapter("ok", [raw("https://a.com/1", rank=0)])
+        registry = fake_registry(bad, ok)
+        pipeline = SearchPipeline(get_settings(), registry)
+        for _ in range(3):
+            await pipeline.run(SearchParams(query="postgres"))
+        # bad is now auto-disabled; the next search only fans out to ok.
+        outcome = await pipeline.run(SearchParams(query="postgres"))
+        assert [r.url for r in outcome.results] == ["https://a.com/1"]
+        assert all(s.engine != "bad" for s in outcome.statuses)

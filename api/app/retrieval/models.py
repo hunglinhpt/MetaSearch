@@ -18,6 +18,8 @@ class EngineConfig:
     timeout_ms: int = 3000
     max_results: int = 15
     requires_key: bool = False
+    adapter_path: str = ""  # import path of the adapter class, for the DB row
+    disabled_reason: str | None = None
 
 
 @dataclass(slots=True)

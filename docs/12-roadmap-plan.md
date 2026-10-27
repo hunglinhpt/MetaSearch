@@ -56,14 +56,28 @@
 
 > Ghi chú triển khai: LLM gateway streaming qua httpx thuần (OpenAI-compatible + Anthropic), không thêm SDK; persist best-effort fire-and-forget (không bao giờ fail request); rerank heuristic-first để sẵn trong `scoring.heuristic_chunk_score`.
 
-### Phase 2 — Quality & UI (tuần 3–4)
-- [ ] Rerank heuristic-first (0ms) + tuỳ chọn int8 ONNX ~300MB (`RERANKER=onnx`) + fallback giữ thứ tự heuristic
-- [ ] Cache L1 Redis (exact) + L2 semantic (pgvector, threshold 0.92) + negative cache
-- [ ] Engine health tracking + auto-disable + PATCH hot config
-- [ ] SSE events đầy đủ (`engine_done`, `sources`, `token`, `citations`, `done`)
-- [ ] Web UI: search box, streaming answer, sources panel, citations hover
-- [ ] SimHash near-duplicate filter
-- [ ] Integration tests với compose
+### Phase 2 — Quality & UI (tuần 3–4) — ✅ HOÀN TẤT
+- [x] Rerank heuristic-first (0ms) + tuỳ chọn int8 ONNX (`RERANKER=onnx`, lazy-load, `RERANKER_ONNX_DIR`) + tuỳ chọn Jina API (`RERANKER=api`) + fallback giữ thứ tự heuristic khi lỗi/thiếu dependency
+- [x] Cache L1 Redis (exact): `sr:` search 30m (news 15m), `an:` answer 2h, `pg:` page 12h + L2 semantic (pgvector, cosine > 0.92, chỉ answer, replay có citation) + negative cache Redis (fallback in-memory khi Redis chết)
+- [x] Engine health tracking (window/phút) + auto-disable sau 3 lỗi liên tiếp + recovery probe mỗi 5 phút (worker) + `PATCH /v1/engines/{id}` hot config (Postgres-backed, fallback in-memory khi DB chết) + `GET /v1/engines/health`
+- [x] SSE events đầy đủ (`status`, `engine_done`, `sources`, `token`, `citations`, `done`) — có từ Phase 1, kiểm chứng thêm event `cached`
+- [x] Web UI Next.js: search box, 2 mode (Trả lời AI stream / Tìm kiếm raw), streaming answer, sources panel, citations hover + click, engine chips, cached badge
+- [x] SimHash near-duplicate filter (64-bit, Hamming ≤ 3, fold engines signals vào bản chính)
+- [x] Tavily adapter (fallback khi SearXNG bị block — recommendation) + `/v1/queries/{id}` debug endpoint
+- [x] Integration tests với compose — script chuẩn bị sẵn (`METASEARCH_INTEGRATION=1 pytest tests/integration`), chạy trên máy có Docker
+
+**Trạng thái verify (local, không có Docker):**
+
+| Hạng mục | Lệnh | Kết quả |
+|---|---|---|
+| Unit test | `pytest -q` | 138 passed (từ 91 ở Phase 1) |
+| Lint | `ruff check .` + `ruff format --check .` | All checks passed |
+| Security scan | `bandit -q -r app -x tests` | 0 issue (exit 0) |
+| Frontend | `npm run typecheck` + `npm run build` | exit 0, First Load JS 105 kB |
+| Smoke test live | uvicorn + curl engines/PATCH/health/search | Hot config hiệu lực ngay (PATCH weight 1.5), health tracking ghi nhận failure thực (failures=1, success_rate=0), PATCH engine lạ → 404, DB chết → fallback in-memory vẫn chạy |
+
+> Recommendation đã xử lý: Tavily adapter ✓ · negative cache Redis ✓ · SSE client dùng fetch-stream (EventSource không hỗ trợ POST) ✓ · compose env fix `NEXT_PUBLIC_API_BASE_URL` ✓.
+> Còn lại cho Phase 3–4: tiktoken token counting (word-proxy hiện tại đủ dùng), pin-IP connector chống DNS rebinding (Phase 4 theo plan — API bind 127.0.0.1 nên chưa cấp bách), verify Docker trên máy có Docker.
 
 ### Phase 3 — Deep Research & MCP (tuần 5–6)
 - [ ] Planner (tách sub-queries), Executor (loop), Synthesizer (report có citation)

@@ -1,6 +1,5 @@
-"""Merge adapter outputs: canonicalize, exact-dedupe, consensus, diversity cap.
-
-Near-duplicate SimHash filtering arrives in Phase 2 (docs/12-roadmap-plan.md).
+"""Merge adapter outputs: canonicalize, exact-dedupe, near-dup SimHash, consensus,
+diversity cap.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from urllib.parse import urlsplit
 from app.retrieval.canonical import canonicalize
 from app.retrieval.models import EngineConfig, RawResult, ScoredResult
 from app.retrieval.scoring import apply_signals
+from app.retrieval.simhash import is_near_duplicate, simhash64
 
 
 def merge(
@@ -57,7 +57,38 @@ def merge(
         )
 
     merged.sort(key=lambda r: (-r.score, r.best_rank, r.canonical_url))
-    return merged
+    return _drop_near_duplicates(merged)
+
+
+def _drop_near_duplicates(results: list[ScoredResult]) -> list[ScoredResult]:
+    """Fold SimHash near-duplicates into their best-ranked twin.
+
+    Mirrors and syndicated copies share content but not canonical URLs; their
+    engine signals are merged into the kept result and the copy is dropped.
+    """
+    kept: list[ScoredResult] = []
+    kept_hashes: list[int] = []
+    for item in results:
+        fingerprint = simhash64(f"{item.title} {item.snippet}")
+        twin = next(
+            (
+                i
+                for i, kept_hash in enumerate(kept_hashes)
+                if is_near_duplicate(fingerprint, kept_hash)
+            ),
+            None,
+        )
+        if twin is None:
+            kept.append(item)
+            kept_hashes.append(fingerprint)
+            continue
+        target = kept[twin]
+        target.engines = sorted(set(target.engines) | set(item.engines))
+        target.adapters = sorted(set(target.adapters) | set(item.adapters))
+        target.consensus = len(target.engines)
+        if not target.published_at and item.published_at:
+            target.published_at = item.published_at
+    return kept
 
 
 def diversity_cap(

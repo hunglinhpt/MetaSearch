@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.deps import get_search_pipeline
+from app.api import deps
 from app.api.v1.schemas import SearchRequest, SearchResponse
 from app.core.errors import ErrorCode, MetaSearchError
 from app.orchestration.pipeline import SearchParams
@@ -14,7 +14,7 @@ router = APIRouter(tags=["search"])
 
 @router.post("/search", response_model=SearchResponse, response_model_exclude_none=True)
 async def search(request: SearchRequest) -> SearchResponse:
-    outcome = await get_search_pipeline().run(
+    outcome = await deps.get_search_pipeline().run(
         SearchParams(
             query=request.query,
             lang=request.lang,
@@ -63,4 +63,5 @@ async def search(request: SearchRequest) -> SearchResponse:
             for s in outcome.statuses
         ],
         latency_ms=outcome.latency_ms,
+        cached=outcome.cached,
     )

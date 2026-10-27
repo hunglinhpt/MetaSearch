@@ -2,7 +2,7 @@
 
 > Hệ thống tìm kiếm đa nguồn phục vụ AI: **Meta-Search (SearXNG) → Crawl & Extract → Dedup & Rerank → Synthesize có trích dẫn**, đóng gói thành REST API + SSE Streaming + MCP Server + Web UI.
 
-Trạng thái: **Phase 1 — MVP Search hoàn tất** (`/v1/search` + `/v1/answer` JSON/SSE, SearXNG adapter, merge/score, scrape trafilatura→crawl4ai→jina với SSRF guard, chunking + LLM citation, CLI; CI xanh: 91 test PASS, ruff/bandit sạch). Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
+Trạng thái: **Phase 2 — Quality & UI hoàn tất** (cache L1 Redis + L2 semantic pgvector, rerank heuristic-first với tuỳ chọn ONNX/Jina API, engine health + auto-disable + hot config `PATCH /v1/engines/{id}`, SimHash near-dup, Tavily adapter, Web UI Next.js với streaming answer + sources panel + citations hover; CI xanh: 138 test PASS, ruff/bandit sạch, Next.js build OK). Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
 
 ---
 
@@ -86,6 +86,10 @@ curl -X POST http://localhost:8000/v1/search \
 metasearch search "So sánh PostgreSQL và MySQL 2025"
 metasearch answer "So sánh PostgreSQL và MySQL 2025" --stream
 ```
+
+Web UI (Phase 2): mở `http://localhost:3000` — nhập câu hỏi, chọn **✨ Trả lời AI**
+(answer stream có trích dẫn) hoặc **🔎 Tìm kiếm** (raw results). Hot config engine:
+`curl -X PATCH localhost:8000/v1/engines/searxng -d '{"weight": 1.5}' -H 'Content-Type: application/json'`.
 
 ## 4. Cấu trúc repo
 

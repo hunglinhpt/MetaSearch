@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app import __version__
-from app.api.v1 import answer, engines, search
+from app.api.v1 import answer, engines, queries, scrape, search
 from app.config import get_settings
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -35,3 +35,5 @@ async def meta() -> dict:
 router.include_router(search.router)
 router.include_router(answer.router)
 router.include_router(engines.router)
+router.include_router(scrape.router)
+router.include_router(queries.router)

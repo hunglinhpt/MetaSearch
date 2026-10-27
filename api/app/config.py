@@ -65,7 +65,29 @@ class Settings(BaseSettings):
 
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------
     reranker: Literal["heuristic", "onnx", "api"] = "heuristic"
+    reranker_api_base_url: str = "https://api.jina.ai"
+    # Directory holding model.onnx + tokenizer.json for RERANKER=onnx.
+    onnx_reranker_dir: str = ""
     embedding_l2: Literal["off", "e5-small-int8", "bge-m3-api"] = "off"
+    # OpenAI-compatible /embeddings endpoint (OpenAI, vLLM, TEI, Ollama).
+    embedding_api_base_url: str = "https://api.openai.com/v1"
+    embedding_api_key: str = ""
+    embedding_model: str = "bge-m3"
+
+    # --- Phase 2: cache + engine management -------------------------------
+    cache_enabled: bool = True
+    cache_search_ttl_s: int = 1800  # docs/03 §7: 15-60m, news 15m
+    cache_news_ttl_s: int = 900
+    cache_answer_ttl_s: int = 7200  # docs/03 §7: 1-6h
+    cache_page_ttl_s: int = 43200  # docs/03 §7: 6-24h
+    # pgvector semantic cache similarity threshold (answer only).
+    semantic_cache_threshold: float = 0.92
+    # Engines table is polled this often so PATCH lands without restart.
+    registry_refresh_s: float = 5.0
+    engine_auto_disable_threshold: int = 3
+    engine_recovery_probe_s: int = 300
+    # Context budget tokenizer: words (proxy) or tiktoken when installed.
+    context_tokenizer: Literal["words", "tiktoken"] = "words"
 
     # --- timeouts / limits ------------------------------------------------
     request_timeout_s: float = 30.0

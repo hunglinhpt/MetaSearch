@@ -171,6 +171,9 @@ class Engine(Base):
     timeout_ms: Mapped[int] = mapped_column(Integer, server_default="3000")
     max_results: Mapped[int] = mapped_column(Integer, server_default="15")
     requires_key: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    # Phase 2: health tracking + auto-disable (docs/12-roadmap-plan.md).
+    disabled_reason: Mapped[str | None] = mapped_column(Text)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, server_default="0")
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
 
 
