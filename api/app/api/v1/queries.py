@@ -1,4 +1,9 @@
-"""GET /v1/queries/{id} — one stored query for debug/eval (docs/06-api-spec.md §6)."""
+"""Query history: GET /v1/queries (recent) and GET /v1/queries/{id} (one).
+
+Both endpoints degrade gracefully: when Postgres is unavailable the list
+returns an empty page with ``db: false`` instead of failing — history is a
+management convenience, never a request blocker.
+"""
 
 from __future__ import annotations
 
@@ -6,13 +11,74 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api import deps
 from app.core.errors import ErrorCode, MetaSearchError
 from app.db.models import Answer, Citation, Query, SearchResult
 
 router = APIRouter(tags=["queries"])
+
+
+@router.get("/queries")
+async def list_queries(limit: int = 20, offset: int = 0) -> dict[str, Any]:
+    """Recent queries with per-query result/answer counts (management view)."""
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    try:
+        async with deps.get_session_factory()() as session:
+            total = (await session.execute(select(func.count()).select_from(Query))).scalar_one()
+            rows = (
+                (
+                    await session.execute(
+                        select(Query).order_by(Query.created_at.desc()).offset(offset).limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            ids = [q.id for q in rows]
+            result_counts: dict[uuid.UUID, int] = {}
+            answer_counts: dict[uuid.UUID, int] = {}
+            if ids:
+                for qid, cnt in (
+                    await session.execute(
+                        select(SearchResult.query_id, func.count())
+                        .where(SearchResult.query_id.in_(ids))
+                        .group_by(SearchResult.query_id)
+                    )
+                ).all():
+                    result_counts[qid] = cnt
+                for qid, cnt in (
+                    await session.execute(
+                        select(Answer.query_id, func.count())
+                        .where(Answer.query_id.in_(ids))
+                        .group_by(Answer.query_id)
+                    )
+                ).all():
+                    answer_counts[qid] = cnt
+    except Exception as exc:
+        from app.core.logging import get_logger
+
+        get_logger(__name__).warning("queries_list_db_unavailable", error=type(exc).__name__)
+        return {"db": False, "total": 0, "queries": []}
+
+    return {
+        "db": True,
+        "total": total,
+        "queries": [
+            {
+                "query_id": str(q.id),
+                "raw_text": q.raw_text,
+                "normalized_text": q.normalized_text,
+                "lang": q.lang,
+                "created_at": q.created_at.isoformat() if q.created_at else None,
+                "result_count": result_counts.get(q.id, 0),
+                "answer_count": answer_counts.get(q.id, 0),
+            }
+            for q in rows
+        ],
+    }
 
 
 @router.get("/queries/{query_id}")

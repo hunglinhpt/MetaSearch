@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   API_BASE_URL,
@@ -8,8 +8,10 @@ import {
   AnswerMeta,
   Citation,
   EngineDone,
+  EngineInfo,
   SearchHit,
   SourceItem,
+  listEngines,
   search,
   streamAnswer,
 } from "../lib/api";
@@ -29,7 +31,25 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [searchInfo, setSearchInfo] = useState("");
+  const [engineOptions, setEngineOptions] = useState<EngineInfo[]>([]);
+  const [selectedEngines, setSelectedEngines] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    listEngines(controller.signal)
+      .then((engines) =>
+        setEngineOptions(engines.filter((e) => e.enabled && e.adapter_ready))
+      )
+      .catch(() => setEngineOptions([])); // filter is optional sugar
+    return () => controller.abort();
+  }, []);
+
+  const toggleEngine = (id: string) => {
+    setSelectedEngines((prev) =>
+      prev.includes(id) ? prev.filter((e) => e !== id) : [...prev, id]
+    );
+  };
 
   const reset = useCallback(() => {
     setStage("");
@@ -53,7 +73,10 @@ export default function HomePage() {
     setBusy(true);
     try {
       if (mode === "raw") {
-        const resp = await search(q, controller.signal);
+        const resp = await search(q, {
+          signal: controller.signal,
+          engines: selectedEngines.length ? selectedEngines : undefined,
+        });
         setHits(resp.results);
         setSearchInfo(
           `${resp.results.length} kết quả · ${resp.latency_ms} ms · engines: ` +
@@ -71,7 +94,8 @@ export default function HomePage() {
             onDone: (m) => setMeta(m),
             onError: (code, message) => setError(`[${code}] ${message}`),
           },
-          controller.signal
+          controller.signal,
+          selectedEngines.length ? selectedEngines : undefined
         );
       }
     } catch (err) {
@@ -86,7 +110,7 @@ export default function HomePage() {
       setBusy(false);
       setStage("");
     }
-  }, [busy, mode, query, reset]);
+  }, [busy, mode, query, reset, selectedEngines]);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -134,6 +158,23 @@ export default function HomePage() {
           {busy ? "…" : "Chạy"}
         </button>
       </form>
+
+      {engineOptions.length > 0 && (
+        <div className="engines engines-filter">
+          {engineOptions.map((e) => (
+            <button
+              key={e.id}
+              type="button"
+              className={`chip chip-toggle${selectedEngines.includes(e.id) ? " on" : ""}`}
+              onClick={() => toggleEngine(e.id)}
+              disabled={busy}
+              title={e.name}
+            >
+              {e.id}
+            </button>
+          ))}
+        </div>
+      )}
 
       {stage && <p className="stage">{stage}</p>}
       {engines.length > 0 && (

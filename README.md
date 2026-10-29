@@ -96,6 +96,9 @@ Web UI (Phase 2): mở `http://localhost:3000` — nhập câu hỏi, chọn **�
 ```
 MetaSearch/
 ├── README.md                  ← bạn đang ở đây
+├── AGENTS.md                  ← hướng dẫn AI agent nhận việc (trạng thái, quy ước, checklist)
+├── CHANGELOG.md               ← lịch sử version (Keep a Changelog)
+├── CONTRIBUTING.md            ← guideline setup + workflow + gate
 ├── docs/                      ← thiết kế chi tiết (12 tài liệu + 8 ADR)
 │   ├── 01-product-requirements.md
 │   ├── 02-system-architecture.md
@@ -108,26 +111,27 @@ MetaSearch/
 │   ├── 09-observability-eval.md
 │   ├── 10-security-compliance.md
 │   ├── 11-testing-strategy.md
-│   ├── 12-roadmap-plan.md     ← plan chi tiết 8 tuần (gồm KPI + rủi ro)
+│   ├── 12-roadmap-plan.md     ← plan chi tiết 5 phase / 8 tuần (gồm KPI + rủi ro)
 │   └── adr/                   ← 8 Architecture Decision Records
-├── api/                       ← FastAPI orchestration (lớp mỏng ~2–3k LOC)
+├── api/                       ← FastAPI orchestration (lớp mỏng ~3k LOC)
 │   ├── app/
 │   │   ├── core/              ← config, logging, errors, middleware, metrics
 │   │   ├── db/                ← SQLAlchemy models + async session
-│   │   ├── api/               ← ops (/healthz, /readyz, /metrics) + v1 routers
-│   │   ├── retrieval/         ← SearXNG adapter, engine registry, merger (Phase 1)
-│   │   ├── extraction/        ← trafilatura + crawl4ai client + SSRF guard (Phase 1)
-│   │   ├── orchestration/     ← query understanding, planner, executor (Phase 1+)
-│   │   └── llm/               ← LLM gateway (Phase 1)
-│   ├── alembic/versions/      ← migration schema v1 (12 bảng + pgvector)
-│   ├── tests/                 ← pytest suite
-│   └── pyproject.toml         ← deps + ruff/pytest/bandit config
-├── frontend/                  ← Next.js 15 + React 19 (Web UI)
-│   ├── app/                   ← App Router (layout, page, globals.css)
+│   │   ├── api/               ← ops (/healthz, /readyz, /metrics, /v1/ops/status) + v1 routers
+│   │   ├── retrieval/         ← adapters, registry, merger, scoring, simhash, reranker
+│   │   ├── extraction/        ← ssrf, pinning, robots, scraper, chunker
+│   │   ├── orchestration/     ← pipeline (search+answer), persist, engine store
+│   │   └── llm/               ← gateway streaming, prompts, citations, embeddings, tokens
+│   ├── alembic/versions/      ← migrations (12 bảng + pgvector)
+│   ├── scripts/perf_load.py   ← perf harness (micro + load, không cần Docker)
+│   ├── tests/                 ← pytest suite (+ integration gated)
+│   └── pyproject.toml
+├── frontend/                  ← Next.js 15 + React 19 (Web UI streaming)
+│   ├── app/ · lib/api.ts      ← SSE client + ApiError
 │   └── package.json
 ├── deploy/
-│   ├── docker-compose.yml     ← reference stack đầy đủ
-│   ├── searxng/settings.yml   ← cấu hình SearXNG (bật JSON API)
+│   ├── docker-compose.yml     ← stack đầy đủ + profile observability
+│   ├── searxng/ · prometheus/ · grafana/ · k6/
 │   └── .env.example
 └── .github/workflows/ci.yml   ← CI: lint + unit test + security scan + build
 ```

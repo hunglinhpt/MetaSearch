@@ -66,16 +66,38 @@ export type AnswerHandlers = {
   onError?: (code: string, message: string) => void;
 };
 
+export type SearchOptions = {
+  signal?: AbortSignal;
+  engines?: string[];
+  k?: number;
+};
+
 export async function search(
   query: string,
-  signal?: AbortSignal
+  opts: SearchOptions = {}
 ): Promise<SearchResponse> {
   const resp = await fetch(`${API_BASE_URL}/v1/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, k: 10 }),
-    signal,
+    body: JSON.stringify({ query, k: opts.k ?? 10, engines: opts.engines ?? undefined }),
+    signal: opts.signal,
   });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export type EngineInfo = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  adapter_ready: boolean;
+  disabled_reason?: string | null;
+};
+
+export async function listEngines(signal?: AbortSignal): Promise<EngineInfo[]> {
+  const resp = await fetch(`${API_BASE_URL}/v1/engines`, { signal });
   if (!resp.ok) {
     throw await parseError(resp);
   }
@@ -85,12 +107,13 @@ export async function search(
 export async function streamAnswer(
   query: string,
   handlers: AnswerHandlers,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  engines?: string[]
 ): Promise<void> {
   const resp = await fetch(`${API_BASE_URL}/v1/answer`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, stream: true }),
+    body: JSON.stringify({ query, stream: true, engines: engines ?? undefined }),
     signal,
   });
   if (!resp.ok || !resp.body) {
