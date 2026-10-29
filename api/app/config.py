@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # port on 127.0.0.1 only, so the host is not exposed.
     api_host: str = "0.0.0.0"  # nosec B104
     api_port: int = 8000
+    # Comma-separated origins allowed to call the API from a browser (Web UI).
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # --- giants (upstream services) --------------------------------------
     searxng_url: str = "http://searxng:8080"

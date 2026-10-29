@@ -202,10 +202,15 @@ class Scraper:
             url=url,
             final_url=str(payload.get("url") or url),
             title=title or url,
-            markdown=markdown,
+            markdown=self._cap(markdown),
             extractor_used="crawl4ai",
             fetched_at=_utcnow(),
         )
+
+    def _cap(self, text: str) -> str:
+        """Guard the service tiers (crawl4ai/jina) against oversized bodies —
+        the direct fetch enforces the same limit while streaming."""
+        return text[: self._settings.max_scrape_bytes]
 
     async def _jina(self, url: str, timeout_s: float) -> PageContent | None:
         settings = self._settings
@@ -235,7 +240,7 @@ class Scraper:
             url=url,
             final_url=url,
             title=title or url,
-            markdown=text,
+            markdown=self._cap(text),
             extractor_used="jina",
             fetched_at=_utcnow(),
         )

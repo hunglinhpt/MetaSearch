@@ -80,7 +80,7 @@ docker compose -f deploy/docker-compose.yml up -d
 
 curl -X POST http://localhost:8000/v1/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "So sánh PostgreSQL và MySQL 2025", "language": "vi"}'
+  -d '{"query": "So sánh PostgreSQL và MySQL 2025", "lang": "vi"}'
 
 # CLI (đã có từ Phase 1)
 metasearch search "So sánh PostgreSQL và MySQL 2025"

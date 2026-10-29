@@ -81,6 +81,11 @@
 > - ✅ **Pin-IP connector** (đẩy từ Phase 4 lên sớm): `app/extraction/pinning.py` — mỗi hop fetch scrape/robots connect thẳng vào IP đã validate qua SSRF guard, giữ `Host` header + TLS SNI (`sni_hostname` extension của httpcore) → đóng cửa sổ DNS rebinding. Redirect hop nào cũng re-resolve + re-pin.
 > - ✅ **tiktoken token counting** (tuỳ chọn): `app/llm/tokens.py` + `CONTEXT_TOKENIZER=tiktoken` + `pip install '.[tokens]'`; budget context đổi tên `ANSWER_CONTEXT_BUDGET` (đơn vị words hoặc tokens theo tokenizer); fallback words tự động khi thiếu package/offline.
 > - ⏳ Verify Docker: máy dev không có Docker (`docker: command not found`); 8 integration tests sẵn sàng chạy khi có stack (`METASEARCH_INTEGRATION=1 pytest tests/integration`).
+> **Audit chuyên sâu 3 góc nhìn (sau recommendation):**
+> - 🔒 Security: **CORS thiếu hoàn toàn** (Web UI browser bị block cross-origin) → thêm `CORSMiddleware` + `CORS_ORIGINS`; crawl4ai/jina response chưa cap → `_cap()` theo `max_scrape_bytes`; robots fail-open verified an toàn (main fetch chặn riêng).
+> - ⚡ Concurrency: answer JSON path delay ~3s khi DB chết (persist awaited vì FK) → persist + semantic-cache viết trong **1 background task có thứ tự** (FK đúng, client không chờ); LLMGateway dùng lại shared HTTP pool; DB pool 5+5 → 10+10 chống cạn khi fan-out + persist chạy đồng thời.
+> - 📐 Correctness: answer cache key thiếu search params (spec: `an:{sha1(query+model+params)}`) → thêm k/categories/freshness; frontend SSE flush frame cuối; README fix `language` → `lang`.
+> - Tests: 151 → **174 passed** (+23: CORS ×4, RobotsCache ×8, page-cache roundtrip, negative-cache qua Redis flag, worker probe ×4, queries 400, cache-key semantics ×4).
 
 ### Phase 3 — Deep Research & MCP (tuần 5–6)
 - [ ] Planner (tách sub-queries), Executor (loop), Synthesizer (report có citation)

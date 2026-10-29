@@ -119,8 +119,17 @@ def search_cache_key(query: str, params: Any) -> str:
     return f"sr:{sha1_key(query, params.lang, params.k, sorted(params.categories), params.freshness_days, params.engines)}"  # noqa: E501
 
 
-def answer_cache_key(query: str, *, model: str, lang: str | None) -> str:
-    return f"an:{sha1_key(query, model, lang)}"
+def answer_cache_key(
+    query: str,
+    *,
+    model: str,
+    lang: str | None,
+    k: int = 10,
+    categories: list[str] | None = None,
+    freshness_days: int | None = None,
+) -> str:
+    """Answer key covers the search params that shape the context (docs/03 §7)."""
+    return f"an:{sha1_key(query, model, lang, k, sorted(categories or []), freshness_days)}"
 
 
 def page_cache_key(url: str) -> str:

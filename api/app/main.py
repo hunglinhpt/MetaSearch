@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api import ops
@@ -54,6 +55,17 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
     app.add_middleware(RequestContextMiddleware)
+    # Browser clients (Web UI on :3000) call this API cross-origin; without
+    # CORS every fetch from the UI fails in the browser.
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["x-request-id"],
+    )
     register_exception_handlers(app)
     app.include_router(ops.router)
     app.include_router(v1_router)

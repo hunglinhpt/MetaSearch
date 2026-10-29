@@ -340,25 +340,53 @@ class AnswerPipeline:
         )
 
         persist.persist_pages(ok_pages, chunks)
-        # Awaited (not fire-and-forget) so the semantic-cache write below can
-        # rely on the answers row existing (FK).
+        if self.cache is not None:
+            await self._cache_store(
+                params, model, answer_id, check.text, citations_payload, sources
+            )
+        # DB persist + semantic-cache write run in one background task, in this
+        # order: the semantic row references the answers row (FK), and the
+        # client must not wait on a slow/unreachable Postgres (done event is
+        # already delivered above).
+        finalize = asyncio.create_task(
+            self._finalize_answer(
+                answer_id=answer_id,
+                query_id=outcome.query_id,
+                content_md=check.text,
+                model=model,
+                usage=usage,
+                latency_ms=latency_ms,
+                citations=[(c.n, c.url, c.title, c.chunk_id) for c in check.citations],
+                query=normalize_query(params.query),
+            )
+        )
+        finalize.add_done_callback(_log_background)
+
+    async def _finalize_answer(
+        self,
+        *,
+        answer_id: uuid.UUID,
+        query_id: uuid.UUID,
+        content_md: str,
+        model: str,
+        usage: Usage,
+        latency_ms: int,
+        citations: list[tuple[int, str, str, str | None]],
+        query: str,
+    ) -> None:
         await persist.persist_answer(
             answer_id=answer_id,
-            query_id=outcome.query_id,
-            content_md=check.text,
+            query_id=query_id,
+            content_md=content_md,
             model=model,
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             cost_usd=usage.cost_usd(model),
             latency_ms=latency_ms,
-            citations=[(c.n, c.url, c.title, c.chunk_id) for c in check.citations],
+            citations=citations,
         )
-        if self.cache is not None:
-            await self._cache_store(
-                params, model, answer_id, check.text, citations_payload, sources
-            )
-            if self.embedder is not None and self.embedder.enabled:
-                await self._semantic_cache_store(normalize_query(params.query), answer_id, model)
+        if self.embedder is not None and self.embedder.enabled:
+            await self._semantic_cache_store(query, answer_id, model)
 
     # -- rerank ------------------------------------------------------------
 
@@ -392,7 +420,14 @@ class AnswerPipeline:
         query = normalize_query(params.query)
         if self.cache is not None:
             payload = await self.cache.get_json(
-                answer_cache_key(query, model=model, lang=params.lang)
+                answer_cache_key(
+                    query,
+                    model=model,
+                    lang=params.lang,
+                    k=params.k,
+                    categories=params.categories,
+                    freshness_days=params.freshness_days,
+                )
             )
             if payload and payload.get("answer_md"):
                 return self._replay(payload)
@@ -436,7 +471,14 @@ class AnswerPipeline:
         if self.cache is None or not answer_md:
             return
         await self.cache.set_json(
-            answer_cache_key(normalize_query(params.query), model=model, lang=params.lang),
+            answer_cache_key(
+                normalize_query(params.query),
+                model=model,
+                lang=params.lang,
+                k=params.k,
+                categories=params.categories,
+                freshness_days=params.freshness_days,
+            ),
             {
                 "answer_id": str(answer_id),
                 "answer_md": answer_md,
@@ -480,7 +522,7 @@ class AnswerPipeline:
         if self.cache is not None:
             cached = await self.cache.get_json(
                 answer_cache_key(query, model=model or "", lang=None)
-            )
+            )  # L2 replay: original search params unknown, default key shape
             if cached and cached.get("answer_md"):
                 return cached
         # No L1 payload for this answer: rebuild citations from the DB so the
@@ -517,6 +559,13 @@ class AnswerPipeline:
                 await session.commit()
         except Exception as exc:
             logger.warning("semantic_cache_write_failed", error=type(exc).__name__)
+
+
+def _log_background(task: asyncio.Task) -> None:
+    if task.done() and not task.cancelled():
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("background_task_failed", error=type(exc).__name__)
 
 
 def _no_results(statuses: list[EngineStatus]) -> MetaSearchError:

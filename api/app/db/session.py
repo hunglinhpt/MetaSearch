@@ -28,8 +28,10 @@ def get_engine() -> AsyncEngine:
         _engine = create_async_engine(
             settings.database_url,
             pool_pre_ping=True,
-            pool_size=5,
-            max_overflow=5,
+            # Fan-out health writes, persistence and query endpoints run
+            # concurrently; keep headroom so requests never wait on the pool.
+            pool_size=10,
+            max_overflow=10,
             echo=False,
             # Fail fast on an unreachable Postgres (fallback paths rely on it).
             connect_args={"timeout": 3, "command_timeout": 10},

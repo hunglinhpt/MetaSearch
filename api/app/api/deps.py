@@ -48,7 +48,9 @@ def get_scraper() -> Scraper:
 
 @lru_cache(maxsize=1)
 def get_gateway() -> LLMGateway:
-    return LLMGateway(get_settings())
+    from app.http import get_http_client
+
+    return LLMGateway(get_settings(), client=get_http_client())
 
 
 @lru_cache(maxsize=1)

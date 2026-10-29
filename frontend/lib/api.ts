@@ -128,18 +128,26 @@ export async function streamAnswer(
     while ((sep = buffer.indexOf("\n\n")) !== -1) {
       const frame = buffer.slice(0, sep);
       buffer = buffer.slice(sep + 2);
-      let eventName = "";
-      const dataLines: string[] = [];
-      for (const line of frame.split("\n")) {
-        if (line.startsWith(":")) continue; // SSE comment / keepalive ping
-        if (line.startsWith("event:")) {
-          eventName = line.slice(6).trim();
-        } else if (line.startsWith("data:")) {
-          dataLines.push(line.slice(5).trim());
-        }
-      }
-      dispatch(eventName, dataLines.join("\n"));
+      dispatchFrame(frame);
     }
+  }
+  // Flush a trailing frame that was not terminated by a blank line.
+  if (buffer.trim()) {
+    dispatchFrame(buffer);
+  }
+
+  function dispatchFrame(frame: string) {
+    let eventName = "";
+    const dataLines: string[] = [];
+    for (const line of frame.split("\n")) {
+      if (line.startsWith(":")) continue; // SSE comment / keepalive ping
+      if (line.startsWith("event:")) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trim());
+      }
+    }
+    dispatch(eventName, dataLines.join("\n"));
   }
 }
 

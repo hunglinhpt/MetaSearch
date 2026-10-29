@@ -27,9 +27,9 @@ def make_settings(**overrides) -> Settings:
     return Settings(**values)
 
 
-def make_scraper(handler, **settings_overrides) -> Scraper:
+def make_scraper(handler, *, cache=None, **settings_overrides) -> Scraper:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return Scraper(make_settings(**settings_overrides), client=client)
+    return Scraper(make_settings(**settings_overrides), client=client, cache=cache)
 
 
 async def test_trafilatura_extracts_public_page():
@@ -175,3 +175,51 @@ def test_crawl4ai_markdown_shapes(payload, expected):
     from app.extraction.scraper import _crawl4ai_markdown
 
     assert _crawl4ai_markdown(payload)[0] == expected
+
+
+async def test_page_cache_roundtrip_avoids_second_fetch():
+    from tests.test_api_v1 import FakeCache
+
+    calls = {"page": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
+        calls["page"] += 1
+        return httpx.Response(200, html=HTML_PAGE)
+
+    cache = FakeCache()
+    scraper = make_scraper(handler, cache=cache)
+    first = await scraper.scrape("https://example.com/cached")
+    assert hasattr(first, "markdown")
+    assert calls["page"] == 1
+
+    second = await scraper.scrape("https://example.com/cached")
+    assert hasattr(second, "markdown")
+    assert second.markdown == first.markdown
+    assert calls["page"] == 1  # served from page cache
+
+
+async def test_negative_cache_shared_via_redis_flag():
+    from tests.test_api_v1 import FakeCache
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
+        return httpx.Response(500, text="boom")
+
+    cache = FakeCache()
+    first_scraper = make_scraper(handler, cache=cache)
+    failed = await first_scraper.scrape("https://example.com/dead")
+    assert failed.status == "failed"
+    assert any(k.startswith("nc:") for k in cache.flags)
+
+    # A *different* process-local scraper instance sharing the same Redis
+    # must skip the URL without a single HTTP attempt.
+    def counting_handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("must not be reached")
+
+    second_scraper = make_scraper(counting_handler, cache=cache)
+    result = await second_scraper.scrape("https://example.com/dead")
+    assert result.status == "failed"
+    assert "negative cache" in (result.error or "")
