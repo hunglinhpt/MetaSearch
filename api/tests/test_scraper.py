@@ -34,7 +34,11 @@ def make_scraper(handler, **settings_overrides) -> Scraper:
 
 async def test_trafilatura_extracts_public_page():
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "example.com"
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
+        # IP-pinned fetch: host is the validated IP, Host header original.
+        assert request.url.host == "93.184.216.34"
+        assert request.headers["host"] == "example.com"
         return httpx.Response(200, html=HTML_PAGE, headers={"content-type": "text/html"})
 
     page = await make_scraper(handler).scrape("https://example.com/article")
@@ -70,10 +74,14 @@ async def test_negative_cache_prevents_second_fetch():
 
 async def test_crawl4ai_fallback_when_static_extraction_fails():
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "js-only.example.com":
-            return httpx.Response(200, html="<html><body><div>x</div></body></html>")
-        assert request.url.host == "crawl4ai.test"
-        assert request.url.path == "/md"
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
+        if request.url.host == "crawl4ai.test":
+            assert request.url.path == "/md"
+            return _crawl4ai_md_response()
+        return httpx.Response(200, html="<html><body><div>x</div></body></html>")
+
+    def _crawl4ai_md_response() -> httpx.Response:
         return httpx.Response(
             200,
             json={
@@ -92,12 +100,13 @@ async def test_crawl4ai_fallback_when_static_extraction_fails():
 
 async def test_jina_fallback_when_crawl4ai_down():
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "hard.example.com":
-            return httpx.Response(200, html="<html><body><div>x</div></body></html>")
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
         if request.url.host == "crawl4ai.test":
             raise httpx.ConnectError("down", request=request)
-        assert request.url.host == "r.jina.ai"
-        return httpx.Response(200, text="Title: Hard Page\n\nJina markdown content")
+        if request.url.host == "r.jina.ai":
+            return httpx.Response(200, text="Title: Hard Page\n\nJina markdown content")
+        return httpx.Response(200, html="<html><body><div>x</div></body></html>")
 
     page = await make_scraper(handler).scrape("https://hard.example.com/page")
     assert hasattr(page, "markdown")
@@ -107,11 +116,13 @@ async def test_jina_fallback_when_crawl4ai_down():
 
 async def test_all_extractors_fail():
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "bad.example.com":
-            return httpx.Response(200, html="<html><body><div>x</div></body></html>")
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
         if request.url.host == "crawl4ai.test":
             return httpx.Response(503, json={"success": False})
-        return httpx.Response(502, text="err")  # jina
+        if request.url.host == "r.jina.ai":
+            return httpx.Response(502, text="err")
+        return httpx.Response(200, html="<html><body><div>x</div></body></html>")
 
     result = await make_scraper(handler).scrape("https://bad.example.com/page")
     assert result.status == "failed"
@@ -119,7 +130,9 @@ async def test_all_extractors_fail():
 
 async def test_redirect_hop_rechecked_via_ssrf():
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.host == "public.example.com":
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
+        if request.url.path == "/redirect":
             return httpx.Response(302, headers={"location": "http://169.254.169.254/latest"})
         return httpx.Response(200, html=HTML_PAGE)
 

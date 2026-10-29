@@ -77,7 +77,10 @@
 | Smoke test live | uvicorn + curl engines/PATCH/health/search | Hot config hiệu lực ngay (PATCH weight 1.5), health tracking ghi nhận failure thực (failures=1, success_rate=0), PATCH engine lạ → 404, DB chết → fallback in-memory vẫn chạy |
 
 > Recommendation đã xử lý: Tavily adapter ✓ · negative cache Redis ✓ · SSE client dùng fetch-stream (EventSource không hỗ trợ POST) ✓ · compose env fix `NEXT_PUBLIC_API_BASE_URL` ✓.
-> Còn lại cho Phase 3–4: tiktoken token counting (word-proxy hiện tại đủ dùng), pin-IP connector chống DNS rebinding (Phase 4 theo plan — API bind 127.0.0.1 nên chưa cấp bách), verify Docker trên máy có Docker.
+> **Recommendation bổ sung (đã xử lý sau Phase 2):**
+> - ✅ **Pin-IP connector** (đẩy từ Phase 4 lên sớm): `app/extraction/pinning.py` — mỗi hop fetch scrape/robots connect thẳng vào IP đã validate qua SSRF guard, giữ `Host` header + TLS SNI (`sni_hostname` extension của httpcore) → đóng cửa sổ DNS rebinding. Redirect hop nào cũng re-resolve + re-pin.
+> - ✅ **tiktoken token counting** (tuỳ chọn): `app/llm/tokens.py` + `CONTEXT_TOKENIZER=tiktoken` + `pip install '.[tokens]'`; budget context đổi tên `ANSWER_CONTEXT_BUDGET` (đơn vị words hoặc tokens theo tokenizer); fallback words tự động khi thiếu package/offline.
+> - ⏳ Verify Docker: máy dev không có Docker (`docker: command not found`); 8 integration tests sẵn sàng chạy khi có stack (`METASEARCH_INTEGRATION=1 pytest tests/integration`).
 
 ### Phase 3 — Deep Research & MCP (tuần 5–6)
 - [ ] Planner (tách sub-queries), Executor (loop), Synthesizer (report có citation)
@@ -88,7 +91,7 @@
 - [ ] Vertical engines: arXiv, Wikipedia (nếu thời gian)
 
 ### Phase 4 — Hardening (tuần 7–8)
-- [ ] SSRF suite đầy đủ + pin-IP connector + redirect control
+- [ ] SSRF suite đầy đủ (pin-IP connector + redirect re-check mỗi hop đã làm xong từ Phase 2 — còn lại: pin-IP cho crawl4ai/jina tier, WAF-style header checks)
 - [ ] k6 load test + tuning (connection pool, semaphore)
 - [ ] OTel tracing per stage + Prometheus metrics + Grafana dashboard
 - [ ] Langfuse LLM tracing

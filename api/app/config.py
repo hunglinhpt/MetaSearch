@@ -54,8 +54,9 @@ class Settings(BaseSettings):
     llm_report_model: str = "gpt-4o"
     llm_temperature: float = 0.2
     llm_answer_max_tokens: int = 1024
-    # Context budget for /v1/answer measured in words (~0.75x tokens).
-    answer_context_words: int = 6000
+    # Context budget for /v1/answer: units depend on CONTEXT_TOKENIZER
+    # (words by default; real tokens with CONTEXT_TOKENIZER=tiktoken).
+    answer_context_budget: int = 6000
 
     # --- optional search providers (fallback when SearXNG is degraded) ----
     tavily_api_key: str = ""

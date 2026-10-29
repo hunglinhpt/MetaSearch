@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from app.extraction.chunker import Chunk
 
 SYSTEM_PROMPT = """You are MetaSearch, a meticulous research assistant. You answer user \
@@ -19,20 +21,29 @@ Vietnamese answer).
 6. You may use markdown for structure (short paragraphs, bullet lists)."""
 
 
-def build_context(chunks: list[Chunk], *, budget_words: int) -> list[tuple[int, Chunk]]:
-    """Pack chunks into numbered context blocks within ``budget_words``.
+def build_context(
+    chunks: list[Chunk],
+    *,
+    budget: int,
+    count: Callable[[str], int] | None = None,
+) -> list[tuple[int, Chunk]]:
+    """Pack chunks into numbered context blocks within ``budget`` units.
 
-    Returns the ``(n, chunk)`` pairs actually included, numbered from 1, in the
-    order given (caller is responsible for pre-sorting by relevance).
+    ``count`` maps text to the budget unit — words (default proxy) or real
+    tokens via ``app.llm.tokens``. Returns the ``(n, chunk)`` pairs actually
+    included, numbered from 1, in the order given (caller pre-sorts by
+    relevance). The first chunk is always included so the context is never
+    empty.
     """
+    count = count or (lambda text: len(text.split()))
     included: list[tuple[int, Chunk]] = []
     used = 0
     for n, chunk in enumerate(chunks, start=1):
-        words = chunk.word_count or len(chunk.content.split())
-        if used + words > budget_words and included:
+        size = count(chunk.content) or chunk.word_count
+        if used + size > budget and included:
             break
         included.append((n, chunk))
-        used += words
+        used += size
     return included
 
 

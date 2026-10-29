@@ -22,6 +22,7 @@ import httpx
 from app.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.extraction import ssrf
+from app.extraction.pinning import build_pinned_request
 from app.extraction.robots import RobotsCache
 from app.http import get_http_client
 
@@ -138,19 +139,23 @@ class Scraper:
         raise RuntimeError("all extractors failed")
 
     async def _guarded_fetch(self, url: str, timeout_s: float) -> tuple[bytes, str]:
-        """Fetch with SSRF check + robots.txt on every redirect hop.
+        """Fetch with SSRF check, IP pinning and robots.txt on every hop.
 
-        The body is streamed and capped at ``max_scrape_bytes`` so a huge page
-        cannot balloon memory (docs/10-security-compliance.md).
+        Each hop: resolve + validate DNS -> connect to the validated IP
+        (Host/SNI preserved, closing the rebinding window) -> stream the body
+        capped at ``max_scrape_bytes`` (docs/10-security-compliance.md).
         """
         current = url
         for _ in range(self._settings.max_redirects + 1):
-            await ssrf.resolve_and_check(current)
+            ips = await ssrf.resolve_and_check(current)
             if not await self._robots.allowed(current, user_agent=self._settings.user_agent):
                 raise ssrf.SSRFViolation(f"robots.txt disallows {current}")
 
+            pinned_url, pin_headers, extensions = build_pinned_request(current, sorted(ips)[0])
             client = self._client or get_http_client()
-            async with client.stream("GET", current, timeout=timeout_s) as resp:
+            async with client.stream(
+                "GET", pinned_url, headers=pin_headers, extensions=extensions, timeout=timeout_s
+            ) as resp:
                 if resp.is_redirect:
                     location = resp.headers.get("location")
                     if not location:
@@ -165,7 +170,9 @@ class Scraper:
                         raise RuntimeError(
                             f"page larger than {self._settings.max_scrape_bytes} bytes"
                         )
-                return bytes(buf), str(resp.url)
+                # ``current`` (original form) beats resp.url: the response URL
+                # carries the pinned IP host.
+                return bytes(buf), current
 
         raise RuntimeError(f"too many redirects fetching {url}")
 

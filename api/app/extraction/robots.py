@@ -45,13 +45,22 @@ class RobotsCache:
         return entry.parser.can_fetch(user_agent, url)
 
     async def _fetch(self, origin: str) -> RobotFileParser | None:
+        """Fetch robots.txt pinned to a validated IP (no redirects followed:
+        a 3xx is treated as "no robots" — best-effort compliance, and pinned
+        fetching keeps the SSRF guard intact)."""
         settings = get_settings()
         client = self._client
         owns = client is None
         if client is None:
-            client = httpx.AsyncClient(follow_redirects=True, timeout=settings.robots_timeout_s)
+            client = httpx.AsyncClient(follow_redirects=False, timeout=settings.robots_timeout_s)
         try:
-            resp = await client.get(f"{origin}/robots.txt")
+            from app.extraction import ssrf
+            from app.extraction.pinning import build_pinned_request
+
+            url = f"{origin}/robots.txt"
+            ips = await ssrf.resolve_and_check(url)
+            pinned_url, headers, extensions = build_pinned_request(url, sorted(ips)[0])
+            resp = await client.get(url=pinned_url, headers=headers, extensions=extensions)
             if resp.status_code != 200 or not resp.content:
                 return None
             parser = RobotFileParser()

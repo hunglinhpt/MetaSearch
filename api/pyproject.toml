@@ -38,6 +38,9 @@ dev = [
     "bandit>=1.7",
     "pip-audit>=2.7",
 ]
+# Optional: real token counting for the answer context budget
+# (CONTEXT_TOKENIZER=tiktoken). Falls back to word counting without it.
+tokens = ["tiktoken>=0.7"]
 
 [project.scripts]
 metasearch = "app.cli:main"

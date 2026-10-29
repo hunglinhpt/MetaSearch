@@ -41,6 +41,7 @@ from app.llm.citations import validate_citations
 from app.llm.embeddings import EmbeddingClient, EmbeddingError
 from app.llm.gateway import LLMError, LLMGateway, Usage, record_usage
 from app.llm.prompts import build_context, build_messages
+from app.llm.tokens import make_counter
 from app.orchestration import persist
 from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.merger import diversity_cap, merge
@@ -292,7 +293,11 @@ class AnswerPipeline:
         chunks = await self._rerank(normalize_query(params.query), scored_chunks)
         yield ("status", {"stage": "synthesizing", "detail": f"{len(chunks)} chunks"})
 
-        included = build_context(chunks, budget_words=self.settings.answer_context_words)
+        included = build_context(
+            chunks,
+            budget=self.settings.answer_context_budget,
+            count=make_counter(self.settings),
+        )
         messages = build_messages(normalize_query(params.query), included)
 
         answer_id = uuid.uuid4()
