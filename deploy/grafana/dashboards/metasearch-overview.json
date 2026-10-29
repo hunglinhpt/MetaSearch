@@ -1,0 +1,153 @@
+{
+  "uid": "metasearch-overview",
+  "title": "MetaSearch — Overview",
+  "tags": ["metasearch"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "path",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(metasearch_http_requests_total, path)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Readiness (1 = ready)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "metasearch_readiness", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "READY", "color": "green" }, "0": { "text": "NOT READY", "color": "red" } } }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Requests / sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 10, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(metasearch_http_requests_total{path=~\"$path\"}[1m])) by (path)",
+          "legendFormat": "{{path}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "HTTP error rate (5xx %)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 14, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(metasearch_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(metasearch_http_requests_total[5m])), 0.001)",
+          "refId": "A",
+          "unit": "percent"
+        }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 5 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "title": "Cache hit rate % (docs KPI ≥ 40)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(metasearch_cache_events_total{outcome=\"hit\"}[15m])) / clamp_min(sum(rate(metasearch_cache_events_total[15m])), 0.001)",
+          "refId": "A",
+          "unit": "percent"
+        }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 30 }, { "color": "green", "value": 40 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "title": "HTTP latency p50 / p95 (KPI: search p95 ≤ 2.5s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(metasearch_http_request_duration_seconds_bucket{path=~\"$path\"}[5m])) by (le, path))",
+          "legendFormat": "p50 {{path}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(metasearch_http_request_duration_seconds_bucket{path=~\"$path\"}[5m])) by (le, path))",
+          "legendFormat": "p95 {{path}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "title": "Engine calls by outcome (KPI: success ≥ 95%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(metasearch_engine_calls_total[5m])) by (engine, outcome)",
+          "legendFormat": "{{engine}} {{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Engine latency p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(metasearch_engine_duration_seconds_bucket[5m])) by (le, engine))",
+          "legendFormat": "p95 {{engine}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "title": "LLM tokens & estimated cost",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(metasearch_llm_tokens_total[5m])) by (model, direction)",
+          "legendFormat": "{{model}} {{direction}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(metasearch_llm_cost_usd_total[5m])) by (model)",
+          "legendFormat": "USD/s {{model}}",
+          "refId": "B"
+        }
+      ]
+    }
+  ]
+}

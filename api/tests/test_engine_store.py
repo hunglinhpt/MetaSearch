@@ -117,3 +117,57 @@ class TestDefaults:
 
         configs = default_configs(Settings(ENVIRONMENT="test", TAVILY_API_KEY="tvly-test"))
         assert configs["tavily"].enabled is True
+
+
+class TestGuardedDbOps:
+    async def test_stalled_db_op_falls_back_fast(self, monkeypatch):
+        """A partitioned Postgres (connect hangs) must not park requests:
+        store ops bail to the in-memory fallback within db_op_timeout."""
+        import asyncio
+
+        store = DbEngineStore(refresh_s=0)
+        store._db_timeout_s = 0.2
+
+        async def stalled(*args, **kwargs):
+            await asyncio.sleep(5)
+
+        monkeypatch.setattr(store, "_load_rows", stalled)
+        started = asyncio.get_event_loop().time()
+        snapshot = await store.snapshot()
+        elapsed = asyncio.get_event_loop().time() - started
+        assert "searxng" in snapshot  # in-memory fallback
+        assert elapsed < 1.5  # bounded, not 5s
+
+    async def test_record_result_bounded_when_db_hangs(self, monkeypatch):
+        import asyncio
+
+        store = DbEngineStore(refresh_s=0)
+        store._db_timeout_s = 0.2
+
+        async def stalled(*args, **kwargs):
+            await asyncio.sleep(5)
+
+        monkeypatch.setattr(store, "_record_db", stalled)
+        started = asyncio.get_event_loop().time()
+        await store.record_result("searxng", ok=False, latency_ms=1)
+        elapsed = asyncio.get_event_loop().time() - started
+        assert elapsed < 1.5
+        health = await store.health()
+        assert health["searxng"].failures == 1  # fallback recorded it
+
+
+class TestStoreBackendSetting:
+    def test_memory_backend_skips_db(self, monkeypatch):
+        import app.api.deps as deps
+        from app.config import get_settings
+        from app.orchestration.engine_store import InMemoryEngineStore
+
+        # get_settings() is lru_cached and conftest already created it with the
+        # default backend — patch the instance, not the env.
+        monkeypatch.setattr(get_settings(), "engine_store_backend", "memory")
+        deps.get_engine_store.cache_clear()
+        try:
+            store = deps.get_engine_store()
+            assert isinstance(store, InMemoryEngineStore)
+        finally:
+            deps.get_engine_store.cache_clear()

@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 
 import {
   API_BASE_URL,
+  ApiError,
   AnswerMeta,
   Citation,
   EngineDone,
@@ -68,14 +69,18 @@ export default function HomePage() {
             onToken: (text) => setAnswerMd((prev) => prev + text),
             onCitations: (items) => setCitations(items),
             onDone: (m) => setMeta(m),
-            onError: (message) => setError(message),
+            onError: (code, message) => setError(`[${code}] ${message}`),
           },
           controller.signal
         );
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
-        setError((err as Error).message);
+        if (err instanceof ApiError) {
+          setError(`[${err.code}] ${err.message}`);
+        } else {
+          setError((err as Error).message);
+        }
       }
     } finally {
       setBusy(false);

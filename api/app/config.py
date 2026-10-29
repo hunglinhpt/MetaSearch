@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # --- storage ---------------------------------------------------------
     database_url: str = "postgresql+asyncpg://metasearch:metasearch@postgres:5432/metasearch"
     redis_url: str = "redis://redis:6379/0"
+    # Bounded so a saturated pool fails fast instead of the 30s default.
+    db_pool_timeout_s: float = 5.0
 
     # --- LLM gateway -----------------------------------------------------
     llm_provider: Literal["openai", "anthropic", "none"] = "none"
@@ -87,6 +89,13 @@ class Settings(BaseSettings):
     semantic_cache_threshold: float = 0.92
     # Engines table is polled this often so PATCH lands without restart.
     registry_refresh_s: float = 5.0
+    # "db" reads engine config from Postgres (fallback to memory when down);
+    # "memory" skips the DB entirely (dev without Postgres, perf runs).
+    engine_store_backend: Literal["db", "memory"] = "db"
+    # Any single engine-store DB operation waits at most this long before
+    # falling back to the in-memory store — a partitioned Postgres must never
+    # sit in the search critical path (perf finding: 3s connect waits).
+    engine_store_db_timeout_s: float = 0.5
     engine_auto_disable_threshold: int = 3
     engine_recovery_probe_s: int = 300
     # Context budget tokenizer: words (proxy) or tiktoken when installed.

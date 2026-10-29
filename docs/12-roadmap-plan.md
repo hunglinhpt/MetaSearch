@@ -87,6 +87,27 @@
 > - 📐 Correctness: answer cache key thiếu search params (spec: `an:{sha1(query+model+params)}`) → thêm k/categories/freshness; frontend SSE flush frame cuối; README fix `language` → `lang`.
 > - Tests: 151 → **174 passed** (+23: CORS ×4, RobotsCache ×8, page-cache roundtrip, negative-cache qua Redis flag, worker probe ×4, queries 400, cache-key semantics ×4).
 
+### Bổ sung sau audit: observability + common error + performance (không thuộc phase)
+
+- **Grafana + Prometheus thật** (trước đây chỉ 2 service rỗng trong compose): `deploy/prometheus/prometheus.yml` scrape `api:8000/metrics`; `deploy/grafana/` provisioning datasource + dashboard 8 panel (readiness, RPS, error %, cache-hit % theo KPI ≥ 40, HTTP p50/p95 theo KPI search p95 ≤ 2.5s, engine calls/latency, LLM tokens + cost). Bật: `docker compose --profile observability up -d` → `localhost:3001`.
+- **Common error phía client**: `frontend/lib/api.ts` thêm class `ApiError {code, status}` map 1-1 với error model backend (`core/errors.py`); `page.tsx` hiển thị `[code] message`; SSE `error` event truyền cả code.
+- **Performance test thật** (`api/scripts/perf_load.py`, không cần Docker — fake SearXNG local + uvicorn in-process):
+
+| Scenario | p50 | p95 | p99 | errors |
+|---|---|---|---|---|
+| Micro: merge+score 500 raws | 57.8ms | — | — | — |
+| Micro: SimHash ×300 | 14.7ms | — | — | — |
+| Micro: canonicalize ×5000 | 39.1ms | — | — | — |
+| GET /healthz (c=20, n=400) | 69ms | 224ms | 618ms | 0 |
+| POST /v1/search c=1 | **131ms** | 193ms | 199ms | 0 |
+| POST /v1/search c=5 | 677ms | 724ms | 732ms | 0 |
+| POST /v1/search c=25 | 3.5s* | 4.3s* | 5.2s* | 0 |
+
+  \* c=25 bị giới hạn bởi fake ThreadingHTTPServer (~7 rps × 25 concurrent = 3.5s queue — client-side queuing, không phải app); SearXNG thật (Go) sẽ không có trần này. k6 script cho stack thật: `deploy/k6/load-test.js` (thresholds theo KPI docs/12 §3).
+
+- **Performance test tìm ra 1 bug resilience thật**: Postgres partition (connect bị DROP, không refused) → `record_result` awaited trong critical path chờ asyncpg timeout 3s → pending connects bão hòa pool → **pool timeout 30s, p50 30s, 132/200 requests lỗi**. Fixes: (1) mọi DB op của `DbEngineStore` bounded bởi `ENGINE_STORE_DB_TIMEOUT_S=0.5` → fallback in-memory; (2) `pool_timeout=5` thay 30s; (3) setting `ENGINE_STORE_BACKEND=memory` cho dev/perf không DB. Sau fix: 0 errors, không còn treo.
+- Repo hygiene: `git status` sạch, `.gitignore` phủ đủ (`__pycache__/`, `.next/`, `*.tsbuildinfo`, `.venv/`...), không artifact nào bị track.
+
 ### Phase 3 — Deep Research & MCP (tuần 5–6)
 - [ ] Planner (tách sub-queries), Executor (loop), Synthesizer (report có citation)
 - [ ] `/v1/research` async job + progress SSE

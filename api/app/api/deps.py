@@ -29,11 +29,18 @@ def get_session_factory():
 
 @lru_cache(maxsize=1)
 def get_engine_store() -> EngineStore:
-    """DB-backed store with in-memory fallback; registry and endpoints share it."""
+    """DB-backed store with in-memory fallback; registry and endpoints share it.
+
+    ``ENGINE_STORE_BACKEND=memory`` skips Postgres entirely (dev boxes and
+    perf runs without a database).
+    """
     from app.orchestration.engine_store import DbEngineStore
 
     settings = get_settings()
-    return DbEngineStore(settings, InMemoryEngineStore.from_settings(settings))
+    fallback = InMemoryEngineStore.from_settings(settings)
+    if settings.engine_store_backend == "memory":
+        return fallback
+    return DbEngineStore(settings, fallback)
 
 
 @lru_cache(maxsize=1)

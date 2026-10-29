@@ -39,6 +39,23 @@ export type AnswerMeta = {
   cached?: boolean;
 };
 
+/**
+ * Common client error mirroring the backend error model
+ * (api/app/core/errors.py): invalid_request | unauthorized | rate_limited |
+ * upstream_timeout | no_results | internal.
+ */
+export class ApiError extends Error {
+  code: string;
+  status: number;
+
+  constructor(code: string, message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 export type AnswerHandlers = {
   onStatus?: (stage: string, detail: string) => void;
   onEngineDone?: (info: EngineDone) => void;
@@ -46,7 +63,7 @@ export type AnswerHandlers = {
   onToken?: (text: string) => void;
   onCitations?: (citations: Citation[]) => void;
   onDone?: (meta: AnswerMeta) => void;
-  onError?: (message: string) => void;
+  onError?: (code: string, message: string) => void;
 };
 
 export async function search(
@@ -60,7 +77,7 @@ export async function search(
     signal,
   });
   if (!resp.ok) {
-    throw new Error(await extractError(resp));
+    throw await parseError(resp);
   }
   return resp.json();
 }
@@ -77,7 +94,7 @@ export async function streamAnswer(
     signal,
   });
   if (!resp.ok || !resp.body) {
-    throw new Error(await extractError(resp));
+    throw await parseError(resp);
   }
 
   const reader = resp.body.getReader();
@@ -113,7 +130,7 @@ export async function streamAnswer(
         handlers.onDone?.(d as unknown as AnswerMeta);
         break;
       case "error":
-        handlers.onError?.(String(d.message ?? "unknown error"));
+        handlers.onError?.(String(d.code ?? "internal"), String(d.message ?? "unknown error"));
         break;
     }
   };
@@ -151,11 +168,16 @@ export async function streamAnswer(
   }
 }
 
-async function extractError(resp: Response): Promise<string> {
+async function parseError(resp: Response): Promise<ApiError> {
   try {
     const body = await resp.json();
-    return body?.error?.message ?? `HTTP ${resp.status}`;
+    const err = body?.error ?? {};
+    return new ApiError(
+      String(err.code ?? "internal"),
+      String(err.message ?? `HTTP ${resp.status}`),
+      resp.status
+    );
   } catch {
-    return `HTTP ${resp.status}`;
+    return new ApiError("internal", `HTTP ${resp.status}`, resp.status);
   }
 }

@@ -14,6 +14,7 @@ such engines when a probe succeeds.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -178,7 +179,13 @@ class InMemoryEngineStore:
 
 
 class DbEngineStore:
-    """Postgres-backed store with an in-memory fallback and a short TTL cache."""
+    """Postgres-backed store with an in-memory fallback and a short TTL cache.
+
+    Every DB operation is bounded by ``engine_store_db_timeout_s``: a
+    partitioned (not refused) Postgres otherwise parks each request for the
+    full asyncpg connect timeout — measured at 3s per op on the perf rig,
+    30s+ once the pool saturates. On timeout we degrade to the fallback store.
+    """
 
     def __init__(
         self,
@@ -190,9 +197,20 @@ class DbEngineStore:
         self._settings = settings or get_settings()
         self._fallback = fallback or InMemoryEngineStore.from_settings(self._settings)
         self._refresh_s = refresh_s if refresh_s is not None else self._settings.registry_refresh_s
+        self._db_timeout_s = settings.engine_store_db_timeout_s if settings else 0.5
         self._cache: dict[str, EngineConfig] | None = None
         self._cache_at = 0.0
         self._db_warned = False
+
+    async def _guarded(self, coro):
+        """Bound one DB operation; fall back to memory when it stalls."""
+        try:
+            return await asyncio.wait_for(coro, timeout=self._db_timeout_s)
+        except Exception:
+            if not self._db_warned:
+                logger.warning("engine_store_db_timeout", timeout_s=self._db_timeout_s)
+                self._db_warned = True
+            raise
 
     # -- snapshot ----------------------------------------------------------
 
@@ -200,10 +218,10 @@ class DbEngineStore:
         if self._cache is not None and time.monotonic() - self._cache_at < self._refresh_s:
             return self._cache
         try:
-            rows = await self._load_rows()
+            rows = await self._guarded(self._load_rows())
             if not rows:
-                await self._seed_rows()
-                rows = await self._load_rows()
+                await self._guarded(self._seed_rows())
+                rows = await self._guarded(self._load_rows())
             self._cache = rows
             self._cache_at = time.monotonic()
             return rows
@@ -266,7 +284,8 @@ class DbEngineStore:
             # auto-disable state, mirroring InMemoryEngineStore.update.
             changes["disabled_reason"] = None
             changes["consecutive_failures"] = 0
-        try:
+
+        async def _do_update() -> None:
             async with get_sessionmaker()() as session:
                 await session.execute(
                     pg_insert(EngineRow)
@@ -274,6 +293,9 @@ class DbEngineStore:
                     .on_conflict_do_update(index_elements=["id"], set_=changes)
                 )
                 await session.commit()
+
+        try:
+            await self._guarded(_do_update())
         except Exception as exc:
             logger.warning("engine_update_db_failed", error=type(exc).__name__)
             return await self._fallback.update(engine_id, changes)
@@ -298,7 +320,7 @@ class DbEngineStore:
 
     async def record_result(self, engine_id: str, *, ok: bool, latency_ms: int) -> None:
         try:
-            await self._record_db(engine_id, ok=ok)
+            await self._guarded(self._record_db(engine_id, ok=ok))
         except Exception as exc:
             logger.warning("engine_health_db_failed", error=type(exc).__name__)
             await self._fallback.record_result(engine_id, ok=ok, latency_ms=latency_ms)
@@ -350,21 +372,25 @@ class DbEngineStore:
                 logger.warning("engine_auto_disabled", engine=engine_id, failures=consecutive)
             await session.commit()
 
-    async def health(self) -> dict[str, EngineHealthSummary]:
-        try:
-            async with get_sessionmaker()() as session:
-                engines = (await session.execute(select(EngineRow))).scalars().all()
-                windows = (
-                    (
-                        await session.execute(
-                            select(EngineHealthRow).where(
-                                EngineHealthRow.window_start == _window_start()
-                            )
+    async def _load_health(self):
+        async with get_sessionmaker()() as session:
+            engines = (await session.execute(select(EngineRow))).scalars().all()
+            windows = (
+                (
+                    await session.execute(
+                        select(EngineHealthRow).where(
+                            EngineHealthRow.window_start == _window_start()
                         )
                     )
-                    .scalars()
-                    .all()
                 )
+                .scalars()
+                .all()
+            )
+        return engines, windows
+
+    async def health(self) -> dict[str, EngineHealthSummary]:
+        try:
+            engines, windows = await self._guarded(self._load_health())
         except Exception as exc:
             logger.warning("engine_health_db_failed", error=type(exc).__name__)
             return await self._fallback.health()
@@ -383,16 +409,19 @@ class DbEngineStore:
             )
         return out
 
+    async def _load_auto_disabled(self) -> list[str]:
+        async with get_sessionmaker()() as session:
+            result = await session.execute(
+                select(EngineRow.id).where(
+                    EngineRow.enabled.is_(False),
+                    EngineRow.disabled_reason.like("auto:%"),
+                )
+            )
+            return [row[0] for row in result.all()]
+
     async def auto_disabled(self) -> list[str]:
         try:
-            async with get_sessionmaker()() as session:
-                result = await session.execute(
-                    select(EngineRow.id).where(
-                        EngineRow.enabled.is_(False),
-                        EngineRow.disabled_reason.like("auto:%"),
-                    )
-                )
-                return [row[0] for row in result.all()]
+            return await self._guarded(self._load_auto_disabled())
         except Exception:
             return await self._fallback.auto_disabled()
 

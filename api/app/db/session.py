@@ -32,6 +32,7 @@ def get_engine() -> AsyncEngine:
             # concurrently; keep headroom so requests never wait on the pool.
             pool_size=10,
             max_overflow=10,
+            pool_timeout=settings.db_pool_timeout_s,
             echo=False,
             # Fail fast on an unreachable Postgres (fallback paths rely on it).
             connect_args={"timeout": 3, "command_timeout": 10},
