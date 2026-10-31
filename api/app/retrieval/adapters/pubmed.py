@@ -74,6 +74,8 @@ class PubMedAdapter:
         max_results: int = 15,
         timeout_s: float = 5.0,
     ) -> list[RawResult]:
+        if not query.strip():
+            return []
         search_params = {
             "db": "pubmed",
             "term": query,
@@ -126,7 +128,7 @@ class PubMedAdapter:
         result_dict = sum_data.get("result", {})
         results: list[RawResult] = []
 
-        for rank, pmid in enumerate(id_list, start=1):
+        for pmid in id_list:
             doc = result_dict.get(pmid)
             if not doc or not isinstance(doc, dict):
                 continue
@@ -151,7 +153,7 @@ class PubMedAdapter:
                     url=url,
                     title=title,
                     snippet=snippet,
-                    rank=rank,
+                    rank=len(results) + 1,
                     adapter=self.id,
                     source_engines=[self.id],
                     published_at=published_at,

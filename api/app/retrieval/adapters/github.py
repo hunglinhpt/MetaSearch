@@ -50,6 +50,8 @@ class GitHubAdapter:
         max_results: int = 15,
         timeout_s: float = 4.0,
     ) -> list[RawResult]:
+        if not query.strip():
+            return []
         params: dict[str, str] = {
             "q": query,
             "sort": "stars",
@@ -87,7 +89,7 @@ class GitHubAdapter:
         items = payload.get("items") or []
         results: list[RawResult] = []
 
-        for rank, item in enumerate(items, start=1):
+        for item in items:
             url = item.get("html_url")
             if not url or not url.startswith("http"):
                 continue
@@ -95,8 +97,8 @@ class GitHubAdapter:
             name = item.get("full_name") or item.get("name") or "repository"
             desc = _strip_html(item.get("description") or "")
             language = item.get("language") or "Code"
-            stars = item.get("stargazers_count", 0)
-            forks = item.get("forks_count", 0)
+            stars = item.get("stargazers_count") or 0
+            forks = item.get("forks_count") or 0
 
             snippet = f"[{language} ★{stars:,} ⑂{forks:,}] {desc}".strip()
             published_at = _parse_iso(item.get("updated_at") or item.get("pushed_at"))
@@ -106,7 +108,7 @@ class GitHubAdapter:
                     url=url,
                     title=name,
                     snippet=snippet,
-                    rank=rank,
+                    rank=len(results) + 1,
                     adapter=self.id,
                     source_engines=[self.id],
                     published_at=published_at,

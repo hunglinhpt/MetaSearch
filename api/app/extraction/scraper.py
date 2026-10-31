@@ -69,6 +69,9 @@ CHALLENGE_PATTERNS = (
     "please turn javascript on and reload the page",
     "datadome",
     "perimeterx",
+    "bot detection",
+    "are you a human",
+    "incapsula_resource",
 )
 
 
@@ -159,6 +162,9 @@ class Scraper:
                 )
             else:
                 raise
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+            # Network-level bot drop or TLS reset: escalate to proxy tier
+            logger.info("direct_fetch_network_drop_escalating", url=url, error=type(exc).__name__)
 
         if body:
             if is_challenge_page(body):

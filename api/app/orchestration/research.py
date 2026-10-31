@@ -212,6 +212,9 @@ def detect_profile(query: str, requested: str = "auto") -> str:
         "kubernetes",
         "c++",
         "rust",
+        "github",
+        "repo",
+        "huggingface",
     )
     if any(k in q for k in dev_keywords):
         return "developer"
@@ -225,6 +228,12 @@ def detect_profile(query: str, requested: str = "auto") -> str:
         "transformer",
         "neural",
         "empirical",
+        "pubmed",
+        "ncbi",
+        "clinical",
+        "biology",
+        "biomedical",
+        "citation",
     )
     if any(k in q for k in academic_keywords):
         return "academic"

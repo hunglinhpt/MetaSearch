@@ -41,6 +41,8 @@ class SemanticScholarAdapter:
         max_results: int = 15,
         timeout_s: float = 4.0,
     ) -> list[RawResult]:
+        if not query.strip():
+            return []
         params = {
             "query": query,
             "limit": str(min(max_results, 25)),
@@ -77,7 +79,7 @@ class SemanticScholarAdapter:
         items = payload.get("data") or []
         results: list[RawResult] = []
 
-        for rank, item in enumerate(items, start=1):
+        for item in items:
             if not isinstance(item, dict):
                 continue
 
@@ -93,7 +95,7 @@ class SemanticScholarAdapter:
                 continue
 
             year = item.get("year")
-            citations = item.get("citationCount", 0)
+            citations = item.get("citationCount") or 0
             authors = [a.get("name", "") for a in item.get("authors", []) if a.get("name")]
             authors_str = (
                 ", ".join(authors[:3]) + (" et al." if len(authors) > 3 else "")
@@ -106,14 +108,19 @@ class SemanticScholarAdapter:
             if abstract:
                 snippet = f"{snippet} · {abstract}"
 
-            published_at = datetime(int(year), 1, 1, tzinfo=UTC) if year else None
+            published_at = None
+            if year:
+                try:
+                    published_at = datetime(int(year), 1, 1, tzinfo=UTC)
+                except (ValueError, TypeError):
+                    published_at = None
 
             results.append(
                 RawResult(
                     url=url,
                     title=title,
                     snippet=snippet,
-                    rank=rank,
+                    rank=len(results) + 1,
                     adapter=self.id,
                     source_engines=[self.id],
                     published_at=published_at,

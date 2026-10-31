@@ -366,6 +366,36 @@ class TestGitHub:
         with pytest.raises(AdapterError, match="rate limit exceeded"):
             await adapter.search("query")
 
+    async def test_github_empty_query(self):
+        adapter = GitHubAdapter()
+        assert await adapter.search("   ") == []
+
+    async def test_github_handles_null_numbers(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "total_count": 1,
+                    "items": [
+                        {
+                            "full_name": "owner/repo",
+                            "html_url": "https://github.com/owner/repo",
+                            "description": "desc",
+                            "language": None,
+                            "stargazers_count": None,
+                            "forks_count": None,
+                        }
+                    ],
+                },
+            )
+
+        adapter = GitHubAdapter()
+        patched_httpx("app.retrieval.adapters.github", handler)
+        results = await adapter.search("repo")
+        assert len(results) == 1
+        assert "★0 ⑂0" in results[0].snippet
+        assert results[0].rank == 1
+
 
 class TestPubMed:
     async def test_parses_pubmed_papers(self, patched_httpx):
@@ -412,6 +442,10 @@ class TestPubMed:
         results = await adapter.search("nonexistentterm99999")
         assert results == []
 
+    async def test_pubmed_empty_query(self):
+        adapter = PubMedAdapter()
+        assert await adapter.search("   ") == []
+
 
 class TestHuggingFace:
     async def test_parses_models(self, patched_httpx):
@@ -437,6 +471,30 @@ class TestHuggingFace:
         assert "950,000" in results[0].snippet
         assert results[0].url == "https://huggingface.co/deepseek-ai/DeepSeek-V3"
         assert results[0].source_engines == ["huggingface"]
+
+    async def test_hf_empty_query(self):
+        adapter = HuggingFaceAdapter()
+        assert await adapter.search("   ") == []
+
+    async def test_hf_handles_null_numbers(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "model-without-stats",
+                        "likes": None,
+                        "downloads": None,
+                        "pipeline_tag": None,
+                    }
+                ],
+            )
+
+        adapter = HuggingFaceAdapter()
+        patched_httpx("app.retrieval.adapters.huggingface", handler)
+        results = await adapter.search("model")
+        assert len(results) == 1
+        assert "Downloads: 0 · Likes: 0" in results[0].snippet
 
 
 class TestSemanticScholar:
@@ -467,3 +525,34 @@ class TestSemanticScholar:
         assert results[0].title == "Deep Residual Learning for Image Recognition"
         assert "190,000" in results[0].snippet
         assert results[0].source_engines == ["semanticscholar"]
+
+    async def test_s2_empty_query(self):
+        adapter = SemanticScholarAdapter()
+        assert await adapter.search("   ") == []
+
+    async def test_s2_handles_null_numbers_and_invalid_year(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "total": 1,
+                    "data": [
+                        {
+                            "paperId": "p123",
+                            "title": "Title",
+                            "url": "https://example.com/paper",
+                            "abstract": None,
+                            "year": "invalid-year",
+                            "citationCount": None,
+                            "authors": [],
+                        }
+                    ],
+                },
+            )
+
+        adapter = SemanticScholarAdapter()
+        patched_httpx("app.retrieval.adapters.semanticscholar", handler)
+        results = await adapter.search("paper")
+        assert len(results) == 1
+        assert "Citations: 0" in results[0].snippet
+        assert results[0].published_at is None

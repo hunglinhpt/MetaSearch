@@ -42,6 +42,8 @@ class HuggingFaceAdapter:
         max_results: int = 15,
         timeout_s: float = 4.0,
     ) -> list[RawResult]:
+        if not query.strip():
+            return []
         params = {
             "search": query,
             "limit": str(min(max_results, 30)),
@@ -75,7 +77,7 @@ class HuggingFaceAdapter:
             return []
 
         results: list[RawResult] = []
-        for rank, item in enumerate(items, start=1):
+        for item in items:
             if not isinstance(item, dict):
                 continue
 
@@ -84,8 +86,8 @@ class HuggingFaceAdapter:
                 continue
 
             url = f"https://huggingface.co/{model_id}"
-            downloads = item.get("downloads", 0)
-            likes = item.get("likes", 0)
+            downloads = item.get("downloads") or 0
+            likes = item.get("likes") or 0
             pipeline_tag = item.get("pipeline_tag") or "model"
             author = model_id.split("/")[0] if "/" in model_id else "community"
 
@@ -100,7 +102,7 @@ class HuggingFaceAdapter:
                     url=url,
                     title=model_id,
                     snippet=snippet,
-                    rank=rank,
+                    rank=len(results) + 1,
                     adapter=self.id,
                     source_engines=[self.id],
                     published_at=published_at,
