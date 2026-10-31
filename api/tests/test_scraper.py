@@ -98,6 +98,25 @@ async def test_crawl4ai_fallback_when_static_extraction_fails():
     assert "JS page content" in page.markdown
 
 
+async def test_jina_keyless_lite_mode():
+    """Lite profile: r.jina.ai works WITHOUT an API key (~20 rpm free tier)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
+        if request.url.host == "crawl4ai.test":
+            raise httpx.ConnectError("down", request=request)
+        if request.url.host == "r.jina.ai":
+            assert "authorization" not in request.headers  # no key sent
+            return httpx.Response(200, text="Title: Keyless\n\ncontent")
+        return httpx.Response(200, html="<html><body><div>x</div></body></html>")
+
+    scraper = make_scraper(handler, JINA_API_KEY="")
+    page = await scraper.scrape("https://keyless.example.com/page")
+    assert hasattr(page, "markdown")
+    assert page.extractor_used == "jina"
+
+
 async def test_jina_fallback_when_crawl4ai_down():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/robots.txt":

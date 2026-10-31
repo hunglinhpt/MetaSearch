@@ -36,11 +36,17 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # --- giants (upstream services) --------------------------------------
+    # Lite profile (no Docker): SEARXNG_ENABLED=false switches the general
+    # search to the keyless DuckDuckGo adapter + verticals.
+    searxng_enabled: bool = True
     searxng_url: str = "http://searxng:8080"
     # Port must match deploy/docker-compose.yml (crawl4ai publishes 11222).
     crawl4ai_url: str = "http://crawl4ai:11222"
     crawl4ai_api_token: str = ""
     jina_reader_base_url: str = "https://r.jina.ai"
+    # Jina reader works keyless at low rates (~20 rpm) — the Lite profile
+    # relies on it as the JS-rendering tier without crawl4ai.
+    jina_keyless: bool = True
 
     # --- storage ---------------------------------------------------------
     database_url: str = "postgresql+asyncpg://metasearch:metasearch@postgres:5432/metasearch"

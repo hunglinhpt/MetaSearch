@@ -1,5 +1,42 @@
 # 08 — Deployment & Operations
 
+## 0 — Lite profile: chạy KHÔNG Docker (máy yếu / laptop 8–16GB)
+
+Từ v0.6.0 toàn bộ tính năng chạy native không container. RAM đo thực tế: **API ~100MB**
+(so với ~4GB cho compose stack). Đổi lại: L2 semantic cache tắt (cần pgvector),
+JS-rendering phụ thuộc Jina Reader keyless (~20 rpm), engine hot-config lưu
+in-memory khi engine store rơi về fallback.
+
+### Khởi động 3 bước
+
+```powershell
+cd api
+python -m venv .venv && .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+copy ..\deploy\.env.lite.example .env        # điền OPENAI_API_KEY nếu muốn answer
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+# Swagger: http://localhost:8000/docs — Web UI: cd frontend && npm run dev
+```
+
+### Chất lượng đảm bảo thế nào
+
+| Năng lực | Lite profile | Ghi chú |
+|---|---|---|
+| General search | DuckDuckGo keyless + Tavily/Serper/Brave khi có key | Dedup/consensus/diversity/citation giữ nguyên |
+| Academic/reference | arXiv + Wikipedia (theo lang) | Category filter như thường |
+| Extraction | trafilatura in-process -> Jina Reader keyless | SSRF guard + pinning + robots + 5MB cap giữ nguyên |
+| Persistence | SQLite (WAL) — queries/answers/keys/engine config | Tự tạo schema lúc boot; Alembic chỉ cho Postgres |
+| Cache | Redis -> **in-process TTL fallback** (512 entries) | Hit/share per-worker |
+| Rate limit | Redis -> **local sliding window fallback** | Vẫn chặn 429 khi Redis chết |
+| Auth | Đầy đủ (SQLite) | `metasearch keys create` |
+| Deep Research / MCP / eval | Đầy đủ | Budget cap như thường |
+
+### Khi nào cần Docker trở lại
+
+- Cần SearXNG consensus 70+ engines / JS crawl4ai render / pgvector L2 cache /
+  shared Redis rate limit multi-worker -> dùng compose profile đầy đủ.
+- Cả hai profile dùng chung code; chuyển bằng env vars, không có branch riêng.
+
+
 ## 1. Topology (docker-compose, single node)
 
 ```mermaid

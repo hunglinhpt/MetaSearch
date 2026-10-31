@@ -171,13 +171,19 @@ class TestRateLimit:
         assert excinfo.value.code.value == "rate_limited"
         assert "Retry-After" in excinfo.value.headers
 
-    async def test_redis_down_skips_limit(self, monkeypatch):
+    async def test_redis_down_uses_local_window(self, monkeypatch):
         from app.core import auth as auth_mod
 
         monkeypatch.setattr(auth_mod, "get_redis", lambda: None)
-        ctx = AuthContext(key_id="k1", name=None, role="user", rate_limit_rpm=60)
-        headers = await auth_mod.check_rate_limit(ctx)
-        assert "X-RateLimit-Remaining" not in headers  # graceful skip
+        auth_mod._local_windows.clear()
+        ctx = AuthContext(key_id="lite", name=None, role="user", rate_limit_rpm=2)
+        # First two requests pass, the third trips the in-process window.
+        await auth_mod.check_rate_limit(ctx)
+        await auth_mod.check_rate_limit(ctx)
+        with pytest.raises(MetaSearchError) as excinfo:
+            await auth_mod.check_rate_limit(ctx)
+        assert excinfo.value.details["backend"] == "local"
+        auth_mod._local_windows.clear()
 
 
 class TestEndpointAuthEnforced:

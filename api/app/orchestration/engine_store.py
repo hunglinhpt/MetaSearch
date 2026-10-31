@@ -22,6 +22,7 @@ from typing import Any, Protocol
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.config import Settings, get_settings
 from app.core.logging import get_logger
@@ -35,6 +36,7 @@ logger = get_logger(__name__)
 # import path stored in the engines.adapter column (docs/03 §2)
 ADAPTER_PATHS = {
     "searxng": "app.retrieval.adapters.searxng:SearXNGAdapter",
+    "ddg": "app.retrieval.adapters.ddg:DuckDuckGoAdapter",
     "tavily": "app.retrieval.adapters.tavily:TavilyAdapter",
     "serper": "app.retrieval.adapters.serper:SerperAdapter",
     "brave": "app.retrieval.adapters.brave:BraveAdapter",
@@ -69,12 +71,23 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             id="searxng",
             name="SearXNG (70+ engines)",
             category="general",
-            weight=1.0,
-            enabled=True,
+            weight=1.5,
+            enabled=bool(settings.searxng_enabled),
             timeout_ms=int(settings.searxng_timeout_s * 1000),
             max_results=15,
             requires_key=False,
             adapter_path=ADAPTER_PATHS["searxng"],
+        ),
+        "ddg": EngineConfig(
+            id="ddg",
+            name="DuckDuckGo (keyless, Lite profile)",
+            category="general",
+            weight=1.0,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=15,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["ddg"],
         ),
         "tavily": EngineConfig(
             id="tavily",
@@ -284,9 +297,10 @@ class DbEngineStore:
 
     async def _seed_rows(self) -> None:
         async with get_sessionmaker()() as session:
+            insert = _dialect_insert(session)
             for cfg in default_configs(self._settings).values():
                 await session.execute(
-                    pg_insert(EngineRow)
+                    insert(EngineRow)
                     .values(
                         id=cfg.id,
                         name=cfg.name,
@@ -320,7 +334,7 @@ class DbEngineStore:
         async def _do_update() -> None:
             async with get_sessionmaker()() as session:
                 await session.execute(
-                    pg_insert(EngineRow)
+                    _dialect_insert(session)(EngineRow)
                     .values(id=engine_id, **self._row_values(engine_id, changes))
                     .on_conflict_do_update(index_elements=["id"], set_=changes)
                 )
@@ -373,7 +387,7 @@ class DbEngineStore:
             consecutive = 0 if ok else int((row[0] if row else 0) or 0) + 1
 
             await session.execute(
-                pg_insert(EngineHealthRow)
+                _dialect_insert(session)(EngineHealthRow)
                 .values(
                     engine_id=engine_id,
                     window_start=window_start,
@@ -459,6 +473,13 @@ class DbEngineStore:
 
     def _invalidate(self) -> None:
         self._cache = None
+
+
+def _dialect_insert(session):
+    """Postgres and SQLite both support ON CONFLICT — pick the right insert."""
+    if session.bind is not None and session.bind.dialect.name == "sqlite":
+        return sqlite_insert
+    return pg_insert
 
 
 def _window_start() -> datetime:

@@ -15,6 +15,11 @@ orchestration không đổi.
 
 ## 2. Trạng thái hiện tại (cập nhật: 2026-10-31)
 
+- ✅ **Lite profile (v0.6.0)**: chạy KHÔNG Docker — DuckDuckGo keyless thay
+  SearXNG, SQLite thay Postgres (dialect variants), Jina keyless thay crawl4ai,
+  cache + rate limit in-process fallback khi không Redis. API ~100MB RAM.
+  Quick start: `deploy/.env.lite.example`; docs/08 §Lite. Docker vẫn là full
+  profile (SearXNG consensus, crawl4ai, pgvector) — cùng một bộ code.
 - ✅ **Phase 0-3 + lõi Phase 4 hoàn tất** (v0.5.0 — xem [CHANGELOG.md](CHANGELOG.md)):
   toàn bộ FR-1..FR-16 trừ vài mục nhỏ; Deep Research (planner/executor/synthesizer
   + async job + SSE), MCP server 4 tools (stdio + HTTP), auth API key + sliding-window

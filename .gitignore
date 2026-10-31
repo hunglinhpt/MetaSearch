@@ -27,6 +27,8 @@ out/
 data/
 *.sqlite3
 *.db
+*.db-wal
+*.db-shm
 qdrant_storage/
 searxng-data/
 

@@ -18,6 +18,7 @@ from app.orchestration.engine_store import (
 from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.adapters.brave import BraveAdapter
+from app.retrieval.adapters.ddg import DuckDuckGoAdapter
 from app.retrieval.adapters.searxng import SearXNGAdapter
 from app.retrieval.adapters.serper import SerperAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
@@ -61,6 +62,7 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
     """One adapter instance per implemented engine with credentials."""
     adapters: dict[str, SearchAdapter] = {
         "searxng": SearXNGAdapter(settings.searxng_url),
+        "ddg": DuckDuckGoAdapter(),
         "arxiv": ArxivAdapter(),
         "wikipedia": WikipediaAdapter(),
     }

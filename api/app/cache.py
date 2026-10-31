@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -57,12 +58,52 @@ async def dispose_redis() -> None:
     _redis_client = None
 
 
+class _LocalTTLCache:
+    """Bounded in-process TTL cache — the Lite-profile L1 when Redis is down."""
+
+    def __init__(self, max_entries: int = 512) -> None:
+        self._data: dict[str, tuple[float, Any]] = {}
+        self._max = max_entries
+
+    def get(self, key: str) -> Any | None:
+        entry = self._data.get(key)
+        if entry is None:
+            return None
+        expires, value = entry
+        if time.monotonic() > expires:
+            self._data.pop(key, None)
+            return None
+        return value
+
+    def set(self, key: str, value: Any, ttl_s: int) -> None:
+        if len(self._data) >= self._max:
+            # Drop expired first, then oldest — good enough for a fallback.
+            now = time.monotonic()
+            expired = [k for k, (exp, _) in self._data.items() if now > exp]
+            for k in expired:
+                self._data.pop(k, None)
+            while len(self._data) >= self._max:
+                self._data.pop(next(iter(self._data)))
+        self._data[key] = (time.monotonic() + ttl_s, value)
+
+    def exists(self, key: str) -> bool:
+        return self.get(key) is not None
+
+
+_local_cache = _LocalTTLCache()
+
+
 class CacheClient:
-    """Thin JSON/flag wrapper over Redis; a dead Redis is just a cache miss."""
+    """Thin JSON/flag wrapper: Redis first, in-process TTL cache fallback.
+
+    A dead Redis on the Lite profile no longer means "no caching" — values
+    live in-process (per worker) with the same TTLs. Multi-worker deployments
+    should still run Redis for shared hits.
+    """
 
     def __init__(self, client: Any = None, *, enabled: bool = True) -> None:
         self._client = client
-        self.enabled = enabled and client is not None
+        self.enabled = enabled
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> CacheClient:
@@ -74,42 +115,55 @@ class CacheClient:
     async def get_json(self, key: str) -> Any | None:
         if not self.enabled:
             return None
-        try:
-            raw = await self._client.get(key)
-        except Exception:
-            return None
-        if raw is None:
-            CACHE_EVENTS.labels(layer="L1", outcome="miss").inc()
-            return None
-        CACHE_EVENTS.labels(layer="L1", outcome="hit").inc()
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return None
+        if self._client is not None:
+            try:
+                raw = await self._client.get(key)
+            except Exception:
+                raw = None
+            if raw is None:
+                CACHE_EVENTS.labels(layer="L1", outcome="miss").inc()
+                return None
+            CACHE_EVENTS.labels(layer="L1", outcome="hit").inc()
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+        # in-process fallback
+        value = _local_cache.get(key)
+        CACHE_EVENTS.labels(layer="L1", outcome="hit" if value is not None else "miss").inc()
+        return value
 
     async def set_json(self, key: str, value: Any, *, ttl_s: int) -> None:
         if not self.enabled:
             return
-        try:
-            await self._client.set(key, json.dumps(value, ensure_ascii=False), ex=ttl_s)
-        except Exception as exc:
-            logger.warning("cache_set_failed", key=key[:24], error=type(exc).__name__)
+        if self._client is not None:
+            try:
+                await self._client.set(key, json.dumps(value, ensure_ascii=False), ex=ttl_s)
+            except Exception as exc:
+                logger.warning("cache_set_failed", key=key[:24], error=type(exc).__name__)
+        else:
+            _local_cache.set(key, value, ttl_s)
 
     async def has_flag(self, key: str) -> bool:
         if not self.enabled:
             return False
-        try:
-            return bool(await self._client.exists(key))
-        except Exception:
-            return False
+        if self._client is not None:
+            try:
+                return bool(await self._client.exists(key))
+            except Exception:
+                return False
+        return _local_cache.exists(key)
 
     async def set_flag(self, key: str, *, ttl_s: int) -> None:
         if not self.enabled:
             return
-        try:
-            await self._client.set(key, "1", ex=ttl_s)
-        except Exception as exc:
-            logger.warning("cache_flag_failed", key=key[:24], error=type(exc).__name__)
+        if self._client is not None:
+            try:
+                await self._client.set(key, "1", ex=ttl_s)
+            except Exception as exc:
+                logger.warning("cache_flag_failed", key=key[:24], error=type(exc).__name__)
+        else:
+            _local_cache.set(key, 1, ttl_s)
 
 
 # --- key builders -----------------------------------------------------------

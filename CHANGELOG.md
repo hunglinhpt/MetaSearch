@@ -4,6 +4,25 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [0.6.0] — 2026-10-31 — Lite profile: chạy không Docker trên máy yếu
+
+### Added
+- **DuckDuckGo adapter (keyless)**: general search không cần SearXNG/API key —
+  unwrap link `/l/?uddg=`, parse date từ snippet, throttle 1.5s, phát hiện
+  bot-challenge (403/429/202 + anomaly page).
+- **SQLite persistence (Lite profile)**: models dùng dialect variants
+  (`sa.Uuid` / JSON→JSONB / JSON→ARRAY / JSON→Vector) — cùng một bộ models
+  chạy trên Postgres+pgvector lẫn SQLite (WAL, auto-schema lúc boot,
+  `aiosqlite`); engine store upsert dialect-aware; auth/keys/query history
+  hoạt động đầy đủ trên SQLite.
+- **In-process fallbacks giữ chất lượng khi không Redis**: L1 cache dùng
+  bounded TTL cache (512 entries) thay vì cache miss; rate limit dùng local
+  sliding window thay vì bỏ limiter — Lite profile vẫn được bảo vệ + cache.
+- **Jina Reader keyless** (~20 rpm) làm tier JS-rendering thay crawl4ai;
+  `JINA_KEYLESS=true` mặc định, có key thì rate cao hơn.
+- `deploy/.env.lite.example` + docs/08 §Lite + README Quick Start 2 profile.
+- RAM đo thực tế Lite mode: **API ~100MB** (compose stack ~4GB).
+
 ## [0.5.0] — 2026-10-31 — Phase 3: Deep Research & MCP + Phase 4 lõi
 
 ### Added

@@ -214,9 +214,13 @@ class Scraper:
 
     async def _jina(self, url: str, timeout_s: float) -> PageContent | None:
         settings = self._settings
-        if not settings.jina_api_key:
+        # Keyless r.jina.ai (~20 rpm) keeps the Lite profile functional without
+        # crawl4ai; an API key simply raises the rate ceiling.
+        if not settings.jina_api_key and not settings.jina_keyless:
             return None
-        headers = {"Authorization": f"Bearer {settings.jina_api_key}"}
+        headers = (
+            {"Authorization": f"Bearer {settings.jina_api_key}"} if settings.jina_api_key else {}
+        )
         try:
             client = self._client or get_http_client()
             resp = await client.get(

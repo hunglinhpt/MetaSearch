@@ -67,7 +67,21 @@ flowchart LR
 
 Chi tiết đầy đủ: [docs/02-system-architecture.md](docs/02-system-architecture.md) · Pipeline từng stage: [docs/03-search-pipeline.md](docs/03-search-pipeline.md)
 
-## 3. Quick Start (mục tiêu sau Phase 1)
+## 3. Quick Start
+
+### Lite profile — KHÔNG cần Docker (máy yếu, API ~100MB RAM, v0.6.0+)
+
+```bash
+git clone https://github.com/hunglinhpt/MetaSearch.git
+cd MetaSearch/api
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -e ".[dev]"     # Windows; Linux: .venv/bin/pip
+cp ../deploy/.env.lite.example .env   # DuckDuckGo keyless + SQLite + Jina keyless
+.venv/Scripts/python.exe -m uvicorn app.main:app --port 8000
+# Swagger: http://localhost:8000/docs
+```
+
+### Full profile — Docker compose (SearXNG consensus + crawl4ai + pgvector)
 
 ```bash
 git clone https://github.com/hunglinhpt/MetaSearch.git

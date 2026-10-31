@@ -19,6 +19,7 @@ import asyncio
 import hashlib
 import secrets
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -132,20 +133,48 @@ def _unauthorized(message: str) -> MetaSearchError:
 # -- sliding window rate limit -------------------------------------------------
 
 
-async def check_rate_limit(ctx: AuthContext, *, window_s: int = 60) -> dict[str, Any]:
-    """Sliding-window counter over a Redis ZSET; returns limit headers.
+_local_windows: dict[str, deque[float]] = {}
+_LOCAL_WINDOW_MAX = 10_000
 
-    Redis unavailable -> unlimited (logged once); the limit is a protection,
-    not an auth control.
+
+def _local_rate_limit(ctx: AuthContext, *, limit: int, window_s: int) -> bool:
+    """In-process sliding window — Lite profile / Redis-down fallback.
+
+    Per-worker only (multi-worker deployments should run Redis); bounded to
+    keep memory flat under abuse.
+    """
+    now = time.monotonic()
+    hits = _local_windows.setdefault(ctx.key_id, deque())
+    cutoff = now - window_s
+    while hits and hits[0] < cutoff:
+        hits.popleft()
+    if len(hits) >= limit:
+        return False
+    hits.append(now)
+    if len(_local_windows) > _LOCAL_WINDOW_MAX:
+        _local_windows.clear()
+    return True
+
+
+async def check_rate_limit(ctx: AuthContext, *, window_s: int = 60) -> dict[str, Any]:
+    """Sliding-window rate limit: Redis first, in-process fallback second.
+
+    Both paths enforce the limit (the Lite profile keeps protection without
+    Redis); they differ only in whether the window is shared across workers.
     """
     global _window_warned
     limit = max(ctx.rate_limit_rpm, 1)
     headers = {"X-RateLimit-Limit": str(limit)}
     client = get_redis()
     if client is None:
-        if not _window_warned:
-            logger.warning("rate_limit_redis_unavailable", error="no redis client")
-            _window_warned = True
+        if not _local_rate_limit(ctx, limit=limit, window_s=window_s):
+            headers["Retry-After"] = str(window_s)
+            raise MetaSearchError(
+                ErrorCode.RATE_LIMITED,
+                "rate limit exceeded",
+                details={"limit": limit, "window_s": window_s, "backend": "local"},
+                headers=headers,
+            ) from None
         return headers
     try:
         now_ms = int(time.time() * 1000)
@@ -175,6 +204,15 @@ async def check_rate_limit(ctx: AuthContext, *, window_s: int = 60) -> dict[str,
         if not _window_warned:
             logger.warning("rate_limit_redis_unavailable", error=type(exc).__name__)
             _window_warned = True
+        # Redis broke mid-request: the local window keeps enforcement on.
+        if not _local_rate_limit(ctx, limit=limit, window_s=window_s):
+            headers["Retry-After"] = str(window_s)
+            raise MetaSearchError(
+                ErrorCode.RATE_LIMITED,
+                "rate limit exceeded",
+                details={"limit": limit, "window_s": window_s, "backend": "local"},
+                headers=headers,
+            ) from exc
         return headers
 
 

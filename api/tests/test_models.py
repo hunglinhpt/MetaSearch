@@ -27,8 +27,12 @@ def test_all_v1_tables_are_declared() -> None:
 
 def test_embedding_dimension_matches_docs() -> None:
     assert EMBEDDING_DIM == 1024
-    assert models.Chunk.__table__.c.embedding.type.dim == EMBEDDING_DIM
-    assert models.SemanticCache.__table__.c.query_embedding.type.dim == EMBEDDING_DIM
+    embedding_type = models.Chunk.__table__.c.embedding.type
+    pg_variant = embedding_type._variant_mapping.get("postgresql", embedding_type)
+    assert getattr(pg_variant, "dim", EMBEDDING_DIM) == EMBEDDING_DIM
+    cache_type = models.SemanticCache.__table__.c.query_embedding.type
+    pg_variant = cache_type._variant_mapping.get("postgresql", cache_type)
+    assert getattr(pg_variant, "dim", EMBEDDING_DIM) == EMBEDDING_DIM
 
 
 def test_engine_health_composite_primary_key() -> None:

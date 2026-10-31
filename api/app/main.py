@@ -26,6 +26,10 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging()
+    if settings.database_url.startswith("sqlite"):
+        from app.db.bootstrap import ensure_schema
+
+        await ensure_schema()
     logger.info(
         "service_starting",
         version=__version__,

@@ -6,7 +6,6 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     REAL,
     Boolean,
@@ -17,11 +16,17 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     Text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import EMBEDDING_DIM, Base, CreatedAtMixin, UUIDPrimaryKeyMixin
+from app.db.base import (
+    Base,
+    CreatedAtMixin,
+    EmbeddingType,
+    JSONType,
+    StringListType,
+    UUIDPrimaryKeyMixin,
+    UUIDType,
+)
 
 
 class User(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
@@ -34,9 +39,13 @@ class User(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
 class ApiKey(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __tablename__ = "api_keys"
 
-    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("users.id"))
     key_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # Short identifier (e.g. "msk_1a2b3c4d") shown in listings; the hash is
+    # the secret, never the key itself.
+    key_prefix: Mapped[str | None] = mapped_column(Text)
     name: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(Text, server_default="user")
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, server_default="60")
     enabled: Mapped[bool] = mapped_column(Boolean, server_default="true")
 
@@ -44,7 +53,7 @@ class ApiKey(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
 class Session(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __tablename__ = "sessions"
 
-    user_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("users.id"))
     title: Mapped[str | None] = mapped_column(Text)
 
 
@@ -52,14 +61,12 @@ class Query(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __tablename__ = "queries"
     __table_args__ = (Index("idx_queries_normalized", "normalized_text"),)
 
-    session_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("sessions.id")
-    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("sessions.id"))
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_text: Mapped[str | None] = mapped_column(Text)
     lang: Mapped[str | None] = mapped_column(Text)
     intent: Mapped[str | None] = mapped_column(Text)
-    params: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    params: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
 
 
 class Document(UUIDPrimaryKeyMixin, Base):
@@ -96,13 +103,13 @@ class Chunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+        UUIDType, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     heading_path: Mapped[str | None] = mapped_column(Text)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int | None] = mapped_column(Integer)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType)
 
     document: Mapped[Document] = relationship(back_populates="chunks")
 
@@ -110,25 +117,19 @@ class Chunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
 class SearchResult(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __tablename__ = "search_results"
 
-    query_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("queries.id")
-    )
-    document_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("documents.id")
-    )
+    query_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("queries.id"))
+    document_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("documents.id"))
     rank: Mapped[int | None] = mapped_column(Integer)
     score: Mapped[float | None] = mapped_column(REAL)
     consensus: Mapped[int | None] = mapped_column(Integer)
-    found_by: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    found_by: Mapped[list[str] | None] = mapped_column(StringListType)
     raw_snippet: Mapped[str | None] = mapped_column(Text)
 
 
 class Answer(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __tablename__ = "answers"
 
-    query_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("queries.id")
-    )
+    query_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("queries.id"))
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     content_md: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(Text)
@@ -147,12 +148,10 @@ class Citation(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "citations"
 
     answer_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("answers.id", ondelete="CASCADE"), nullable=False
+        UUIDType, ForeignKey("answers.id", ondelete="CASCADE"), nullable=False
     )
     n: Mapped[int] = mapped_column(Integer, nullable=False)
-    chunk_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("chunks.id")
-    )
+    chunk_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("chunks.id"))
     url: Mapped[str | None] = mapped_column(Text)
     valid: Mapped[bool] = mapped_column(Boolean, server_default="true")
 
@@ -174,7 +173,7 @@ class Engine(Base):
     # Phase 2: health tracking + auto-disable (docs/12-roadmap-plan.md).
     disabled_reason: Mapped[str | None] = mapped_column(Text)
     consecutive_failures: Mapped[int] = mapped_column(Integer, server_default="0")
-    config: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+    config: Mapped[dict[str, Any]] = mapped_column(JSONType, server_default="{}")
 
 
 class EngineHealth(Base):
@@ -204,10 +203,8 @@ class SemanticCache(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     )
 
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
-    query_embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
-    answer_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("answers.id")
-    )
+    query_embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType)
+    answer_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("answers.id"))
     model: Mapped[str | None] = mapped_column(Text)
     hit_count: Mapped[int] = mapped_column(Integer, server_default="0")
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
