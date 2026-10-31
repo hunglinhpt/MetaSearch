@@ -1,0 +1,19 @@
+{
+  "queries": [
+    {"query": "what is PostgreSQL replication", "lang": "en", "expect_terms": ["replication", "postgres"], "categories": ["general"]},
+    {"query": "FastAPI Server-Sent Events streaming", "lang": "en", "expect_terms": ["fastapi", "streaming"], "categories": ["general", "developer"]},
+    {"query": "SearXNG configuration JSON format", "lang": "en", "expect_terms": ["searxng"], "categories": ["general"]},
+    {"query": "retrieval augmented generation là gì", "lang": "vi", "expect_terms": ["rag", "retrieval", "generation"], "categories": ["general"]},
+    {"query": "arxiv attention is all you need transformer", "lang": "en", "expect_terms": ["attention", "transformer"], "categories": ["academic"]},
+    {"query": "Wikipedia Python programming language", "lang": "en", "expect_terms": ["python"], "categories": ["reference"]},
+    {"query": "pgvector similarity search postgres", "lang": "en", "expect_terms": ["pgvector", "similarity"], "categories": ["general"]},
+    {"query": "trafilatura web scraping extraction", "lang": "en", "expect_terms": ["trafilatura", "extraction"], "categories": ["general"]},
+    {"query": "so sánh MySQL và PostgreSQL hiệu năng", "lang": "vi", "expect_terms": ["mysql", "postgres"], "categories": ["general"]},
+    {"query": "model context protocol MCP tools", "lang": "en", "expect_terms": ["model context protocol", "mcp"], "categories": ["general"]}
+  ],
+  "thresholds": {
+    "hit_at_5": 0.7,
+    "citation_accuracy": 0.9,
+    "answer_rate": 0.8
+  }
+}

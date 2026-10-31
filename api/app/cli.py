@@ -36,6 +36,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_answer.add_argument("--lang", default=None, help="2-letter language, e.g. vi")
     p_answer.add_argument("--model", default=None, help="LLM model override")
     p_answer.add_argument("--stream", action="store_true", help="stream tokens as they arrive")
+
+    p_keys = sub.add_parser("keys", help="Manage API keys (requires DB access)")
+    keys_sub = p_keys.add_subparsers(dest="keys_command", required=True)
+    p_create = keys_sub.add_parser("create", help="Create an API key (printed once)")
+    p_create.add_argument("name")
+    p_create.add_argument("--role", default="user", choices=["user", "admin"])
+    p_create.add_argument("--rate-limit", type=int, default=60, help="requests per minute")
+    keys_sub.add_parser("list", help="List existing API keys")
     return parser
 
 
@@ -47,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_search(args)
         if args.command == "answer":
             return _cmd_answer(args)
+        if args.command == "keys":
+            return _cmd_keys(args)
     except httpx.HTTPStatusError as exc:
         _print_error(exc)
         return 1
@@ -55,6 +65,53 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _cmd_keys(args: argparse.Namespace) -> int:
+    """Create/list API keys directly against the configured database."""
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.core.auth import create_key
+    from app.db.models import ApiKey
+    from app.db.session import dispose_engine, get_sessionmaker
+
+    async def _run() -> int:
+        if args.keys_command == "create":
+            plaintext, prefix = await create_key(
+                args.name, role=args.role, rate_limit_rpm=args.rate_limit
+            )
+            print(f"key:     {plaintext}")
+            print(f"prefix:  {prefix}")
+            print(f"role:    {args.role}  rate_limit: {args.rate_limit}/min")
+            print("store it now - the plaintext is not shown again.")
+            return 0
+
+        async with get_sessionmaker()() as session:
+            rows = (
+                (await session.execute(select(ApiKey).order_by(ApiKey.created_at.desc())))
+                .scalars()
+                .all()
+            )
+        print(f"{'prefix':<16} {'role':<6} {'rpm':<5} {'enabled':<8} name")
+        for row in rows:
+            print(
+                f"{(row.key_prefix or '-'):<16} {row.role or 'user':<6} "
+                f"{row.rate_limit_rpm or 60:<5} {bool(row.enabled)!s:<8} {row.name or '-'}"
+            )
+        return 0
+
+    async def _run_and_close() -> int:
+        try:
+            return await _run()
+        except Exception as exc:
+            print(f"error: database unreachable ({type(exc).__name__}: {exc})", file=sys.stderr)
+            return 1
+        finally:
+            await dispose_engine()
+
+    return asyncio.run(_run_and_close())
 
 
 def _post(api_url: str, path: str, payload: dict) -> httpx.Response:

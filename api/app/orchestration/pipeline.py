@@ -170,8 +170,19 @@ class SearchPipeline:
     ) -> tuple[list[RawResult], list[EngineStatus]]:
         candidates = await self.registry.enabled()
         if params.engines:
+            # Explicit engine list wins over category defaults.
             wanted = set(params.engines)
             candidates = [(cfg, ad) for cfg, ad in candidates if cfg.id in wanted]
+        else:
+            # Vertical engines (arXiv, Wikipedia, ...) join only when the
+            # request asks for their category; general engines always run
+            # (docs/01 FR-3).
+            categories = set(params.categories or [])
+            candidates = [
+                (cfg, ad)
+                for cfg, ad in candidates
+                if cfg.category == "general" or cfg.category in categories
+            ]
 
         if not candidates:
             raise MetaSearchError(

@@ -15,9 +15,13 @@ from app.orchestration.engine_store import (
     EngineStore,
     InMemoryEngineStore,
 )
+from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import SearchAdapter
+from app.retrieval.adapters.brave import BraveAdapter
 from app.retrieval.adapters.searxng import SearXNGAdapter
+from app.retrieval.adapters.serper import SerperAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
+from app.retrieval.adapters.wikipedia import WikipediaAdapter
 from app.retrieval.models import EngineConfig
 
 
@@ -57,9 +61,15 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
     """One adapter instance per implemented engine with credentials."""
     adapters: dict[str, SearchAdapter] = {
         "searxng": SearXNGAdapter(settings.searxng_url),
+        "arxiv": ArxivAdapter(),
+        "wikipedia": WikipediaAdapter(),
     }
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)
+    if settings.serper_api_key:
+        adapters["serper"] = SerperAdapter(settings.serper_api_key)
+    if settings.brave_api_key:
+        adapters["brave"] = BraveAdapter(settings.brave_api_key)
     return adapters
 
 

@@ -13,50 +13,52 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-10-29)
+## 2. Trạng thái hiện tại (cập nhật: 2026-10-31)
 
-- ✅ **Phase 0-2 hoàn tất** (v0.4.0 — xem [CHANGELOG.md](CHANGELOG.md)):
-  search/answer/scrape/engines endpoints, SSE streaming, cache L1 Redis + L2
-  pgvector, rerank heuristic/ONNX/Jina, engine hot config + health + auto-disable,
-  SimHash near-dup, Tavily adapter, Web UI streaming, CORS, pin-IP SSRF hardening,
-  Grafana dashboards, perf harness.
-- ⏭️ **Tiếp theo — Phase 3** (docs/12-roadmap-plan.md): Deep Research
-  (planner/executor/synthesizer, `/v1/research` async job), **MCP server 4 tools
-  (FastMCP)**, auth API key + rate limit, vertical engines (arXiv/Wikipedia).
-- ⏭️ Sau đó — Phase 4: k6 chạy trên compose, OTel tracing, Langfuse, eval harness.
+- ✅ **Phase 0-3 + lõi Phase 4 hoàn tất** (v0.5.0 — xem [CHANGELOG.md](CHANGELOG.md)):
+  toàn bộ FR-1..FR-16 trừ vài mục nhỏ; Deep Research (planner/executor/synthesizer
+  + async job + SSE), MCP server 4 tools (stdio + HTTP), auth API key + sliding-window
+  rate limit, vertical engines (arXiv/Wikipedia), 5/5 key-engines có adapter,
+  eval harness (hit@5/citation accuracy), Langfuse + OTel optional.
+- ⏭️ **Còn lại (cần Docker)**: chạy k6 trên compose, integration tests thật,
+  backup job + runbook vận hành.
+- ⏭️ Ý tưởng sau v0.5: RAGAS LLM-judge vào eval harness, Generative UI cho
+  research report, multi-tenant auth (users join).
 
 ### Ma trận tính năng (FR từ docs/01)
 
 | FR | Tính năng | Trạng thái |
 |---|---|---|
 | FR-1 | Search SearXNG 1 request | ✅ |
-| FR-2 | Tavily/Serper/Brave adapters | 🟡 Tavily ✓; Serper/Brave placeholder |
-| FR-3 | Vertical engines (arXiv, SO, Reddit, Wikipedia) | ❌ Phase 3 |
+| FR-2 | Tavily/Serper/Brave adapters | ✅ (cả 3) |
+| FR-3 | Vertical engines (arXiv, SO, Reddit, Wikipedia) | 🟡 arXiv + Wikipedia ✓; SO/Reddit chưa |
 | FR-4 | Dedup canonical + SimHash + consensus | ✅ |
 | FR-5 | Diversity cap | ✅ |
 | FR-6 | Extract chain (trafilatura→crawl4ai→jina) | ✅ |
 | FR-7 | Rerank heuristic/ONNX/API | ✅ |
 | FR-8 | Answer SSE + citations | ✅ |
-| FR-9 | Deep Research async | ❌ Phase 3 |
-| FR-10 | MCP 4 tools | ❌ Phase 3 |
+| FR-9 | Deep Research async | ✅ |
+| FR-10 | MCP 4 tools | ✅ |
 | FR-11 | Engine hot config (PATCH, không restart) | ✅ |
 | FR-12 | Health + auto-disable + recovery | ✅ |
 | FR-13 | Cache L1 Redis + L2 pgvector | ✅ (L2 default off) |
-| FR-14 | Auth API key + rate limit | ❌ Phase 3 |
-| FR-15 | Web UI (search/answer/sources) | ✅ (chưa có engine filter trên UI) |
+| FR-14 | Auth API key + rate limit | ✅ (AUTH_ENABLED=true để bật) |
+| FR-15 | Web UI (search/answer/sources) | ✅ |
 | FR-16 | Tiếng Việt (lang, VN stopwords, prompt same-language) | ✅ cơ bản |
 
 ### Cần cải thiện (chưa tốt — đánh khi có dịp)
 
-1. **L2 semantic cache mặc định off** — plumbing xong nhưng chưa có embedding
-   endpoint cấu hình sẵn; cần guide + test với TEI/Ollama thật.
-2. **UI thiếu engine filter** (FR-15) — API hỗ trợ `engines[]`, UI chưa gửi.
-3. **Serper/Brave adapters** — registry có chỗ, thiếu adapter class (~50 dòng/engine).
-4. **Chunk scoring dùng word-proxy** — tiktoken có sẵn nhưng mặc định words;
+1. **L2 semantic cache mặc định off** — plumbing xong; cần guide + test với
+   TEI/Ollama thật.
+2. **SO/Reddit adapters** — 2 vertical còn lại của FR-3 (arXiv/Wikipedia xong).
+3. **Chunk scoring dùng word-proxy** — tiktoken có sẵn nhưng mặc định words;
    đo lại chất lượng context khi bật.
-5. **Deep research budget/cost metering** — làm cùng Phase 3.
-6. **Eval harness** (golden set 50 query, RAGAS, citation accuracy) — Phase 4;
-   hiện chỉ có unit/integration tests.
+4. **Eval harness mở rộng** — golden set 10 query hiện tại -> 50; thêm RAGAS
+   LLM-judge; nightly job khi có stack.
+5. **Deep research jobs in-memory** — restart mất job state (report vẫn persist
+   trong DB); cân nhắc bảng `researches` nếu cần durable queue.
+6. **MCP integration test với SDK thật** — `pip install '.[mcp]'` + smoke với
+   Claude Desktop / MCP inspector.
 
 ## 3. Bản đồ repo
 

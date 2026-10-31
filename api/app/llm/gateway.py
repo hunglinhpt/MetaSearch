@@ -10,6 +10,7 @@ still record token usage + estimated cost afterwards.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -148,6 +149,63 @@ class LLMGateway:
                 delta, usage = _parse_delta(payload, settings.llm_provider)
                 if delta is not None or usage is not None:
                     yield StreamDelta(text=delta, usage=usage)
+
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str,
+        max_tokens: int | None = None,
+        task: str = "intent",
+    ) -> tuple[str, Usage]:
+        """Non-streaming completion for the research agents (planner/extractor).
+
+        Retries twice with exponential backoff on transient errors
+        (docs/04 §4); usage is metered per ``task`` so a research job can
+        total its spend.
+        """
+        text_parts: list[str] = []
+        usage = Usage()
+        delay = 0.5
+        last_error: LLMError | None = None
+        for attempt in range(3):
+            text_parts.clear()
+            usage = Usage()
+            try:
+                async for delta in self.stream(messages, model=model, max_tokens=max_tokens):
+                    if delta.text:
+                        text_parts.append(delta.text)
+                    if delta.usage:
+                        usage.input_tokens += delta.usage.input_tokens
+                        usage.output_tokens += delta.usage.output_tokens
+                output = "".join(text_parts)
+                await self._trace_complete(task, messages, model, output, usage)
+                return output, usage
+            except LLMError as exc:
+                last_error = exc
+                logger.warning(
+                    "llm_complete_retry", task=task, attempt=attempt + 1, error=str(exc)[:120]
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
+        raise last_error or LLMError("LLM call failed")
+
+    async def _trace_complete(
+        self, task: str, messages: list[dict[str, str]], model: str, output: str, usage: Usage
+    ) -> None:
+        from app.core.llm_tracing import trace_llm_call
+
+        await trace_llm_call(
+            self._settings,
+            task=task,
+            model=model,
+            messages=messages,
+            output=output,
+            usage={
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+            },
+        )
 
     @asynccontextmanager
     async def _stream_response(

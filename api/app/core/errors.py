@@ -44,12 +44,14 @@ class MetaSearchError(Exception):
         *,
         details: dict[str, Any] | None = None,
         status_code: int | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.details = details or {}
         self.status_code = status_code or HTTP_STATUS[code]
+        self.headers = headers or {}
 
     def to_payload(self, request_id: str | None = None) -> dict[str, Any]:
         return {
@@ -78,7 +80,9 @@ def register_exception_handlers(app: FastAPI) -> None:
             path=request.url.path,
         )
         return JSONResponse(
-            status_code=exc.status_code, content=exc.to_payload(_request_id(request))
+            status_code=exc.status_code,
+            content=exc.to_payload(_request_id(request)),
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)

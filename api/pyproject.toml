@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "metasearch-api"
-version = "0.4.0"
+version = "0.5.0"
 description = "MetaSearch AI — thin orchestration layer on top of SearXNG + crawl4ai/trafilatura (giants-first)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -24,6 +24,7 @@ dependencies = [
     "pgvector>=0.3",
     "redis>=5.0",
     "trafilatura>=1.12",
+    "defusedxml>=0.7",
     "structlog>=24.1",
     "prometheus-client>=0.20",
     "python-dotenv>=1.0",
@@ -41,6 +42,15 @@ dev = [
 # Optional: real token counting for the answer context budget
 # (CONTEXT_TOKENIZER=tiktoken). Falls back to word counting without it.
 tokens = ["tiktoken>=0.7"]
+# Optional: MCP server (docs/07) — `python -m app.mcp` after install.
+mcp = ["mcp>=1.2"]
+# Optional: OpenTelemetry tracing (OTEL_ENABLED=true + OTEL_* env vars).
+otel = [
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-instrumentation-fastapi>=0.46b0",
+    "opentelemetry-instrumentation-httpx>=0.46b0",
+    "opentelemetry-exporter-otlp>=1.25",
+]
 
 [project.scripts]
 metasearch = "app.cli:main"

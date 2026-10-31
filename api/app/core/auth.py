@@ -1,0 +1,189 @@
+"""API key authentication + Redis sliding-window rate limit (docs/01 FR-14).
+
+Design:
+- Keys are generated as ``msk_<32 hex>``, stored as sha256 hashes with a
+  short ``key_prefix`` for identification (sha256 is appropriate: keys are
+  high-entropy secrets, not passwords).
+- ``AUTH_ENABLED=false`` (default) keeps local dev and the Web UI open —
+  enforcement is opt-in for exposed deployments; when enabled, every /v1
+  request must carry ``Authorization: Bearer msk_...``.
+- Rate limit: sliding window per key over Redis (ZSET). Redis unavailable ->
+  limit skipped (log once) — availability beats strictness for the limit,
+  but authentication itself fails closed (a dead DB with auth on returns
+  401 rather than letting traffic through).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import secrets
+import time
+from dataclasses import dataclass
+from typing import Any
+
+from fastapi import Request
+from sqlalchemy import select
+
+from app.cache import get_redis
+from app.config import get_settings
+from app.core.errors import ErrorCode, MetaSearchError
+from app.core.logging import get_logger
+from app.db.models import ApiKey as ApiKeyRow
+from app.db.session import get_sessionmaker
+
+logger = get_logger(__name__)
+
+_KEY_PREFIX_LEN = 12  # "msk_" + 8 hex
+_window_warned = False
+
+
+@dataclass(slots=True)
+class AuthContext:
+    key_id: str
+    name: str | None
+    role: str
+    rate_limit_rpm: int
+
+
+def generate_key() -> tuple[str, str, str]:
+    """Return (plaintext_key, sha256_hash, key_prefix)."""
+    plaintext = f"msk_{secrets.token_hex(16)}"
+    return plaintext, hash_key(plaintext), plaintext[:_KEY_PREFIX_LEN]
+
+
+def hash_key(plaintext: str) -> str:
+    return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()  # nosec B324
+
+
+async def create_key(name: str, *, role: str = "user", rate_limit_rpm: int = 60) -> tuple[str, str]:
+    """Create an API key; returns (plaintext, key_id)."""
+    plaintext, key_hash, key_prefix = generate_key()
+    async with get_sessionmaker()() as session:
+        session.add(
+            ApiKeyRow(
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                name=name,
+                role=role,
+                rate_limit_rpm=rate_limit_rpm,
+                enabled=True,
+            )
+        )
+        await session.commit()
+    return plaintext, key_prefix
+
+
+_key_cache: dict[str, tuple[AuthContext | None, float]] = {}
+_key_cache_lock = asyncio.Lock()
+_CACHE_TTL_S = 60.0
+
+
+async def authenticate(bearer: str | None) -> AuthContext:
+    """Resolve the Bearer key to an AuthContext; 401 when invalid/disabled."""
+    settings = get_settings()
+    if not bearer or not bearer.startswith("msk_"):
+        raise _unauthorized("missing or malformed API key")
+    key_hash = hash_key(bearer)
+
+    cached = _key_cache.get(key_hash)
+    now = time.monotonic()
+    if cached and now - cached[1] < _CACHE_TTL_S:
+        if cached[0] is None:
+            raise _unauthorized("unknown API key")
+        return cached[0]
+
+    try:
+        async with get_sessionmaker()() as session:
+            row = (
+                await session.execute(
+                    select(ApiKeyRow).where(
+                        ApiKeyRow.key_hash == key_hash, ApiKeyRow.enabled.is_(True)
+                    )
+                )
+            ).scalar_one_or_none()
+    except Exception as exc:
+        # Auth enabled + DB unavailable -> fail closed, never open.
+        logger.warning("auth_db_unavailable", error=type(exc).__name__)
+        raise _unauthorized("authentication backend unavailable") from exc
+
+    if row is None:
+        await _cache_put(key_hash, None)
+        raise _unauthorized("unknown API key")
+    ctx = AuthContext(
+        key_id=str(row.id),
+        name=row.name,
+        role=row.role or "user",
+        rate_limit_rpm=int(row.rate_limit_rpm or settings.rate_limit_rpm),
+    )
+    await _cache_put(key_hash, ctx)
+    return ctx
+
+
+async def _cache_put(key_hash: str, ctx: AuthContext | None) -> None:
+    async with _key_cache_lock:
+        _key_cache[key_hash] = (ctx, time.monotonic())
+
+
+def _unauthorized(message: str) -> MetaSearchError:
+    return MetaSearchError(ErrorCode.UNAUTHORIZED, message)
+
+
+# -- sliding window rate limit -------------------------------------------------
+
+
+async def check_rate_limit(ctx: AuthContext, *, window_s: int = 60) -> dict[str, Any]:
+    """Sliding-window counter over a Redis ZSET; returns limit headers.
+
+    Redis unavailable -> unlimited (logged once); the limit is a protection,
+    not an auth control.
+    """
+    global _window_warned
+    limit = max(ctx.rate_limit_rpm, 1)
+    headers = {"X-RateLimit-Limit": str(limit)}
+    client = get_redis()
+    if client is None:
+        if not _window_warned:
+            logger.warning("rate_limit_redis_unavailable", error="no redis client")
+            _window_warned = True
+        return headers
+    try:
+        now_ms = int(time.time() * 1000)
+        window_ms = window_s * 1000
+        member = f"{now_ms}:{secrets.token_hex(4)}"
+        key = f"rl:{ctx.key_id}"
+        async with client.pipeline(transaction=True) as pipe:
+            pipe.zremrangebyscore(key, 0, now_ms - window_ms)
+            pipe.zadd(key, {member: now_ms})
+            pipe.zcard(key)
+            pipe.expire(key, window_s // 1000 + 1)
+            results = await pipe.execute()
+        count = int(results[2] or 0)
+        headers["X-RateLimit-Remaining"] = str(max(limit - count, 0))
+        if count > limit:
+            headers["Retry-After"] = str(window_s)
+            raise MetaSearchError(
+                ErrorCode.RATE_LIMITED,
+                "rate limit exceeded",
+                details={"limit": limit, "window_s": window_s},
+                headers=headers,
+            )
+        return headers
+    except MetaSearchError:
+        raise
+    except Exception as exc:
+        if not _window_warned:
+            logger.warning("rate_limit_redis_unavailable", error=type(exc).__name__)
+            _window_warned = True
+        return headers
+
+
+async def require_api_key(request: Request) -> AuthContext:
+    """FastAPI dependency: authenticate + rate limit when AUTH_ENABLED=true."""
+    settings = get_settings()
+    if not settings.auth_enabled:
+        return AuthContext(key_id="anonymous", name=None, role="admin", rate_limit_rpm=0)
+    bearer = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    ctx = await authenticate(bearer)
+    await check_rate_limit(ctx)
+    return ctx

@@ -233,6 +233,93 @@ def _log_task_exception(task: asyncio.Task) -> None:
             logger.warning("persist_task_failed", error=type(exc).__name__)
 
 
+async def _persist_report(
+    research_id: uuid.UUID,
+    question: str,
+    lang: str | None,
+    content_md: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+    latency_ms: int,
+    citations: list[tuple[int, str, str, str | None]],
+    truncated: bool,
+) -> None:
+    """Persist the research report as an Answer(kind="research") row."""
+    answer_id = uuid.uuid4()
+    async with get_sessionmaker()() as session:
+        session.add(
+            Query(
+                id=research_id,
+                raw_text=question,
+                normalized_text=question,
+                lang=lang,
+                params={"kind": "research", "truncated": truncated},
+            )
+        )
+        session.add(
+            Answer(
+                id=answer_id,
+                query_id=research_id,
+                kind="research",
+                content_md=content_md,
+                model=model,
+                input_tokens=input_tokens or None,
+                output_tokens=output_tokens or None,
+                cost_usd=cost_usd or None,
+                latency_ms=latency_ms,
+                status="truncated" if truncated else "complete",
+            )
+        )
+        for n, url, _title, chunk_id in citations:
+            session.add(
+                Citation(
+                    answer_id=answer_id,
+                    n=n,
+                    url=url,
+                    chunk_id=uuid.UUID(chunk_id) if chunk_id else None,
+                    valid=True,
+                )
+            )
+        await session.commit()
+
+
+async def persist_report(
+    research_id: uuid.UUID,
+    question: str,
+    lang: str | None,
+    content_md: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+    latency_ms: int,
+    citations: list[tuple[int, str, str, str | None]],
+    truncated: bool,
+) -> None:
+    """Fire-and-forget report persistence (called from the research task)."""
+    task = asyncio.create_task(
+        _run(
+            "report",
+            _persist_report(
+                research_id,
+                question,
+                lang,
+                content_md,
+                model,
+                input_tokens,
+                output_tokens,
+                cost_usd,
+                latency_ms,
+                citations,
+                truncated,
+            ),
+        )
+    )
+    task.add_done_callback(_log_task_exception)
+
+
 async def load_citations(answer_id: uuid.UUID) -> list[dict[str, Any]]:
     """Citations for one answer (used by the L2 semantic-cache replay)."""
     async with get_sessionmaker()() as session:

@@ -122,6 +122,24 @@ class Settings(BaseSettings):
     research_max_iterations: int = 3
     research_max_tokens: int = 150_000
     research_max_time_s: int = 180
+    research_max_concurrent: int = 5  # docs/06 §8: 5 jobs/user; single-tenant
+
+    # --- Phase 3: auth -----------------------------------------------------
+    # Off by default: local dev + Web UI stay open. Set AUTH_ENABLED=true on
+    # exposed deployments; then every /v1 request needs
+    # `Authorization: Bearer msk_...` (create keys: metasearch keys create).
+    auth_enabled: bool = False
+
+    # --- Phase 4: optional observability + MCP ------------------------------
+    # OTel needs `pip install '.[otel]'` plus standard OTEL_* env vars.
+    otel_enabled: bool = False
+    # Mount the MCP streamable-HTTP server at /mcp on this API process
+    # (stdio mode runs separately via `python -m app.mcp`).
+    mcp_enabled: bool = False
+    # Langfuse LLM tracing (optional, httpx-based): all three must be set.
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = ""
 
     @property
     def is_prod(self) -> bool:

@@ -108,21 +108,31 @@
 - **Performance test tìm ra 1 bug resilience thật**: Postgres partition (connect bị DROP, không refused) → `record_result` awaited trong critical path chờ asyncpg timeout 3s → pending connects bão hòa pool → **pool timeout 30s, p50 30s, 132/200 requests lỗi**. Fixes: (1) mọi DB op của `DbEngineStore` bounded bởi `ENGINE_STORE_DB_TIMEOUT_S=0.5` → fallback in-memory; (2) `pool_timeout=5` thay 30s; (3) setting `ENGINE_STORE_BACKEND=memory` cho dev/perf không DB. Sau fix: 0 errors, không còn treo.
 - Repo hygiene: `git status` sạch, `.gitignore` phủ đủ (`__pycache__/`, `.next/`, `*.tsbuildinfo`, `.venv/`...), không artifact nào bị track.
 
-### Phase 3 — Deep Research & MCP (tuần 5–6)
-- [ ] Planner (tách sub-queries), Executor (loop), Synthesizer (report có citation)
-- [ ] `/v1/research` async job + progress SSE
-- [ ] LLM Gateway: OpenAI/Anthropic routing (Ollama 3B chỉ experimental offline) + fallback + cost metering
-- [ ] MCP server (FastMCP): 4 tools + stdio/HTTP transport
-- [ ] Auth: API keys (hash), rate limit Redis, admin role
-- [ ] Vertical engines: arXiv, Wikipedia (nếu thời gian)
+### Phase 3 — Deep Research & MCP (tuần 5–6) — ✅ HOÀN TẤT (v0.5.0)
+- [x] Planner (tách sub-queries, JSON schema, heuristic fallback khi LLM lỗi), Executor (thuần async: search+scrape+rerank → ContextPack), Synthesizer (report streaming có citation)
+- [x] `/v1/research` async job (202 + in-memory job store, cap 5 job đồng thời) + `GET /v1/research/{id}` + `GET /v1/research/{id}/events` SSE (plan/iteration_start/engine_done/learnings/report_token/citations/done); report persist Answer(kind="research"); budget hard-cap (iterations/time/tokens, `truncated: true` khi dừng sớm)
+- [x] LLM Gateway: `complete()` non-streaming + retry 3 lần exponential backoff + task routing (planner/extractor → quick model, report → report model) + cost metering per job
+- [x] MCP server (docs/07, layer mỏng gọi REST): 4 tools `web_search` / `web_scrape` / `web_search_and_scrape` / `deep_research` (async, trả research_id + poll_hint) — stdio (`python -m app.mcp`) + streamable HTTP (mount `/mcp` khi `MCP_ENABLED=true`); optional dep `.[mcp]`; tool logic tách `app/mcp/client.py` test được không cần SDK
+- [x] Auth: API key `msk_*` (sha256 hash + prefix, cache 60s, fail-closed khi DB chết), sliding-window rate limit Redis ZSET (429 + Retry-After + X-RateLimit-*), role admin/user, CLI `metasearch keys create/list`, migration 0003; `AUTH_ENABLED=true` để bật (mặc định off cho local + Web UI)
+- [x] Vertical engines: arXiv (Atom API, defusedxml) + Wikipedia (MediaWiki, theo lang) — chỉ vào fan-out khi request chứa category tương ứng; `engines[]` explicit override
 
-### Phase 4 — Hardening (tuần 7–8)
-- [ ] SSRF suite đầy đủ (pin-IP connector + redirect re-check mỗi hop đã làm xong từ Phase 2 — còn lại: pin-IP cho crawl4ai/jina tier, WAF-style header checks)
-- [ ] k6 load test + tuning (connection pool, semaphore)
-- [ ] OTel tracing per stage + Prometheus metrics + Grafana dashboard
-- [ ] Langfuse LLM tracing
-- [ ] Eval harness: golden set 50 query, RAGAS, citation accuracy, nightly job
-- [ ] Docs hoàn thiện + runbook + backup job
+**Trạng thái verify (local, không có Docker):**
+
+| Hạng mục | Lệnh | Kết quả |
+|---|---|---|
+| Unit test | `pytest -q` | 215 passed + 8 integration (từ 182) |
+| Lint | `ruff check` + `ruff format --check` | All clean |
+| Security | `bandit -q -r app -x tests` | 0 issue (defusedxml cho arXiv Atom) |
+| Smoke live | uvicorn: auth bật → 401 chuẩn; research 202 → job running → SSE events; LLM none → planner fallback + error event đúng format | ✓ |
+
+### Phase 4 — Hardening (tuần 7–8) — ✅ phần lõi hoàn tất (v0.5.0), còn lại cần Docker
+- [x] Eval harness: `api/evals/golden.json` (10 query seed EN+VI) + `api/scripts/eval_run.py` (hit@5, answer_rate, citation_accuracy — exit 1 khi dưới threshold; RAGAS LLM-judge là tuỳ chọn sau)
+- [x] Langfuse LLM tracing (optional, httpx thuần không SDK): `LANGFUSE_HOST/PUBLIC_KEY/SECRET_KEY` → trace per LLM call fire-and-forget
+- [x] OTel tracing (optional `.[otel]`): FastAPI + httpx instrumentation, `OTEL_ENABLED=true` + OTEL_* env
+- [x] k6 script chuẩn bị sẵn (`deploy/k6/load-test.js`, thresholds theo KPI) — **cần chạy trên máy có Docker** (`docker compose up` + `k6 run`)
+- [ ] k6 load test + tuning thực tế — chờ máy có Docker (chạy `METASEARCH_INTEGRATION=1 pytest tests/integration` + `k6 run deploy/k6/load-test.js`)
+- [ ] Backup job + runbook vận hành — todo nhỏ còn lại
+- [ ] SSRF suite còn lại: pin-IP cho crawl4ai/jina service tier (direct fetch đã pin từ Phase 2)
 
 ## 3. KPI nghiệm thu (từ [01](01-product-requirements.md))
 

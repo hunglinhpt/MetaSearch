@@ -36,8 +36,10 @@ logger = get_logger(__name__)
 ADAPTER_PATHS = {
     "searxng": "app.retrieval.adapters.searxng:SearXNGAdapter",
     "tavily": "app.retrieval.adapters.tavily:TavilyAdapter",
-    "serper": "",
-    "brave": "",
+    "serper": "app.retrieval.adapters.serper:SerperAdapter",
+    "brave": "app.retrieval.adapters.brave:BraveAdapter",
+    "arxiv": "app.retrieval.adapters.arxiv:ArxivAdapter",
+    "wikipedia": "app.retrieval.adapters.wikipedia:WikipediaAdapter",
 }
 
 
@@ -89,7 +91,10 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             id="serper",
             name="Serper.dev (Google)",
             category="general",
-            enabled=False,
+            weight=1.0,
+            enabled=bool(settings.serper_api_key),
+            timeout_ms=3000,
+            max_results=15,
             requires_key=True,
             adapter_path=ADAPTER_PATHS["serper"],
         ),
@@ -97,9 +102,36 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             id="brave",
             name="Brave Search API",
             category="general",
-            enabled=False,
+            weight=1.0,
+            enabled=bool(settings.brave_api_key),
+            timeout_ms=3000,
+            max_results=15,
             requires_key=True,
             adapter_path=ADAPTER_PATHS["brave"],
+        ),
+        # Verticals (docs/01 FR-3): no key; join the fan-out only when the
+        # request asks for their category (SearchPipeline._fanout).
+        "arxiv": EngineConfig(
+            id="arxiv",
+            name="arXiv (academic)",
+            category="academic",
+            weight=1.0,
+            enabled=True,
+            timeout_ms=5000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["arxiv"],
+        ),
+        "wikipedia": EngineConfig(
+            id="wikipedia",
+            name="Wikipedia (reference)",
+            category="reference",
+            weight=1.0,
+            enabled=True,
+            timeout_ms=3000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["wikipedia"],
         ),
     }
 

@@ -4,6 +4,34 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-10-31 — Phase 3: Deep Research & MCP + Phase 4 lõi
+
+### Added
+- **Deep Research (FR-9)**: planner LLM (JSON sub-queries, heuristic fallback)
+  -> executor (search+scrape+rerank -> ContextPack) -> extractor (learnings +
+  gaps) -> vòng lặp trong budget -> synthesizer report streaming có `[n]`
+  citations. `POST /v1/research` (202, cap 5 job) + `GET /v1/research/{id}` +
+  `GET /v1/research/{id}/events` (SSE 7 loại event). Report persist
+  Answer(kind="research"); budget vượt -> `truncated: true`.
+- **MCP server (FR-10)**: 4 tools `web_search` / `web_scrape` /
+  `web_search_and_scrape` / `deep_research` theo docs/07 (markdown output,
+  timeout + error thân thiện, cap 12k chars). stdio: `python -m app.mcp`;
+  streamable HTTP: mount `/mcp` khi `MCP_ENABLED=true`. Optional dep `.[mcp]`.
+- **Auth + rate limit (FR-14)**: API key `msk_*` (sha256 + prefix + cache 60s,
+  fail-closed khi DB chết), sliding-window Redis ZSET (429 + Retry-After +
+  X-RateLimit-*), role admin/user, CLI `metasearch keys create/list`,
+  migration 0003. `AUTH_ENABLED=true` để bật (mặc định off cho local/Web UI).
+- **Vertical engines (FR-3)**: arXiv (Atom, defusedxml) + Wikipedia (MediaWiki,
+  theo lang) — vào fan-out theo category; `engines[]` explicit override.
+- **Serper + Brave adapters** (FR-2 hoàn chỉnh — 5/5 engines có adapter thật).
+- **Phase 4 lõi**: eval harness (`evals/golden.json` + `scripts/eval_run.py`
+  — hit@5, answer_rate, citation_accuracy), Langfuse LLM tracing (httpx thuần,
+  optional), OTel FastAPI+httpx instrumentation (optional `.[otel]`).
+
+### Fixed
+- arXiv Atom parsing qua `defusedxml` (bandit B314/B405 — untrusted XML).
+- Research plan/learnings event bị trùng lặp trong SSE (callback + yield).
+
 ## [0.4.0] — 2026-10-29 — Observability, operations & performance
 
 ### Added

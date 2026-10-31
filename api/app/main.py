@@ -54,6 +54,10 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         openapi_url="/openapi.json",
     )
+    from app.core.tracing import setup_tracing
+
+    setup_tracing(app)
+
     app.add_middleware(RequestContextMiddleware)
     # Browser clients (Web UI on :3000) call this API cross-origin; without
     # CORS every fetch from the UI fails in the browser.
@@ -69,7 +73,22 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     app.include_router(ops.router)
     app.include_router(v1_router)
+    if settings.mcp_enabled:
+        _mount_mcp(app)
     return app
+
+
+def _mount_mcp(app: FastAPI) -> None:
+    """Mount the MCP streamable-HTTP server at /mcp (optional dep)."""
+    try:
+        from app.mcp.server import build_server
+
+        app.mount("/mcp", build_server().streamable_http_app())
+        logger.info("mcp_http_mounted", path="/mcp")
+    except SystemExit as exc:
+        logger.warning("mcp_mount_skipped", reason=str(exc))
+    except Exception as exc:  # pragma: no cover - optional surface
+        logger.warning("mcp_mount_failed", error=type(exc).__name__)
 
 
 app = create_app()
