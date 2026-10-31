@@ -30,6 +30,7 @@ class ResearchRequest(BaseModel):
     depth: int = Field(default=3, ge=1, le=5)
     max_time_s: int | None = Field(default=None, ge=10, le=600)
     k: int = Field(default=6, ge=1, le=20)
+    profile: str = Field(default="auto", pattern=r"^(auto|general|developer|academic|comparative)$")
 
 
 @router.post("/research", status_code=202)
@@ -43,6 +44,7 @@ async def create_research(request: ResearchRequest) -> dict[str, Any]:
         depth=request.depth,
         max_time_s=request.max_time_s,
         k=request.k,
+        profile=request.profile,
     )
     task = asyncio.create_task(run_job(job, params))
     task.add_done_callback(_log_task)
@@ -51,7 +53,7 @@ async def create_research(request: ResearchRequest) -> dict[str, Any]:
 
 @router.get("/research/{research_id}")
 async def get_research(research_id: str) -> dict[str, Any]:
-    job = get_job_store().get(research_id)
+    job = await get_job_store().get(research_id)
     return {
         "research_id": str(job.id),
         "status": job.status,
@@ -65,7 +67,7 @@ async def get_research(research_id: str) -> dict[str, Any]:
 
 @router.get("/research/{research_id}/events")
 async def research_events(research_id: str) -> EventSourceResponse:
-    job = get_job_store().get(research_id)
+    job = await get_job_store().get(research_id)
     return EventSourceResponse(_event_stream(job))
 
 

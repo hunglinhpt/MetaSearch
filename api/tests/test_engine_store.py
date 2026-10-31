@@ -107,9 +107,21 @@ class TestDbEngineStoreFallback:
 class TestDefaults:
     def test_defaults_shape(self):
         configs = default_configs(get_settings())
-        assert set(configs) == {"searxng", "ddg", "tavily", "serper", "brave", "arxiv", "wikipedia"}
+        assert set(configs) == {
+            "searxng",
+            "ddg",
+            "tavily",
+            "serper",
+            "brave",
+            "arxiv",
+            "wikipedia",
+            "stackoverflow",
+            "reddit",
+        }
         assert configs["arxiv"].category == "academic"
         assert configs["wikipedia"].category == "reference"
+        assert configs["stackoverflow"].category == "developer"
+        assert configs["reddit"].category == "social"
         assert configs["searxng"].adapter_path.endswith("SearXNGAdapter")
         assert configs["tavily"].adapter_path.endswith("TavilyAdapter")
 

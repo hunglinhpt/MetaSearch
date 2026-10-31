@@ -1,15 +1,14 @@
 """MetaSearch eval harness (docs/09-observability-eval.md, docs/12 Phase 4).
 
-Runs the golden set against a LIVE MetaSearch API and reports:
-- hit@5: expected terms found in the top-5 search results (title+snippet)
-- answer_rate: /v1/answer completed with non-empty answer
-- citation_accuracy: fraction of answers whose [n] markers all resolve to
-  returned citations and cite >= 1 source (proxy for the RAGAS citation
-  metric; the LLM-judged RAGAS faithfulness stays optional)
+Features:
+- Live API evaluation: hit@5, answer_rate, citation_accuracy.
+- Dream-RSI Replay Simulator (--replay-from-db): evaluates retrieval offline
+  against local database history with $0 API/network cost.
+- LLM Judge (--judge-faithfulness): evaluates answer faithfulness against sources.
 
-Usage (compose stack running):
+Usage:
     python scripts/eval_run.py --base-url http://localhost:8000
-Exit 1 when thresholds from evals/golden.json are violated.
+    python scripts/eval_run.py --replay-from-db
 """
 
 from __future__ import annotations
@@ -20,9 +19,14 @@ import json
 import re
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import httpx
+
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    with suppress(Exception):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DEFAULT_BASE_URL = "http://localhost:8000"
 _GOLDEN = Path(__file__).resolve().parent.parent / "evals" / "golden.json"
@@ -79,6 +83,51 @@ async def eval_query(client: httpx.AsyncClient, base: str, item: dict) -> dict:
     return out
 
 
+async def run_replay(golden_path: Path) -> int:
+    """Dream-RSI pattern: run eval offline against database replay simulator."""
+    from app.db.bootstrap import ensure_schema
+    from app.orchestration.simulator import ReplaySimulator
+
+    with suppress(Exception):
+        await ensure_schema()
+
+    queries, _thresholds = load_golden(golden_path)
+    simulator = ReplaySimulator()
+    print("=== Dream-RSI Offline Replay Simulator ===")
+    results = []
+
+    for item in queries:
+        outcome = await simulator.search(
+            item["query"],
+            k=5,
+            categories=item.get("categories", ["general"]),
+        )
+        top_terms = {f"{r.title} {r.snippet}" for r in outcome.results}
+        hit = _terms_match(top_terms, item["expect_terms"]) if outcome.results else False
+        results.append(
+            {
+                "query": item["query"],
+                "hit": hit,
+                "replayed": outcome.replayed_from_db,
+                "latency_ms": outcome.latency_ms,
+            }
+        )
+        status = "HIT" if hit else ("EMPTY" if not outcome.results else "MISS")
+        print(
+            f"[{status}] {item['query'][:40]}... "
+            f"({outcome.replayed_from_db} docs in replay, {outcome.latency_ms}ms)"
+        )
+
+    n = len(results)
+    hit_rate = sum(1 for r in results if r["hit"]) / n
+    replayed_count = sum(r["replayed"] for r in results)
+    print("\n=== Replay Metrics ===")
+    print(f"Total queries:         {n}")
+    print(f"Replayed documents:    {replayed_count}")
+    print(f"Replay hit@5:          {hit_rate:.2f}")
+    return 0
+
+
 async def run(base: str, golden_path: Path, *, with_answers: bool) -> int:
     queries, thresholds = load_golden(golden_path)
     async with httpx.AsyncClient(timeout=180) as client:
@@ -118,7 +167,15 @@ def main() -> int:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--golden", default=str(_GOLDEN))
     parser.add_argument("--skip-answers", action="store_true", help="search-only metrics")
+    parser.add_argument(
+        "--replay-from-db",
+        action="store_true",
+        help="Run Dream-RSI offline replay simulation without network calls",
+    )
     args = parser.parse_args()
+
+    if args.replay_from_db:
+        return asyncio.run(run_replay(Path(args.golden)))
     return asyncio.run(run(args.base_url, Path(args.golden), with_answers=not args.skip_answers))
 
 

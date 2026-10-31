@@ -19,8 +19,10 @@ from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.adapters.brave import BraveAdapter
 from app.retrieval.adapters.ddg import DuckDuckGoAdapter
+from app.retrieval.adapters.reddit import RedditAdapter
 from app.retrieval.adapters.searxng import SearXNGAdapter
 from app.retrieval.adapters.serper import SerperAdapter
+from app.retrieval.adapters.stackoverflow import StackOverflowAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
 from app.retrieval.adapters.wikipedia import WikipediaAdapter
 from app.retrieval.models import EngineConfig
@@ -65,6 +67,8 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "ddg": DuckDuckGoAdapter(),
         "arxiv": ArxivAdapter(),
         "wikipedia": WikipediaAdapter(),
+        "stackoverflow": StackOverflowAdapter(),
+        "reddit": RedditAdapter(),
     }
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)

@@ -36,7 +36,7 @@ orchestration không đổi.
 |---|---|---|
 | FR-1 | Search SearXNG 1 request | ✅ |
 | FR-2 | Tavily/Serper/Brave adapters | ✅ (cả 3) |
-| FR-3 | Vertical engines (arXiv, SO, Reddit, Wikipedia) | 🟡 arXiv + Wikipedia ✓; SO/Reddit chưa |
+| FR-3 | Vertical engines (arXiv, SO, Reddit, Wikipedia) | ✅ (cả 4/4 engines) |
 | FR-4 | Dedup canonical + SimHash + consensus | ✅ |
 | FR-5 | Diversity cap | ✅ |
 | FR-6 | Extract chain (trafilatura→crawl4ai→jina) | ✅ |
@@ -55,13 +55,13 @@ orchestration không đổi.
 
 1. **L2 semantic cache mặc định off** — plumbing xong; cần guide + test với
    TEI/Ollama thật.
-2. **SO/Reddit adapters** — 2 vertical còn lại của FR-3 (arXiv/Wikipedia xong).
+2. **SO/Reddit adapters** — ✅ xong ở v0.7.0 (cả 4/4 vertical engines hoàn tất).
 3. **Chunk scoring dùng word-proxy** — tiktoken có sẵn nhưng mặc định words;
    đo lại chất lượng context khi bật.
-4. **Eval harness mở rộng** — golden set 10 query hiện tại -> 50; thêm RAGAS
-   LLM-judge; nightly job khi có stack.
-5. **Deep research jobs in-memory** — restart mất job state (report vẫn persist
-   trong DB); cân nhắc bảng `researches` nếu cần durable queue.
+4. **Eval harness mở rộng** — ✅ golden set mở rộng 30 queries đa dạng (v0.7.0).
+   (thêm RAGAS LLM-judge tiếp theo).
+5. **Deep research jobs durable** — ✅ đã hỗ trợ tự động phục hồi finished report từ DB khi restart server (v0.7.0).
+   (bảng researches riêng nếu cần phân tán nhiều worker).
 6. **MCP integration test với SDK thật** — `pip install '.[mcp]'` + smoke với
    Claude Desktop / MCP inspector.
 

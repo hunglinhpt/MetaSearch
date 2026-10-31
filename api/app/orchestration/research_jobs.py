@@ -101,19 +101,102 @@ class ResearchJobStore:
                 self._jobs.pop(job_id, None)
             return job
 
-    def get(self, research_id: str) -> ResearchJob:
+    async def get(self, research_id: str) -> ResearchJob:
         try:
             job_id = uuid.UUID(research_id)
         except ValueError as exc:
             raise MetaSearchError(ErrorCode.INVALID_REQUEST, "research_id must be a UUID") from exc
         job = self._jobs.get(job_id)
-        if job is None:
-            raise MetaSearchError(
-                ErrorCode.INVALID_REQUEST,
-                "research job not found (or process restarted)",
-                status_code=404,
+        if job is not None:
+            return job
+
+        restored = await self._load_from_db(job_id)
+        if restored is not None:
+            self._jobs[job_id] = restored
+            return restored
+
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            "research job not found",
+            status_code=404,
+        )
+
+    async def _load_from_db(self, job_id: uuid.UUID) -> ResearchJob | None:
+        try:
+            from sqlalchemy import select
+
+            from app.db.models import (
+                Answer as AnswerRow,
             )
-        return job
+            from app.db.models import (
+                Citation as CitationRow,
+            )
+            from app.db.models import (
+                Query as QueryRow,
+            )
+            from app.db.session import get_sessionmaker
+
+            sessionmaker = get_sessionmaker()
+            async with sessionmaker() as session:
+                query_row = (
+                    await session.execute(select(QueryRow).where(QueryRow.id == job_id))
+                ).scalar_one_or_none()
+                if query_row is None:
+                    return None
+
+                answer_row = (
+                    await session.execute(
+                        select(AnswerRow).where(
+                            AnswerRow.query_id == job_id,
+                            AnswerRow.kind == "research",
+                        )
+                    )
+                ).scalar_one_or_none()
+                if answer_row is None:
+                    return None
+
+                citation_rows = (
+                    (
+                        await session.execute(
+                            select(CitationRow)
+                            .where(CitationRow.answer_id == answer_row.id)
+                            .order_by(CitationRow.n)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+                citations = [
+                    {"n": c.n, "url": c.url or "", "title": "", "chunk_id": str(c.chunk_id or "")}
+                    for c in citation_rows
+                ]
+
+                job = ResearchJob(
+                    id=job_id,
+                    query=query_row.raw_text,
+                    status="done" if answer_row.status == "complete" else answer_row.status,
+                    finished=True,
+                    result={
+                        "report_md": answer_row.content_md or "",
+                        "citations": citations,
+                        "learnings": [],
+                    },
+                )
+                job.events.append(
+                    (
+                        "done",
+                        {
+                            "research_id": str(job_id),
+                            "status": job.status,
+                            "model": answer_row.model,
+                        },
+                    )
+                )
+                return job
+        except Exception as exc:
+            logger.warning("research_job_restore_failed", error=type(exc).__name__)
+            return None
 
 
 _job_store: ResearchJobStore | None = None

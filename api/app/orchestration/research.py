@@ -4,6 +4,10 @@ Planner (LLM, JSON sub-queries) -> Executor (pure async: search + scrape +
 rerank into a ContextPack) -> Extractor (LLM: learnings + gaps) -> loop within
 budget -> Synthesizer (streaming report with [n] citations).
 
+Harness²-inspired adaptive scaffolding (Google Research pattern):
+Dynamic domain profiles (developer, academic, comparative, general) tailor
+planning directives, search categories, extraction depth, and report structure.
+
 Every stage emits events consumed by both the SSE endpoint and the MCP layer:
 plan, iteration_start, engine_done, learnings, report_token, done.
 """
@@ -60,11 +64,7 @@ class ContextPack:
     _seen_chunk_urls: set[str] = field(default_factory=set)
 
     def merge(self, chunks: list[Chunk], sources: list[dict]) -> list[Chunk]:
-        """Dedup sources by URL; chunks dedup against already-merged chunk URLs.
-
-        Returns the accepted chunks so the caller can number citations
-        consistently even when duplicates are dropped.
-        """
+        """Dedup sources by URL; chunks dedup against already-merged chunk URLs."""
         for source in sources:
             if source["url"] not in self._seen_urls:
                 self._seen_urls.add(source["url"])
@@ -82,35 +82,196 @@ class ContextPack:
         return len(self.chunks)
 
 
+# -- Harness² domain scaffolding profiles -----------------------------------
+
+
+@dataclass(slots=True)
+class ResearchHarness:
+    """Domain scaffolding profile inspired by Harness² (docs/04 §Agents)."""
+
+    profile: str
+    default_categories: list[str]
+    planner_instructions: str
+    extractor_instructions: str
+    report_structure: str
+
+
+HARNESS_PROFILES: dict[str, ResearchHarness] = {
+    "developer": ResearchHarness(
+        profile="developer",
+        default_categories=["developer", "general"],
+        planner_instructions=(
+            "Decompose into distinct developer-focused sub-queries covering: "
+            "(1) root cause / architecture, (2) verified code solutions & API usage, "
+            "(3) trade-offs & version pitfalls, (4) practical integration examples. "
+            "Categories must include 'developer' and 'general'."
+        ),
+        extractor_instructions=(
+            "Extract concrete technical facts, code syntax, library versions, "
+            "and identify technical gaps or unverified edge cases."
+        ),
+        report_structure=(
+            "Structure the report: Executive Summary -> Technical Root Cause / Architecture -> "
+            "Verified Solutions & Code Examples -> Performance & Version Pitfalls -> "
+            "Best Practices & Conclusion -> References."
+        ),
+    ),
+    "academic": ResearchHarness(
+        profile="academic",
+        default_categories=["academic", "reference", "general"],
+        planner_instructions=(
+            "Decompose into rigorous academic sub-queries covering: "
+            "(1) foundational theory / original papers, (2) algorithmic formulation, "
+            "(3) empirical benchmark numbers & SOTA results, (4) limitations & open questions. "
+            "Categories must include 'academic', 'reference', and 'general'."
+        ),
+        extractor_instructions=(
+            "Extract empirical findings, metrics, experimental methodologies, and theoretical gaps."
+        ),
+        report_structure=(
+            "Structure the report: Abstract / Executive Summary -> Theoretical Foundations -> "
+            "Empirical Evidence & Benchmark Analysis -> Limitations & Open Challenges -> "
+            "Conclusion -> Academic References."
+        ),
+    ),
+    "comparative": ResearchHarness(
+        profile="comparative",
+        default_categories=["general", "developer", "social"],
+        planner_instructions=(
+            "Decompose into side-by-side comparative sub-queries covering: "
+            "(1) core architectural differences, (2) direct performance & benchmark metrics, "
+            "(3) ecosystem, tooling & community adoption, (4) real-world migration trade-offs. "
+            "Categories should include 'general', 'developer', or 'social'."
+        ),
+        extractor_instructions=(
+            "Extract side-by-side metric comparisons, pros/cons for each option, "
+            "and unanswered comparative points."
+        ),
+        report_structure=(
+            "Structure the report: Executive Summary -> Feature Matrix & Comparison Table -> "
+            "Performance & Benchmark Deep Dive -> Ecosystem & Developer Experience -> "
+            "Decision Guide & Trade-offs -> References."
+        ),
+    ),
+    "general": ResearchHarness(
+        profile="general",
+        default_categories=["general"],
+        planner_instructions=(
+            "Decompose into distinct web-search sub-queries covering: "
+            "definitions, quantitative data, opposing views, and real cases. "
+            "No duplicates."
+        ),
+        extractor_instructions=(
+            "Extract relevant facts with source citations and note what remains unanswered."
+        ),
+        report_structure=(
+            "Structure the report: Executive Summary -> Key Aspects & Findings -> "
+            "Comparative Insights & Trade-offs -> Conclusion & Recommendations -> References."
+        ),
+    ),
+}
+
+
+def detect_profile(query: str, requested: str = "auto") -> str:
+    """Classify the query into a domain scaffolding profile (Harness² pattern)."""
+    if requested in ("developer", "academic", "comparative", "general"):
+        return requested
+    q = query.lower()
+    comp_keywords = (
+        "so sánh",
+        "versus",
+        " vs ",
+        "compare",
+        "comparison",
+        "khác nhau",
+        "ưu nhược điểm",
+    )
+    if any(k in q for k in comp_keywords):
+        return "comparative"
+    dev_keywords = (
+        "python",
+        "code",
+        "bug",
+        "error",
+        "exception",
+        "fastapi",
+        "docker",
+        "npm",
+        "typescript",
+        "javascript",
+        "sql",
+        "git",
+        "linux",
+        "function",
+        "class",
+        "react",
+        "asyncio",
+        "postgres",
+        "mysql",
+        "redis",
+        "kubernetes",
+        "c++",
+        "rust",
+    )
+    if any(k in q for k in dev_keywords):
+        return "developer"
+    academic_keywords = (
+        "arxiv",
+        "paper",
+        "theorem",
+        "hypothesis",
+        "dataset",
+        "deep learning",
+        "transformer",
+        "neural",
+        "empirical",
+    )
+    if any(k in q for k in academic_keywords):
+        return "academic"
+    return "general"
+
+
 # -- prompts ---------------------------------------------------------------
 
 
-def _planner_messages(question: str, breadth: int, lang: str | None) -> list[dict[str, str]]:
+def _planner_messages(
+    question: str,
+    breadth: int,
+    lang: str | None,
+    harness: ResearchHarness | None = None,
+) -> list[dict[str, str]]:
+    h = harness or HARNESS_PROFILES["general"]
+    cat_json = json.dumps(h.default_categories)
     return [
         {
             "role": "system",
             "content": (
-                "You are a research planner. Decompose the question into "
-                f"{breadth} distinct web-search sub-queries covering different "
-                "aspects: definitions, quantitative data, opposing views, real "
-                "cases. No duplicates. Respond with STRICT JSON only: "
+                f"You are a research planner for the {h.profile} domain. "
+                f"{h.planner_instructions} "
+                f"Decompose the question into {breadth} distinct web-search sub-queries. "
+                "Respond with STRICT JSON only: "
                 '{"sub_queries": [{"query": "...", "purpose": "..."}], '
-                '"categories": ["general"]} '
-                "(categories optionally include 'academic' or 'reference')."
+                f'"categories": {cat_json}}}'
             ),
         },
         {"role": "user", "content": f"Question: {question}"},
     ]
 
 
-def _extractor_messages(question: str, chunk_text: str) -> list[dict[str, str]]:
+def _extractor_messages(
+    question: str,
+    chunk_text: str,
+    harness: ResearchHarness | None = None,
+) -> list[dict[str, str]]:
+    h = harness or HARNESS_PROFILES["general"]
     return [
         {
             "role": "system",
             "content": (
-                "You are a research extractor. From the numbered sources below, "
-                "list facts relevant to the question and what remains "
-                "unanswered. STRICT JSON only: "
+                f"You are a research extractor ({h.profile} profile). "
+                f"{h.extractor_instructions} "
+                "From the numbered sources below, list facts relevant to the question "
+                "and what remains unanswered. STRICT JSON only: "
                 '{"learnings": [{"fact": "...", "citation_id": <number>}], '
                 '"gaps": ["..."]}. citation_id must be one of the source numbers.'
             ),
@@ -130,15 +291,18 @@ def _render_pack(chunks: list[Chunk], start: int = 1) -> str:
 
 
 def _report_messages(
-    question: str, learnings: list[Learning], context_text: str
+    question: str,
+    learnings: list[Learning],
+    context_text: str,
+    harness: ResearchHarness | None = None,
 ) -> list[dict[str, str]]:
+    h = harness or HARNESS_PROFILES["general"]
     learnings_text = "\n".join(f"- {item.fact} [{item.citation_id}]" for item in learnings) or "-"
     return [
         {
             "role": "system",
             "content": (
-                SYSTEM_PROMPT + "\nStructure the report: Executive summary -> Analysis per "
-                "aspect -> Comparison -> Conclusion -> References. Be thorough."
+                f"{SYSTEM_PROMPT}\n{h.report_structure} Be thorough and cite [n] for every claim."
             ),
         },
         {
@@ -163,6 +327,7 @@ class ResearchParams:
     max_time_s: int | None = None
     max_tokens: int | None = None
     k: int = 6  # results per sub-query
+    profile: str = "auto"  # auto | general | developer | academic | comparative
 
 
 class ResearchPipeline:
@@ -188,13 +353,19 @@ class ResearchPipeline:
         depth = max(1, min(params.depth, self.settings.research_max_iterations))
         usage_total = Usage()
 
-        yield ("status", {"stage": "planning", "detail": question})
-        sub_queries, categories = await self._plan(question, breadth, params.lang)
-        # Yielded only (no on_event): run_job forwards generator events itself,
-        # a callback here would duplicate the event in the SSE stream.
+        profile_name = detect_profile(question, params.profile)
+        harness = HARNESS_PROFILES.get(profile_name, HARNESS_PROFILES["general"])
+
+        yield (
+            "status",
+            {"stage": "planning", "detail": f"{question} [profile: {harness.profile}]"},
+        )
+        sub_queries, categories = await self._plan(question, breadth, params.lang, harness)
+        # Yielded only (no on_event): run_job forwards generator events itself
         yield (
             "plan",
             {
+                "profile": harness.profile,
                 "sub_queries": [{"query": q, "purpose": purpose} for q, purpose in sub_queries],
                 "categories": categories,
             },
@@ -208,7 +379,10 @@ class ResearchPipeline:
                 break
             yield ("iteration_start", {"iteration": iteration + 1, "max_iterations": depth})
             if iteration > 0 and pack.gaps:
-                sub_queries = [(gap, "gap follow-up") for gap in pack.gaps[:breadth]]
+                # Harness² contrastive gap follow-up: probe explicitly on unanswered points
+                sub_queries = [
+                    (f"{gap} evidence analysis", "gap follow-up") for gap in pack.gaps[:breadth]
+                ]
 
             queries = [q for q, _purpose in sub_queries]
             outcome = await self.search.run(
@@ -235,7 +409,7 @@ class ResearchPipeline:
             accepted = pack.merge(new_chunks, sources)
 
             learnings, gaps, usage = await self._extract(
-                question, _render_pack(accepted, start=chunk_start + 1)
+                question, _render_pack(accepted, start=chunk_start + 1), harness
             )
             usage_total.input_tokens += usage.input_tokens
             usage_total.output_tokens += usage.output_tokens
@@ -256,10 +430,11 @@ class ResearchPipeline:
         yield ("status", {"stage": "writing_report", "detail": f"{len(pack.chunks)} chunks"})
         report_id = uuid.uuid4()
         answer_parts: list[str] = []
-        citations_payload: list[dict] = []
         try:
             included = pack.chunks[:60]
-            messages = _report_messages(question, pack.learnings, _render_pack(included))
+            messages = _report_messages(
+                question, pack.learnings, _render_pack(included), harness=harness
+            )
             async for delta in self.gateway.stream(messages, model=self.settings.llm_report_model):
                 if delta.text:
                     answer_parts.append(delta.text)
@@ -292,6 +467,7 @@ class ResearchPipeline:
                 "truncated": truncated,
                 "iterations": depth if truncated else None,
                 "model": self.settings.llm_report_model,
+                "profile": harness.profile,
                 "usage": {
                     "input_tokens": usage_total.input_tokens,
                     "output_tokens": usage_total.output_tokens,
@@ -317,12 +493,17 @@ class ResearchPipeline:
     # -- stages --------------------------------------------------------------
 
     async def _plan(
-        self, question: str, breadth: int, lang: str | None
+        self,
+        question: str,
+        breadth: int,
+        lang: str | None,
+        harness: ResearchHarness | None = None,
     ) -> tuple[list[tuple[str, str]], list[str]]:
-        """Planner LLM call; heuristic fallback keeps research alive offline."""
+        """Planner LLM call with domain-adaptive harness; heuristic fallback."""
+        h = harness or HARNESS_PROFILES["general"]
         try:
             text, _usage = await self.gateway.complete(
-                _planner_messages(question, breadth, lang),
+                _planner_messages(question, breadth, lang, harness=h),
                 model=self.settings.llm_quick_model,
                 task="planner",
             )
@@ -332,30 +513,44 @@ class ResearchPipeline:
                 for item in parsed.get("sub_queries", [])
                 if item.get("query")
             ][:_MAX_SUB_QUERIES]
-            categories = [str(c) for c in parsed.get("categories", []) if c] or ["general"]
+            categories = [str(c) for c in parsed.get("categories", []) if c] or (
+                h.default_categories
+            )
             if sub_queries:
                 return sub_queries, categories
         except (LLMError, ValueError, KeyError, TypeError) as exc:
             logger.warning("research_planner_fallback", error=type(exc).__name__)
-        # Heuristic fallback: aspect-templated sub-queries.
-        aspects = [
-            "overview and definition",
-            "data and numbers",
-            "criticism and trade-offs",
-            "practical examples",
-        ]
+
+        # Heuristic fallback: domain-aware aspects
+        if h.profile == "general":
+            aspects = [
+                "overview and definition",
+                "quantitative data and statistics",
+                "opposing viewpoints and critique",
+                "real-world examples and case studies",
+            ]
+        else:
+            aspects = [
+                f"core overview and concepts ({h.profile})",
+                "quantitative metrics and benchmarks",
+                "critical trade-offs and edge cases",
+                "practical real-world applications",
+            ]
         return (
             [(f"{question} — {aspect}", aspect) for aspect in aspects[:breadth]],
-            ["general"],
+            h.default_categories,
         )
 
     async def _extract(
-        self, question: str, chunk_text: str
+        self,
+        question: str,
+        chunk_text: str,
+        harness: ResearchHarness | None = None,
     ) -> tuple[list[Learning], list[str], Usage]:
         capped = chunk_text[:_EXTRACTOR_MAX_CHARS]
         try:
             text, usage = await self.gateway.complete(
-                _extractor_messages(question, capped),
+                _extractor_messages(question, capped, harness=harness),
                 model=self.settings.llm_quick_model,
                 task="extractor",
             )

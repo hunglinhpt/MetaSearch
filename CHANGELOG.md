@@ -4,6 +4,26 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [0.7.0] — 2026-10-31 — FR-3 Complete, Durable Research & Eval Expansion
+
+### Added
+- **Stack Overflow adapter (FR-3 complete)**: vertical search cho developer queries
+  qua StackExchange 2.3 API keyless (`category="developer"`, throttle polite,
+  HTML unescaping, tags/score formatting).
+- **Reddit adapter (FR-3 complete)**: vertical search cho social & community
+  discussions qua Reddit JSON API keyless (`category="social"`, custom UA,
+  subreddit & comment stats formatting).
+- **Durable Research Job Recovery**: `ResearchJobStore.get()` tự động phục hồi
+  finished research report và citations từ DB (`Query`/`Answer`/`Citation` rows)
+  khi server restart, loại bỏ lỗi 404 sau khi restart process.
+- **Mở rộng Eval Harness**: `evals/golden.json` mở rộng từ 10 lên 30 queries đa dạng
+  (Factual, Developer, Academic, Social, Reference, Vietnamese, SSRF/Security).
+
+### Fixed
+- **Unawaited coroutine bug**: chuẩn hóa `persist_report` thành hàm đồng bộ `def`
+  (tương tự `persist_pages`), loại bỏ hoàn toàn `RuntimeWarning: coroutine was never awaited`
+  và bảo đảm background report persistence luôn kích hoạt đúng đắn.
+
 ## [0.6.0] — 2026-10-31 — Lite profile: chạy không Docker trên máy yếu
 
 ### Added

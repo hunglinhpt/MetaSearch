@@ -141,7 +141,7 @@ class TestResearchPipeline:
     async def test_planner_fallback_heuristic(self, monkeypatch):
         gateway = FakeGateway(fail_planner=True, extracts=[{"learnings": [], "gaps": []}])
         pipeline = build_pipeline(monkeypatch, gateway)
-        events = [e async for e in pipeline.run(ResearchParams(query="postgres", depth=1))]
+        events = [e async for e in pipeline.run(ResearchParams(query="general topic", depth=1))]
         plan = next(data for name, data in events if name == "plan")
         assert len(plan["sub_queries"]) == 4  # aspect-templated fallback
         assert plan["sub_queries"][0]["purpose"] == "overview and definition"
@@ -201,17 +201,17 @@ class TestJobStore:
     async def test_create_get_and_cap(self):
         store = ResearchJobStore()
         job = await store.create("q")
-        assert store.get(str(job.id)) is job
-        assert store.get(str(job.id)).status == "queued"
+        assert (await store.get(str(job.id))) is job
+        assert (await store.get(str(job.id))).status == "queued"
 
     async def test_get_invalid_and_missing(self):
         store = ResearchJobStore()
         from app.core.errors import MetaSearchError
 
         with pytest.raises(MetaSearchError):
-            store.get("not-a-uuid")
+            await store.get("not-a-uuid")
         with pytest.raises(MetaSearchError):
-            store.get("00000000-0000-0000-0000-000000000000")
+            await store.get("00000000-0000-0000-0000-000000000000")
 
     async def test_events_wait_returns_buffered(self):
         job = ResearchJob(id=__import__("uuid").uuid4(), query="q")
@@ -221,3 +221,89 @@ class TestJobStore:
         assert event[0] == "status"
         index, event = await job.wait_event(index, 0.05)
         assert event is None  # nothing new; timeout
+
+    async def test_restore_from_db(self, tmp_path, monkeypatch):
+        import uuid
+
+        from app.config import get_settings
+        from app.db.bootstrap import ensure_schema
+        from app.db.models import Answer, Query
+        from app.db.session import dispose_engine, get_sessionmaker
+
+        db_path = tmp_path / "restore.db"
+        monkeypatch.setattr(get_settings(), "database_url", f"sqlite+aiosqlite:///{db_path}")
+        await dispose_engine()
+        assert await ensure_schema() is True
+
+        job_id = uuid.uuid4()
+        answer_id = uuid.uuid4()
+
+        try:
+            async with get_sessionmaker()() as session:
+                session.add(
+                    Query(
+                        id=job_id,
+                        raw_text="test restore query",
+                        normalized_text="test restore query",
+                    )
+                )
+                session.add(
+                    Answer(
+                        id=answer_id,
+                        query_id=job_id,
+                        kind="research",
+                        content_md="# Restored Report",
+                        status="complete",
+                        model="gpt-4o",
+                    )
+                )
+                await session.commit()
+
+            store = ResearchJobStore()
+            restored = await store.get(str(job_id))
+            assert restored is not None
+            assert restored.id == job_id
+            assert restored.query == "test restore query"
+            assert restored.status == "done"
+            assert restored.result["report_md"] == "# Restored Report"
+        finally:
+            await dispose_engine()
+
+
+class TestHarnessProfiles:
+    def test_detect_profile_keywords(self):
+        from app.orchestration.research import detect_profile
+
+        assert detect_profile("Postgres vs MySQL performance") == "comparative"
+        assert detect_profile("So sánh Docker và Podman") == "comparative"
+        assert detect_profile("How to fix Python asyncio exception") == "developer"
+        assert detect_profile("Deep learning transformer attention arxiv paper") == "academic"
+        assert detect_profile("Thủ đô của nước Pháp là gì") == "general"
+
+    def test_detect_profile_explicit_override(self):
+        from app.orchestration.research import detect_profile
+
+        assert detect_profile("python error", requested="academic") == "academic"
+        assert detect_profile("some query", requested="comparative") == "comparative"
+
+    async def test_pipeline_plan_event_carries_profile(self, monkeypatch):
+        gateway = FakeGateway(extracts=[{"learnings": [], "gaps": []}])
+        pipeline = build_pipeline(monkeypatch, gateway)
+
+        events = [
+            e
+            async for e in pipeline.run(
+                ResearchParams(query="python asyncio bug fix", profile="auto", depth=1)
+            )
+        ]
+        plan = next(data for name, data in events if name == "plan")
+        assert plan["profile"] == "developer"
+
+        events_academic = [
+            e
+            async for e in pipeline.run(
+                ResearchParams(query="some topic", profile="academic", depth=1)
+            )
+        ]
+        plan_acad = next(data for name, data in events_academic if name == "plan")
+        assert plan_acad["profile"] == "academic"

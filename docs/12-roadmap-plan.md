@@ -125,12 +125,17 @@
 | Security | `bandit -q -r app -x tests` | 0 issue (defusedxml cho arXiv Atom) |
 | Smoke live | uvicorn: auth bật → 401 chuẩn; research 202 → job running → SSE events; LLM none → planner fallback + error event đúng format | ✓ |
 
-### Phase 4 — Hardening (tuần 7–8) — ✅ phần lõi hoàn tất (v0.5.0), còn lại cần Docker
-- [x] Eval harness: `api/evals/golden.json` (10 query seed EN+VI) + `api/scripts/eval_run.py` (hit@5, answer_rate, citation_accuracy — exit 1 khi dưới threshold; RAGAS LLM-judge là tuỳ chọn sau)
-- [x] Langfuse LLM tracing (optional, httpx thuần không SDK): `LANGFUSE_HOST/PUBLIC_KEY/SECRET_KEY` → trace per LLM call fire-and-forget
-- [x] OTel tracing (optional `.[otel]`): FastAPI + httpx instrumentation, `OTEL_ENABLED=true` + OTEL_* env
-- [x] k6 script chuẩn bị sẵn (`deploy/k6/load-test.js`, thresholds theo KPI) — **cần chạy trên máy có Docker** (`docker compose up` + `k6 run`)
-- [ ] k6 load test + tuning thực tế — chờ máy có Docker (chạy `METASEARCH_INTEGRATION=1 pytest tests/integration` + `k6 run deploy/k6/load-test.js`)
+### Phase 4 — Hardening & AI SOTA Upgrades — ✅ v0.7.0 hoàn tất
+- [x] Eval harness: pi/evals/golden.json (mở rộng 30 query đa miền EN+VI: developer, academic, social, reference, security) + pi/scripts/eval_run.py (hit@5, answer_rate, citation_accuracy)
+- [x] Dream-RSI Offline Replay Simulator (pp/orchestration/simulator.py + eval_run.py --replay-from-db): mô phỏng replay world model không tốn chi phí API/mạng ngoài từ lịch sử DB
+- [x] Harness² Domain Scaffolding (pp/orchestration/research.py): adaptive domain-specific research profiles (developer, cademic, comparative, general) + contrastive gap follow-ups
+- [x] 4/4 Vertical engines hoàn tất: arXiv, Wikipedia, StackOverflow (category: developer), Reddit (category: social)
+- [x] Durable research job recovery: tự động nạp lại kết quả hoàn thành từ DB khi server restart
+- [x] MCP Ecosystem Support (OpenAI Codex, Claude Code, Cursor, Windsurf, Claude Desktop)
+- [x] Langfuse LLM tracing (optional, httpx thuần không SDK): LANGFUSE_HOST/PUBLIC_KEY/SECRET_KEY → trace per LLM call fire-and-forget
+- [x] OTel tracing (optional .[otel]): FastAPI + httpx instrumentation, OTEL_ENABLED=true + OTEL_* env
+- [x] k6 script chuẩn bị sẵn (deploy/k6/load-test.js, thresholds theo KPI) — **cần chạy trên máy có Docker** (docker compose up + k6 run)
+- [ ] k6 load test + tuning thực tế — chờ máy có Docker (chạy METASEARCH_INTEGRATION=1 pytest tests/integration + k6 run deploy/k6/load-test.js)
 - [ ] Backup job + runbook vận hành — todo nhỏ còn lại
 - [ ] SSRF suite còn lại: pin-IP cho crawl4ai/jina service tier (direct fetch đã pin từ Phase 2)
 

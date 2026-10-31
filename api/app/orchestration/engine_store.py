@@ -42,6 +42,8 @@ ADAPTER_PATHS = {
     "brave": "app.retrieval.adapters.brave:BraveAdapter",
     "arxiv": "app.retrieval.adapters.arxiv:ArxivAdapter",
     "wikipedia": "app.retrieval.adapters.wikipedia:WikipediaAdapter",
+    "stackoverflow": "app.retrieval.adapters.stackoverflow:StackOverflowAdapter",
+    "reddit": "app.retrieval.adapters.reddit:RedditAdapter",
 }
 
 
@@ -145,6 +147,28 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             max_results=10,
             requires_key=False,
             adapter_path=ADAPTER_PATHS["wikipedia"],
+        ),
+        "stackoverflow": EngineConfig(
+            id="stackoverflow",
+            name="Stack Overflow (developer)",
+            category="developer",
+            weight=1.0,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["stackoverflow"],
+        ),
+        "reddit": EngineConfig(
+            id="reddit",
+            name="Reddit (social)",
+            category="social",
+            weight=0.9,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["reddit"],
         ),
     }
 

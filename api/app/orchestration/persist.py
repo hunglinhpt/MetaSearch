@@ -285,7 +285,7 @@ async def _persist_report(
         await session.commit()
 
 
-async def persist_report(
+def persist_report(
     research_id: uuid.UUID,
     question: str,
     lang: str | None,
