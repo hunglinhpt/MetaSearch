@@ -8,7 +8,11 @@ import pytest
 from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import AdapterError
 from app.retrieval.adapters.brave import BraveAdapter
+from app.retrieval.adapters.github import GitHubAdapter
+from app.retrieval.adapters.huggingface import HuggingFaceAdapter
+from app.retrieval.adapters.pubmed import PubMedAdapter
 from app.retrieval.adapters.reddit import RedditAdapter
+from app.retrieval.adapters.semanticscholar import SemanticScholarAdapter
 from app.retrieval.adapters.serper import SerperAdapter
 from app.retrieval.adapters.stackoverflow import StackOverflowAdapter
 from app.retrieval.adapters.wikipedia import WikipediaAdapter
@@ -311,3 +315,155 @@ class TestCategoryFanout:
         # Explicit engines list overrides categories.
         await pipeline.run(SearchParams(query="q", engines=["wikipedia"]))
         assert len(spy_wiki.calls) == 1
+
+
+class TestGitHub:
+    async def test_parses_repositories(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert "fastapi" in request.url.params["q"]
+            return httpx.Response(
+                200,
+                json={
+                    "total_count": 1,
+                    "items": [
+                        {
+                            "full_name": "tiangolo/fastapi",
+                            "html_url": "https://github.com/tiangolo/fastapi",
+                            "description": "FastAPI framework, high performance, easy to learn.",
+                            "language": "Python",
+                            "stargazers_count": 75000,
+                            "forks_count": 6000,
+                            "updated_at": "2024-10-01T10:00:00Z",
+                        }
+                    ],
+                },
+            )
+
+        adapter = GitHubAdapter()
+        patched_httpx("app.retrieval.adapters.github", handler)
+        results = await adapter.search("fastapi", max_results=5)
+        assert len(results) == 1
+        assert results[0].title == "tiangolo/fastapi"
+        assert "75,000" in results[0].snippet
+        assert results[0].source_engines == ["github"]
+
+    async def test_github_with_token(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.headers.get("authorization") == "Bearer gh_test_token"
+            return httpx.Response(200, json={"items": []})
+
+        adapter = GitHubAdapter(token="gh_test_token")
+        patched_httpx("app.retrieval.adapters.github", handler)
+        results = await adapter.search("query")
+        assert results == []
+
+    async def test_github_rate_limited(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403, json={"message": "API rate limit exceeded"})
+
+        adapter = GitHubAdapter()
+        patched_httpx("app.retrieval.adapters.github", handler)
+        with pytest.raises(AdapterError, match="rate limit exceeded"):
+            await adapter.search("query")
+
+
+class TestPubMed:
+    async def test_parses_pubmed_papers(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "esearch.fcgi" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"esearchresult": {"idlist": ["38000001"], "count": "1"}},
+                )
+            elif "esummary.fcgi" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={
+                        "result": {
+                            "uids": ["38000001"],
+                            "38000001": {
+                                "uid": "38000001",
+                                "title": "CRISPR-Cas9 Therapeutics in Human Disease.",
+                                "source": "Nature Medicine",
+                                "pubdate": "2023 Dec",
+                                "sortpubdate": "2023/12/01 00:00",
+                                "authors": [{"name": "Doudna J"}, {"name": "Charpentier E"}],
+                            },
+                        }
+                    },
+                )
+            return httpx.Response(404)
+
+        adapter = PubMedAdapter()
+        patched_httpx("app.retrieval.adapters.pubmed", handler)
+        results = await adapter.search("crispr", max_results=5)
+        assert len(results) == 1
+        assert "CRISPR-Cas9" in results[0].title
+        assert "Nature Medicine" in results[0].snippet
+        assert results[0].url == "https://pubmed.ncbi.nlm.nih.gov/38000001/"
+        assert results[0].source_engines == ["pubmed"]
+
+    async def test_pubmed_empty_esearch(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"esearchresult": {"idlist": []}})
+
+        adapter = PubMedAdapter()
+        patched_httpx("app.retrieval.adapters.pubmed", handler)
+        results = await adapter.search("nonexistentterm99999")
+        assert results == []
+
+
+class TestHuggingFace:
+    async def test_parses_models(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "deepseek-ai/DeepSeek-V3",
+                        "likes": 5000,
+                        "downloads": 950000,
+                        "pipeline_tag": "text-generation",
+                        "lastModified": "2024-12-26T15:00:00.000Z",
+                    }
+                ],
+            )
+
+        adapter = HuggingFaceAdapter()
+        patched_httpx("app.retrieval.adapters.huggingface", handler)
+        results = await adapter.search("deepseek", max_results=5)
+        assert len(results) == 1
+        assert results[0].title == "deepseek-ai/DeepSeek-V3"
+        assert "950,000" in results[0].snippet
+        assert results[0].url == "https://huggingface.co/deepseek-ai/DeepSeek-V3"
+        assert results[0].source_engines == ["huggingface"]
+
+
+class TestSemanticScholar:
+    async def test_parses_papers(self, patched_httpx):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "total": 1,
+                    "data": [
+                        {
+                            "paperId": "abc123456",
+                            "title": "Deep Residual Learning for Image Recognition",
+                            "url": "https://www.semanticscholar.org/paper/abc123456",
+                            "abstract": "Deeper neural networks are more difficult to train.",
+                            "year": 2016,
+                            "citationCount": 190000,
+                            "authors": [{"name": "Kaiming He"}, {"name": "Xiangyu Zhang"}],
+                        }
+                    ],
+                },
+            )
+
+        adapter = SemanticScholarAdapter()
+        patched_httpx("app.retrieval.adapters.semanticscholar", handler)
+        results = await adapter.search("resnet", max_results=5)
+        assert len(results) == 1
+        assert results[0].title == "Deep Residual Learning for Image Recognition"
+        assert "190,000" in results[0].snippet
+        assert results[0].source_engines == ["semanticscholar"]

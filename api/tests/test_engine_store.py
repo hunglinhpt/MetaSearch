@@ -117,11 +117,19 @@ class TestDefaults:
             "wikipedia",
             "stackoverflow",
             "reddit",
+            "github",
+            "pubmed",
+            "huggingface",
+            "semanticscholar",
         }
         assert configs["arxiv"].category == "academic"
         assert configs["wikipedia"].category == "reference"
         assert configs["stackoverflow"].category == "developer"
         assert configs["reddit"].category == "social"
+        assert configs["github"].category == "developer"
+        assert configs["pubmed"].category == "academic"
+        assert configs["huggingface"].category == "developer"
+        assert configs["semanticscholar"].category == "academic"
         assert configs["searxng"].adapter_path.endswith("SearXNGAdapter")
         assert configs["tavily"].adapter_path.endswith("TavilyAdapter")
 

@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     serper_api_key: str = ""
     brave_api_key: str = ""
     jina_api_key: str = ""
+    github_token: str = ""
+    pubmed_api_key: str = ""
+    semanticscholar_api_key: str = ""
 
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------
     reranker: Literal["heuristic", "onnx", "api"] = "heuristic"

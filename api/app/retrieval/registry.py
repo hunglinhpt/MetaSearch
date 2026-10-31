@@ -19,8 +19,12 @@ from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.adapters.brave import BraveAdapter
 from app.retrieval.adapters.ddg import DuckDuckGoAdapter
+from app.retrieval.adapters.github import GitHubAdapter
+from app.retrieval.adapters.huggingface import HuggingFaceAdapter
+from app.retrieval.adapters.pubmed import PubMedAdapter
 from app.retrieval.adapters.reddit import RedditAdapter
 from app.retrieval.adapters.searxng import SearXNGAdapter
+from app.retrieval.adapters.semanticscholar import SemanticScholarAdapter
 from app.retrieval.adapters.serper import SerperAdapter
 from app.retrieval.adapters.stackoverflow import StackOverflowAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
@@ -69,6 +73,10 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "wikipedia": WikipediaAdapter(),
         "stackoverflow": StackOverflowAdapter(),
         "reddit": RedditAdapter(),
+        "github": GitHubAdapter(token=settings.github_token),
+        "pubmed": PubMedAdapter(api_key=settings.pubmed_api_key),
+        "huggingface": HuggingFaceAdapter(),
+        "semanticscholar": SemanticScholarAdapter(api_key=settings.semanticscholar_api_key),
     }
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)

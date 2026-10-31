@@ -242,3 +242,73 @@ async def test_negative_cache_shared_via_redis_flag():
     result = await second_scraper.scrape("https://example.com/dead")
     assert result.status == "failed"
     assert "negative cache" in (result.error or "")
+
+
+def test_is_challenge_page_detection():
+    from app.extraction.scraper import is_challenge_page
+
+    cloudflare_html = """<html><head><title>Just a moment...</title></head>
+    <body><div class="cf-turnstile" data-sitekey="abc"></div>
+    <p>Checking your browser before accessing the website.</p>
+    <p>Cloudflare Ray ID: 8b0123456789</p></body></html>"""
+    assert is_challenge_page(cloudflare_html) is True
+    assert is_challenge_page(cloudflare_html.encode("utf-8")) is True
+
+    recaptcha_html = """<html><body><div class="g-recaptcha" data-sitekey="xyz"></div>
+    <p>Please verify that you are not a robot</p></body></html>"""
+    assert is_challenge_page(recaptcha_html) is True
+
+    normal_html = """<html><head><title>Clean Blog</title></head>
+    <body><article><h1>Clean Post</h1><p>Real content here.</p></article></body></html>"""
+    assert is_challenge_page(normal_html) is False
+    assert is_challenge_page("") is False
+
+
+async def test_scraper_escalates_on_403_challenge_to_jina():
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "/robots.txt" in url_str:
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
+        if "crawl4ai.test" in url_str:
+            return httpx.Response(500, text="crawl4ai offline")
+        if "r.jina.ai" in url_str:
+            return httpx.Response(
+                200,
+                text="Title: Jina Stealth Article\n\nReal content extracted through cloud proxy.",
+            )
+        # Direct fetch gets blocked by Cloudflare (403 Forbidden)
+        return httpx.Response(403, text="403 Forbidden - Cloudflare WAF")
+
+    scraper = make_scraper(handler)
+    page = await scraper.scrape("https://example.com/protected-article")
+    assert hasattr(page, "markdown")
+    assert page.extractor_used == "jina"
+    assert "Real content extracted" in page.markdown
+
+
+async def test_scraper_discards_captcha_body_and_escalates_to_jina():
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "/robots.txt" in url_str:
+            return httpx.Response(200, text="User-agent: *\nAllow: /")
+        if "crawl4ai.test" in url_str:
+            return httpx.Response(500, text="crawl4ai offline")
+        if "r.jina.ai" in url_str:
+            return httpx.Response(
+                200,
+                text="Title: Bypass Success\n\nUnblocked article content.",
+            )
+        # Direct fetch returns 200 with Cloudflare challenge interstitial
+        challenge_page = (
+            "<html><head><title>Just a moment...</title></head>"
+            "<body><div class='cf-turnstile'></div>"
+            "<p>Please wait while we verify you are human.</p></body></html>"
+        )
+        return httpx.Response(200, html=challenge_page)
+
+    scraper = make_scraper(handler)
+    page = await scraper.scrape("https://example.com/turnstile-page")
+    assert hasattr(page, "markdown")
+    assert page.extractor_used == "jina"
+    assert "Unblocked article content" in page.markdown
+    assert "cf-turnstile" not in page.markdown

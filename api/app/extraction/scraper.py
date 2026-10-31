@@ -53,6 +53,36 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+CHALLENGE_PATTERNS = (
+    "cf-turnstile",
+    "challenges.cloudflare.com",
+    "attention required! | cloudflare",
+    "<title>just a moment...</title>",
+    "cloudflare ray id",
+    "enable javascript and cookies to continue",
+    "g-recaptcha",
+    "hcaptcha",
+    "verify you are human",
+    "verifying you are human",
+    "checking your browser before accessing",
+    "security check to access",
+    "please turn javascript on and reload the page",
+    "datadome",
+    "perimeterx",
+)
+
+
+def is_challenge_page(content: str | bytes) -> bool:
+    """Detect Cloudflare Turnstile, CAPTCHA, or anti-bot challenge interstitial."""
+    if not content:
+        return False
+    if isinstance(content, bytes):
+        text = content[:15000].decode("utf-8", "replace").lower()
+    else:
+        text = content[:15000].lower()
+    return any(p in text for p in CHALLENGE_PATTERNS)
+
+
 class Scraper:
     def __init__(
         self,
@@ -116,27 +146,44 @@ class Scraper:
         cached = await self._load_page_cache(url)
         if cached is not None:
             return cached
-        body, final_url = await self._guarded_fetch(url, timeout_s)
-        markdown, title, extractor = extract_static(body)
-        if markdown:
-            return PageContent(
-                url=url,
-                final_url=final_url,
-                title=title or url,
-                markdown=markdown,
-                extractor_used=extractor,
-                fetched_at=_utcnow(),
-            )
+
+        body: bytes | None = None
+        final_url = url
+        try:
+            body, final_url = await self._guarded_fetch(url, timeout_s)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (403, 429, 503):
+                # Anti-bot challenge / Cloudflare WAF: escalate to proxy tier
+                logger.info(
+                    "direct_fetch_challenge_escalating", url=url, status=exc.response.status_code
+                )
+            else:
+                raise
+
+        if body:
+            if is_challenge_page(body):
+                logger.info("direct_fetch_captcha_detected_escalating", url=url)
+            else:
+                markdown, title, extractor = extract_static(body)
+                if markdown:
+                    return PageContent(
+                        url=url,
+                        final_url=final_url,
+                        title=title or url,
+                        markdown=markdown,
+                        extractor_used=extractor,
+                        fetched_at=_utcnow(),
+                    )
 
         page = await self._crawl4ai(url, timeout_s)
-        if page is not None:
+        if page is not None and not is_challenge_page(page.markdown):
             return page
 
         page = await self._jina(url, timeout_s)
-        if page is not None:
+        if page is not None and not is_challenge_page(page.markdown):
             return page
 
-        raise RuntimeError("all extractors failed")
+        raise RuntimeError("all extractors failed or blocked by anti-bot challenge")
 
     async def _guarded_fetch(self, url: str, timeout_s: float) -> tuple[bytes, str]:
         """Fetch with SSRF check, IP pinning and robots.txt on every hop.
@@ -153,8 +200,24 @@ class Scraper:
 
             pinned_url, pin_headers, extensions = build_pinned_request(current, sorted(ips)[0])
             client = self._client or get_http_client()
+            stealth_headers = {
+                **pin_headers,
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Accept": (
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+                ),
+                "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            }
             async with client.stream(
-                "GET", pinned_url, headers=pin_headers, extensions=extensions, timeout=timeout_s
+                "GET", pinned_url, headers=stealth_headers, extensions=extensions, timeout=timeout_s
             ) as resp:
                 if resp.is_redirect:
                     location = resp.headers.get("location")

@@ -4,6 +4,21 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [0.8.0] — 2026-10-31 — Universal Engine Expansion & Anti-CAPTCHA Architecture
+
+### Added
+- **4 Search Engines mới (Tổng cộng 13 engines)**:
+  - **GitHub Adapter (github)**: tìm kiếm repository, code, star count, forks, language qua GitHub Search API (category: developer).
+  - **PubMed Adapter (pubmed)**: tìm kiếm y sinh học, khoa học sức khỏe, bài báo lâm sàng qua NCBI E-utilities JSON API (category: cademic).
+  - **HuggingFace Hub Adapter (huggingface)**: tìm kiếm AI models, pipeline tags, datasets qua HuggingFace Hub API (category: developer).
+  - **Semantic Scholar Adapter (semanticscholar)**: tìm kiếm bài báo khoa học, trích dẫn, tóm tắt qua Semantic Scholar Academic Graph API (category: cademic).
+- **Kiến trúc Anti-CAPTCHA & Anti-Bot toàn diện**:
+  - **Realistic Browser Fingerprint Headers**: trang bị user-agent và header hiện đại (Chrome 131 desktop, Sec-Fetch, Accept-Language i-VN,vi;q=0.9,en-US;q=0.8) cho scraper và DuckDuckGo adapter, loại bỏ triệt để việc bị WAF nhận diện bot.
+  - **Phát hiện Interstitial Challenge (is_challenge_page)**: nhận diện tự động Cloudflare Turnstile, Ray ID, 'Just a moment...', reCAPTCHA, hCaptcha, DataDome, PerimeterX.
+  - **Tự động leo thang (Graceful Escalation)**: khi direct fetch gặp HTTP 403/429/503 hoặc challenge interstitial, scraper tự động chuyển tiếp sang Crawl4AI và Jina Reader proxy (
+.jina.ai) để giải mã nội dung sạch mà không dính CAPTCHA hay làm hỏng dữ liệu tổng hợp.
+  - **SearXNG Anti-ban Hardening**: bật thêm Qwant và Startpage làm backup engine trong SearXNG settings để chống nghẽn khi Google áp dụng bot limit.
+
 ## [0.7.0] — 2026-10-31 — FR-3 Complete, Durable Research & Eval Expansion
 
 ### Added

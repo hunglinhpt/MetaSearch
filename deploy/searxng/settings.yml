@@ -11,6 +11,11 @@ server:
   image_proxy: false
   public_instance: false
 
+outgoing:
+  request_timeout: 3.0
+  max_request_timeout: 4.0
+  useragent_suffix: ""  # Giữ user-agent tự nhiên, không gắn hậu tố bot tránh captcha
+
 search:
   safe_search: 0
   autocomplete: ""
@@ -19,8 +24,8 @@ search:
     - html
     - json
 
-# Tắt các engine nặng/không cần cho AI search để giảm latency fan-out.
-# Danh sách tối giản: giữ web + news + wikipedia; thêm/sửa qua Engine Registry (PATCH /v1/engines/{id}).
+# Danh sách engine cân bằng: kết hợp nhiều nguồn độc lập để chống phụ thuộc vào 1 engine duy nhất
+# (tránh Google bot-block và CAPTCHA).
 engines:
   - name: google
     disabled: false
@@ -30,16 +35,16 @@ engines:
     disabled: false
   - name: brave
     disabled: false
+  - name: qwant
+    disabled: false     # Dự phòng châu Âu, không dính Google captcha
+  - name: startpage
+    disabled: false     # Kết quả Google không CAPTCHA
   - name: wikipedia
     disabled: false
   - name: google news
     disabled: false
   - name: google scholar
     disabled: false
-  - name: qwant
-    disabled: true
-  - name: startpage
-    disabled: true
   - name: mojeek
     disabled: true
   - name: marginalia
