@@ -89,9 +89,17 @@ def get_answer_pipeline() -> AnswerPipeline:
     )
 
 
+@lru_cache(maxsize=1)
+def get_scanner():
+    from app.orchestration.scheduler import AutomatedScanner
+
+    return AutomatedScanner(get_registry())
+
+
 def reset_pipelines() -> None:
     """Drop cached providers (used by tests and by settings changes)."""
     for provider in (
+        get_scanner,
         get_answer_pipeline,
         get_search_pipeline,
         get_reranker,
@@ -118,6 +126,7 @@ __all__ = [
     "get_gateway",
     "get_registry",
     "get_reranker",
+    "get_scanner",
     "get_scraper",
     "get_search_pipeline",
     "reset_pipelines",

@@ -36,11 +36,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         environment=settings.environment,
         giants=settings.giants(),
     )
+    if settings.scheduler_enabled and not settings.is_test:
+        from app.api.deps import get_scanner
+
+        get_scanner().start_background_loop(settings.scheduler_interval_hours)
     try:
         yield
     finally:
         await dispose_engine()
         await dispose_redis()
+        if settings.scheduler_enabled and not settings.is_test:
+            from app.api.deps import get_scanner
+
+            get_scanner().stop_background_loop()
         await dispose_http_client()
         logger.info("service_stopped")
 

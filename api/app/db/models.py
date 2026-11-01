@@ -210,9 +210,27 @@ class SemanticCache(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class BlogPost(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    __tablename__ = "blog_posts"
+    __table_args__ = (
+        Index("idx_blog_posts_slug", "slug"),
+        Index("idx_blog_posts_topic", "topic"),
+    )
+
+    slug: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    content_md: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[list[str] | None] = mapped_column(StringListType)
+    sources: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONType)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 __all__ = [
     "Answer",
     "ApiKey",
+    "BlogPost",
     "Chunk",
     "Citation",
     "Document",

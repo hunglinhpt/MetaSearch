@@ -151,6 +151,10 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = ""
 
+    # --- Automated Daily Briefings / Blog Scanner ---
+    scheduler_enabled: bool = False
+    scheduler_interval_hours: float = 24.0
+
     @property
     def is_prod(self) -> bool:
         return self.environment == "prod"

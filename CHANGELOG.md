@@ -4,6 +4,31 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [0.10.0] — 2026-11-01 — Automated Scanning Scheduler, Daily Briefings Blog Engine & Multi-Domain Expansion (17 Engines)
+
+### Added
+- **2 Search Engines Mới (Nâng tổng số lên 17 Engines)**:
+  - **Google News RSS Adapter (`google_news`)**: Tin tức thời sự cập nhật từng phút qua Google News RSS endpoint keyless, hỗ trợ đa ngôn ngữ và tự động nhận diện tiếng Việt (`hl=vi&gl=VN`), phân tách tự động nguồn báo (VnExpress, CafeF, Tuổi Trẻ,...), zero CAPTCHA.
+  - **Feng Shui & Metaphysics Adapter (`fengshui`)**: Công cụ giải toán và tra cứu phong thủy phương Đông: Thiên Can, Địa Chi, 60 Hoa Giáp, Ngũ Hành nạp âm, Bát Trạch Cung Phi (Đông Tứ Mệnh vs Tây Tứ Mệnh), 4 Cát Tinh (Sinh Khí, Diên Niên, Thiên Y, Phục Vị), 4 Hung Tinh, màu sắc tương sinh / tương khắc và bài trí không gian khoa học.
+- **Hệ Thống Lịch Quét Tự Động & Daily Briefings / Blog Engine**:
+  - Module `AutomatedScanner` (`app.orchestration.scheduler`) tự động thực hiện quét theo chu kỳ hoặc kích hoạt tức thì theo các chủ đề trọng điểm:
+    1. *AI Coding & LLM Development* (Mô hình sinh code, Agentic IDE Cursor/Claude Sonnet).
+    2. *AI Agents & Autonomous Systems* (Giao thức MCP, Multi-agent, Deep Research).
+    3. *Thị Trường Chứng Khoán & Tài Chính Việt Nam* (VN-Index, VN30, FPT, HPG, VCB, thanh khoản, vĩ mô).
+    4. *Kinh Doanh & Kinh Tế Vĩ Mô* (Lãi suất, Fed, startup công nghệ).
+    5. *Phong Thủy Ứng Dụng* (Bát Trạch, Can Chi, bố trí bàn làm việc, tài lộc).
+    6. *Y Học & Sức Khỏe Đời Sống* (Tiến bộ y sinh học, dinh dưỡng lối sống khoa học).
+  - Tự động biên tập và tổng hợp thành các bài phân tích blog chuyên sâu có trích dẫn nguồn số liệu cụ thể `[n]`, lưu trữ bền vững vào bảng CSDL `blog_posts`.
+  - Bộ REST API v1 tại `/api/v1/digests`: `GET /topics`, `GET /`, `GET /{slug_or_id}`, `POST /scan`.
+- **Giao Diện Frontend Web UI Hiện Đại (Tab Navigation & Blog Reader)**:
+  - Thanh chuyển đổi giao diện: Tab `🔍 Tìm Kiếm & Hỏi Đáp (Live)` song hành với Tab `📰 Bản Tin & Blog Chuyên Sâu`.
+  - Bộ lọc bài viết theo từng chuyên mục trọng điểm, gắn nhãn màu sắc trực quan (AI Coding, AI Agent, Chứng khoán VN, Phong thủy, Sức khỏe).
+  - Nút bấm `⚡ Quét & Tạo Tin Mới Ngay` cho phép người dùng kích hoạt tổng hợp dữ liệu mới theo thời gian thực.
+  - Modal Reader toàn văn hiển thị bài viết Markdown sắc nét, bảng số liệu và danh mục nguồn trích dẫn đầy đủ.
+- **Mở Rộng Research Harness² Profiles**:
+  - Thêm 3 profile chuyên biệt: `news`, `fengshui`, `health`.
+  - Smart detection tự động phát hiện câu hỏi thuộc lĩnh vực phong thủy, y tế sức khỏe và tin tức thời sự.
+
 ## [0.9.0] — 2026-11-01 — Deep Financial & Equities Intelligence (Yahoo Finance & SEC EDGAR)
 
 ### Added

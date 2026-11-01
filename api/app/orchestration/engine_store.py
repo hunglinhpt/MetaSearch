@@ -50,6 +50,8 @@ ADAPTER_PATHS = {
     "semanticscholar": "app.retrieval.adapters.semanticscholar:SemanticScholarAdapter",
     "yahoo_finance": "app.retrieval.adapters.yahoo_finance:YahooFinanceAdapter",
     "sec_edgar": "app.retrieval.adapters.sec_edgar:SecEdgarAdapter",
+    "google_news": "app.retrieval.adapters.google_news:GoogleNewsAdapter",
+    "fengshui": "app.retrieval.adapters.fengshui:FengShuiAdapter",
 }
 
 
@@ -241,6 +243,28 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             max_results=10,
             requires_key=False,
             adapter_path=ADAPTER_PATHS["sec_edgar"],
+        ),
+        "google_news": EngineConfig(
+            id="google_news",
+            name="Google News RSS (news)",
+            category="news",
+            weight=1.2,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=15,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["google_news"],
+        ),
+        "fengshui": EngineConfig(
+            id="fengshui",
+            name="Feng Shui & Metaphysics (fengshui)",
+            category="fengshui",
+            weight=1.2,
+            enabled=True,
+            timeout_ms=3000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["fengshui"],
         ),
     }
 

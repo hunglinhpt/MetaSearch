@@ -19,7 +19,9 @@ from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.adapters.brave import BraveAdapter
 from app.retrieval.adapters.ddg import DuckDuckGoAdapter
+from app.retrieval.adapters.fengshui import FengShuiAdapter
 from app.retrieval.adapters.github import GitHubAdapter
+from app.retrieval.adapters.google_news import GoogleNewsAdapter
 from app.retrieval.adapters.huggingface import HuggingFaceAdapter
 from app.retrieval.adapters.pubmed import PubMedAdapter
 from app.retrieval.adapters.reddit import RedditAdapter
@@ -81,6 +83,8 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "semanticscholar": SemanticScholarAdapter(api_key=settings.semanticscholar_api_key),
         "yahoo_finance": YahooFinanceAdapter(),
         "sec_edgar": SecEdgarAdapter(user_agent=settings.sec_edgar_user_agent),
+        "google_news": GoogleNewsAdapter(),
+        "fengshui": FengShuiAdapter(),
     }
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)

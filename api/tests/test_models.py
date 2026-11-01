@@ -8,6 +8,7 @@ from app.db.base import EMBEDDING_DIM, Base
 EXPECTED_TABLES = {
     "answers",
     "api_keys",
+    "blog_posts",
     "chunks",
     "citations",
     "documents",

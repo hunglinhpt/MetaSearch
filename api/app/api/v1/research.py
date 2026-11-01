@@ -23,6 +23,12 @@ from app.orchestration.research_jobs import get_job_store, run_job
 router = APIRouter(tags=["research"])
 
 
+_PROFILE_PATTERN = (
+    r"^(auto|general|developer|academic|comparative|"
+    r"financial|news|fengshui|health)$"
+)
+
+
 class ResearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     lang: str | None = Field(default=None, pattern=r"^[a-z]{2}(-[A-Z]{2})?$")
@@ -30,9 +36,7 @@ class ResearchRequest(BaseModel):
     depth: int = Field(default=3, ge=1, le=5)
     max_time_s: int | None = Field(default=None, ge=10, le=600)
     k: int = Field(default=6, ge=1, le=20)
-    profile: str = Field(
-        default="auto", pattern=r"^(auto|general|developer|academic|comparative|financial)$"
-    )
+    profile: str = Field(default="auto", pattern=_PROFILE_PATTERN)
 
 
 @router.post("/research", status_code=202)

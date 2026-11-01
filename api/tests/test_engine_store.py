@@ -123,6 +123,8 @@ class TestDefaults:
             "semanticscholar",
             "yahoo_finance",
             "sec_edgar",
+            "google_news",
+            "fengshui",
         }
         assert configs["arxiv"].category == "academic"
         assert configs["wikipedia"].category == "reference"
@@ -134,6 +136,8 @@ class TestDefaults:
         assert configs["semanticscholar"].category == "academic"
         assert configs["yahoo_finance"].category == "financial"
         assert configs["sec_edgar"].category == "financial"
+        assert configs["google_news"].category == "news"
+        assert configs["fengshui"].category == "fengshui"
         assert configs["searxng"].adapter_path.endswith("SearXNGAdapter")
         assert configs["tavily"].adapter_path.endswith("TavilyAdapter")
 

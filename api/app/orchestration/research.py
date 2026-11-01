@@ -176,6 +176,58 @@ HARNESS_PROFILES: dict[str, ResearchHarness] = {
             "Forward Outlook & Analyst Consensus -> References."
         ),
     ),
+    "news": ResearchHarness(
+        profile="news",
+        default_categories=["news", "general"],
+        planner_instructions=(
+            "Focus on real-time news developments, verifiable timeline of events, primary sources, "
+            "and factual consensus. Categories must include 'news' and 'general'."
+        ),
+        extractor_instructions=(
+            "Extract latest news facts, quotes from verified officials, event dates, locations, "
+            "and emerging consequences with citations."
+        ),
+        report_structure=(
+            "Structure the report: Executive Summary & Latest Headlines -> "
+            "Timeline of Events -> Key Developments & Perspectives -> "
+            "Broader Impact (Societal, Economic or Tech) -> References."
+        ),
+    ),
+    "fengshui": ResearchHarness(
+        profile="fengshui",
+        default_categories=["fengshui", "general"],
+        planner_instructions=(
+            "Focus on authentic Eastern geomancy, I Ching principles, Bat Trach, Can Chi, and "
+            "architectural spatial harmony. Avoid superstitious claims. "
+            "Categories must include 'fengshui' and 'general'."
+        ),
+        extractor_instructions=(
+            "Extract Can Chi, Ngu Hanh elements, Bat Trach directions (Sinh Khi, Dien Nien, etc.), "
+            "spatial placement rules, and harmony recommendations."
+        ),
+        report_structure=(
+            "Structure the report: Cung Menh & Can Chi Tong Quan -> "
+            "Bat Trach & Huong Cat Hung -> Bo Tri Khong Gian (Ban Lam Viec / Nha O) -> "
+            "Mau Sac & Yeu To Tuong Sinh -> Khuyen Nghi Khoa Hoc & Can Bang -> References."
+        ),
+    ),
+    "health": ResearchHarness(
+        profile="health",
+        default_categories=["academic", "news", "general"],
+        planner_instructions=(
+            "Focus on evidence-based medicine, peer-reviewed clinical research, "
+            "and verified health advice. Explicitly include medical disclaimers. "
+            "Categories must include 'academic' and 'news'."
+        ),
+        extractor_instructions=(
+            "Extract clinical outcomes, mechanisms of action, evidence levels, "
+            "and cautionary notes."
+        ),
+        report_structure=(
+            "Structure the report: Clinical Overview -> Scientific Evidence & Mechanisms -> "
+            "Preventive & Lifestyle Recommendations -> Medical Disclaimers & Risks -> References."
+        ),
+    ),
     "general": ResearchHarness(
         profile="general",
         default_categories=["general"],
@@ -250,6 +302,66 @@ def detect_profile(query: str, requested: str = "auto") -> str:
     )
     if any(k in q for k in fin_keywords) or re.search(r"\$[a-z]{1,6}\b", q):
         return "financial"
+
+    fengshui_keywords = (
+        "phong thủy",
+        "bát trạch",
+        "can chi",
+        "ngũ hành",
+        "tử vi",
+        "cung mệnh",
+        "hướng nhà",
+        "bàn làm việc",
+        "mệnh kim",
+        "mệnh mộc",
+        "mệnh thủy",
+        "mệnh hỏa",
+        "mệnh thổ",
+        "sinh khí",
+        "thiên y",
+        "diên niên",
+        "phục vị",
+        "tam hợp",
+        "tứ hành xung",
+        "tuổi làm ăn",
+        "hướng xuất hành",
+    )
+    if any(k in q for k in fengshui_keywords):
+        return "fengshui"
+
+    health_keywords = (
+        "sức khỏe",
+        "bệnh",
+        "triệu chứng",
+        "thuốc",
+        "điều trị",
+        "dinh dưỡng",
+        "ung thư",
+        "tiểu đường",
+        "huyết áp",
+        "symptom",
+        "treatment",
+        "clinical",
+        "disease",
+        "therapy",
+        "vaccine",
+        "y học",
+    )
+    if any(k in q for k in health_keywords):
+        return "health"
+
+    news_keywords = (
+        "tin tức",
+        "thời sự",
+        "hôm nay",
+        "mới nhất",
+        "breaking news",
+        "sự kiện",
+        "vừa qua",
+        "bản tin",
+    )
+    if any(k in q for k in news_keywords):
+        return "news"
     dev_keywords = (
         "python",
         "code",

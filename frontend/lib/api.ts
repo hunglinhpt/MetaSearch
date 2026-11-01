@@ -91,6 +91,8 @@ export async function search(
 export type EngineInfo = {
   id: string;
   name: string;
+  category?: string;
+  weight?: number;
   enabled: boolean;
   adapter_ready: boolean;
   disabled_reason?: string | null;
@@ -203,4 +205,83 @@ async function parseError(resp: Response): Promise<ApiError> {
   } catch {
     return new ApiError("internal", `HTTP ${resp.status}`, resp.status);
   }
+}
+
+export type BlogPostSummary = {
+  id: string;
+  slug: string;
+  topic: string;
+  title: string;
+  summary?: string | null;
+  tags?: string[] | null;
+  published_at?: string | null;
+  created_at?: string | null;
+};
+
+export type BlogPostDetail = BlogPostSummary & {
+  content_md: string;
+  sources?: { n: number; title: string; url: string; snippet?: string }[] | null;
+};
+
+export type ScanTopicInfo = {
+  id: string;
+  name: string;
+  query: string;
+  category: string;
+  tags: string[];
+  description: string;
+  last_run?: string | null;
+  last_post_id?: string | null;
+};
+
+export async function listDigests(
+  topic?: string,
+  limit: number = 20,
+  signal?: AbortSignal
+): Promise<BlogPostSummary[]> {
+  const params = new URLSearchParams();
+  if (topic) params.set("topic", topic);
+  params.set("limit", String(limit));
+
+  const resp = await fetch(`${API_BASE_URL}/v1/digests?${params.toString()}`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return (await resp.json()) as BlogPostSummary[];
+}
+
+export async function getDigest(
+  slugOrId: string,
+  signal?: AbortSignal
+): Promise<BlogPostDetail> {
+  const resp = await fetch(`${API_BASE_URL}/v1/digests/${encodeURIComponent(slugOrId)}`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return (await resp.json()) as BlogPostDetail;
+}
+
+export async function listTopics(signal?: AbortSignal): Promise<ScanTopicInfo[]> {
+  const resp = await fetch(`${API_BASE_URL}/v1/digests/topics`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return (await resp.json()) as ScanTopicInfo[];
+}
+
+export async function triggerScan(
+  topic?: string,
+  signal?: AbortSignal
+): Promise<BlogPostSummary[]> {
+  const resp = await fetch(`${API_BASE_URL}/v1/digests/scan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(topic ? { topic } : {}),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return (await resp.json()) as BlogPostSummary[];
 }
