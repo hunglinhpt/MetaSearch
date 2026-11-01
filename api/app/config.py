@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     github_token: str = ""
     pubmed_api_key: str = ""
     semanticscholar_api_key: str = ""
+    sec_edgar_user_agent: str = "MetaSearch info@metasearch.ai"
 
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------
     reranker: Literal["heuristic", "onnx", "api"] = "heuristic"

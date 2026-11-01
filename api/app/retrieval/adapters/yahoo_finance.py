@@ -1,0 +1,219 @@
+"""Yahoo Finance adapter — vertical engine for real-time market data, stocks & financial news.
+
+Uses keyless Yahoo Finance public endpoints:
+- Search & Autocomplete: query2.finance.yahoo.com/v1/finance/search
+- Chart Quote Data: query1.finance.yahoo.com/v8/finance/chart/{symbol}
+Supports US equities, Vietnamese equities (.VN), crypto, currencies and global indices.
+Category: ``financial``.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from datetime import UTC, datetime
+
+import httpx
+
+from app.retrieval.adapters.base import AdapterError
+from app.retrieval.models import RawResult
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
+DEFAULT_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
+_TAG = re.compile(r"<[^>]+>")
+_WS = re.compile(r"\s+")
+
+
+def _strip_html(text: str) -> str:
+    return _WS.sub(" ", _TAG.sub("", text or "")).strip()
+
+
+class YahooFinanceAdapter:
+    id = "yahoo_finance"
+
+    def __init__(
+        self,
+        *,
+        search_url: str = DEFAULT_SEARCH_URL,
+        chart_url: str = DEFAULT_CHART_URL,
+    ) -> None:
+        self.search_url = search_url
+        self.chart_url = chart_url
+
+    async def search(
+        self,
+        query: str,
+        *,
+        lang: str | None = None,
+        categories: list[str] | None = None,
+        freshness_days: int | None = None,
+        max_results: int = 15,
+        timeout_s: float = 4.0,
+    ) -> list[RawResult]:
+        clean_q = query.strip().lstrip("$")
+        if not clean_q:
+            return []
+
+        search_params = {
+            "q": clean_q,
+            "quotesCount": str(min(max_results, 6)),
+            "newsCount": str(min(max_results, 6)),
+            "enableFuzzyQuery": "false",
+        }
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 MetaSearch/0.8.0"
+            ),
+            "Accept": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_s) as client:
+                resp = await client.get(self.search_url, params=search_params, headers=headers)
+                if resp.status_code != 200:
+                    raise AdapterError(f"yahoo_finance HTTP {resp.status_code}", retryable=False)
+                payload = resp.json()
+        except httpx.TimeoutException as exc:
+            raise AdapterError(f"yahoo_finance timeout after {timeout_s}s") from exc
+        except httpx.HTTPError as exc:
+            raise AdapterError(f"yahoo_finance transport error: {type(exc).__name__}") from exc
+        except ValueError as exc:
+            raise AdapterError("yahoo_finance returned non-JSON body") from exc
+
+        quotes = payload.get("quotes") or []
+        news_items = payload.get("news") or []
+        results: list[RawResult] = []
+
+        # 1. Process Quotes (Equities, ETFs, Indices, Crypto)
+        primary_symbols: list[str] = []
+        for q in quotes:
+            if not isinstance(q, dict):
+                continue
+            sym = q.get("symbol")
+            if sym:
+                primary_symbols.append(sym)
+
+        # Attempt to fetch price info for the top symbol if available
+        price_meta: dict[str, dict] = {}
+        if primary_symbols:
+            top_sym = primary_symbols[0]
+            try:
+                async with httpx.AsyncClient(
+                    follow_redirects=True, timeout=min(timeout_s, 2.5)
+                ) as client:
+                    c_resp = await client.get(
+                        f"{self.chart_url}/{top_sym}",
+                        params={"interval": "1d", "range": "5d"},
+                        headers=headers,
+                    )
+                    if c_resp.status_code == 200:
+                        c_data = c_resp.json()
+                        chart_res = c_data.get("chart", {}).get("result") or []
+                        if chart_res:
+                            meta = chart_res[0].get("meta") or {}
+                            price_meta[top_sym] = meta
+            except Exception as exc:
+                logger.debug("Yahoo Finance chart enrichment skipped: %s", exc)
+
+        for q in quotes:
+            if not isinstance(q, dict):
+                continue
+            symbol = q.get("symbol")
+            if not symbol:
+                continue
+
+            name = q.get("longname") or q.get("shortname") or symbol
+            exchange = q.get("exchDisp") or q.get("exchange") or "Market"
+            quote_type = q.get("typeDisp") or q.get("quoteType") or "Equity"
+            sector = q.get("sectorDisp") or q.get("sector") or ""
+            industry = q.get("industryDisp") or q.get("industry") or ""
+
+            url = f"https://finance.yahoo.com/quote/{symbol}/"
+
+            # Check if we have live chart price metadata for this symbol
+            meta = price_meta.get(symbol)
+            if meta:
+                price = meta.get("regularMarketPrice")
+                currency = meta.get("currency") or "USD"
+                prev_close = meta.get("chartPreviousClose")
+                hi_52 = meta.get("fiftyTwoWeekHigh")
+                lo_52 = meta.get("fiftyTwoWeekLow")
+
+                price_str = f"{price:,.2f} {currency}" if price is not None else "N/A"
+                change_str = ""
+                if price is not None and prev_close:
+                    diff = price - prev_close
+                    pct = (diff / prev_close) * 100
+                    sign = "+" if diff >= 0 else ""
+                    change_str = f" ({sign}{pct:.2f}%)"
+
+                range_str = (
+                    f" · 52w Range: {lo_52:,.2f} - {hi_52:,.2f}"
+                    if lo_52 is not None and hi_52 is not None
+                    else ""
+                )
+
+                snippet = (
+                    f"[{symbol} · {quote_type}] Price: {price_str}{change_str}{range_str} · "
+                    f"Exch: {exchange} · Sector: {sector or industry or 'General'}"
+                )
+            else:
+                extra_sec = f" · Sector: {sector}" if sector else ""
+                snippet = (
+                    f"[{symbol} · {quote_type}] {name} · Exchange: {exchange}{extra_sec}".strip()
+                )
+
+            results.append(
+                RawResult(
+                    url=url,
+                    title=f"{symbol} - {name} ({exchange})",
+                    snippet=snippet,
+                    rank=len(results) + 1,
+                    adapter=self.id,
+                    source_engines=[self.id],
+                    published_at=datetime.now(UTC),
+                )
+            )
+
+        # 2. Process Financial News
+        for item in news_items:
+            if not isinstance(item, dict):
+                continue
+            link = item.get("link")
+            if not link or not link.startswith("http"):
+                continue
+
+            title = _strip_html(item.get("title") or "")
+            if not title:
+                continue
+
+            publisher = item.get("publisher") or "Market News"
+            related = ", ".join(item.get("relatedTickers") or [])
+            related_str = f" · Related: {related}" if related else ""
+
+            snippet = f"[{publisher}] {title}{related_str}"
+
+            published_at = None
+            pub_time = item.get("providerPublishTime")
+            if pub_time:
+                try:
+                    published_at = datetime.fromtimestamp(pub_time, tz=UTC)
+                except (ValueError, OSError):
+                    published_at = None
+
+            results.append(
+                RawResult(
+                    url=link,
+                    title=title,
+                    snippet=snippet,
+                    rank=len(results) + 1,
+                    adapter=self.id,
+                    source_engines=[self.id],
+                    published_at=published_at,
+                )
+            )
+
+        return results[:max_results]

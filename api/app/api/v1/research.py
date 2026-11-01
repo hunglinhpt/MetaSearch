@@ -30,7 +30,9 @@ class ResearchRequest(BaseModel):
     depth: int = Field(default=3, ge=1, le=5)
     max_time_s: int | None = Field(default=None, ge=10, le=600)
     k: int = Field(default=6, ge=1, le=20)
-    profile: str = Field(default="auto", pattern=r"^(auto|general|developer|academic|comparative)$")
+    profile: str = Field(
+        default="auto", pattern=r"^(auto|general|developer|academic|comparative|financial)$"
+    )
 
 
 @router.post("/research", status_code=202)

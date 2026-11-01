@@ -48,6 +48,8 @@ ADAPTER_PATHS = {
     "pubmed": "app.retrieval.adapters.pubmed:PubMedAdapter",
     "huggingface": "app.retrieval.adapters.huggingface:HuggingFaceAdapter",
     "semanticscholar": "app.retrieval.adapters.semanticscholar:SemanticScholarAdapter",
+    "yahoo_finance": "app.retrieval.adapters.yahoo_finance:YahooFinanceAdapter",
+    "sec_edgar": "app.retrieval.adapters.sec_edgar:SecEdgarAdapter",
 }
 
 
@@ -217,6 +219,28 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             max_results=10,
             requires_key=False,
             adapter_path=ADAPTER_PATHS["semanticscholar"],
+        ),
+        "yahoo_finance": EngineConfig(
+            id="yahoo_finance",
+            name="Yahoo Finance (financial)",
+            category="financial",
+            weight=1.2,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["yahoo_finance"],
+        ),
+        "sec_edgar": EngineConfig(
+            id="sec_edgar",
+            name="SEC EDGAR Filings (financial)",
+            category="financial",
+            weight=1.1,
+            enabled=True,
+            timeout_ms=5000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["sec_edgar"],
         ),
     }
 

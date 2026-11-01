@@ -24,11 +24,13 @@ from app.retrieval.adapters.huggingface import HuggingFaceAdapter
 from app.retrieval.adapters.pubmed import PubMedAdapter
 from app.retrieval.adapters.reddit import RedditAdapter
 from app.retrieval.adapters.searxng import SearXNGAdapter
+from app.retrieval.adapters.sec_edgar import SecEdgarAdapter
 from app.retrieval.adapters.semanticscholar import SemanticScholarAdapter
 from app.retrieval.adapters.serper import SerperAdapter
 from app.retrieval.adapters.stackoverflow import StackOverflowAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
 from app.retrieval.adapters.wikipedia import WikipediaAdapter
+from app.retrieval.adapters.yahoo_finance import YahooFinanceAdapter
 from app.retrieval.models import EngineConfig
 
 
@@ -77,6 +79,8 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "pubmed": PubMedAdapter(api_key=settings.pubmed_api_key),
         "huggingface": HuggingFaceAdapter(),
         "semanticscholar": SemanticScholarAdapter(api_key=settings.semanticscholar_api_key),
+        "yahoo_finance": YahooFinanceAdapter(),
+        "sec_edgar": SecEdgarAdapter(user_agent=settings.sec_edgar_user_agent),
     }
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)

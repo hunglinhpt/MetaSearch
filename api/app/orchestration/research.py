@@ -153,6 +153,29 @@ HARNESS_PROFILES: dict[str, ResearchHarness] = {
             "Decision Guide & Trade-offs -> References."
         ),
     ),
+    "financial": ResearchHarness(
+        profile="financial",
+        default_categories=["financial", "general", "news"],
+        planner_instructions=(
+            "Decompose into rigorous financial, equities & market sub-queries covering: "
+            "(1) core valuation & price metrics (P/E, P/B, EV/EBITDA, market cap, dividend yield), "
+            "(2) historical revenue, margins & cash flow growth (quarterly & annual filings), "
+            "(3) regulatory filings & audited disclosures (SEC 10-K/10-Q, debt maturities, risks), "
+            "(4) competitive moat & analyst consensus (price targets, market share, catalysts). "
+            "Categories must include 'financial' and 'general'."
+        ),
+        extractor_instructions=(
+            "Extract concrete financial figures, stock prices, revenue numbers, operating margins, "
+            "valuation multiples, debt levels, and audited disclosures with citations."
+        ),
+        report_structure=(
+            "Structure the report: Executive Summary & Valuation Snapshot -> "
+            "Business Overview & Competitive Moat -> "
+            "Financial Performance (Revenue, Margins & Cash Flow) -> "
+            "Audited Filings & Key Risk Factors (Debt, Regulatory, Macro) -> "
+            "Forward Outlook & Analyst Consensus -> References."
+        ),
+    ),
     "general": ResearchHarness(
         profile="general",
         default_categories=["general"],
@@ -174,7 +197,7 @@ HARNESS_PROFILES: dict[str, ResearchHarness] = {
 
 def detect_profile(query: str, requested: str = "auto") -> str:
     """Classify the query into a domain scaffolding profile (Harness² pattern)."""
-    if requested in ("developer", "academic", "comparative", "general"):
+    if requested in ("developer", "academic", "comparative", "financial", "general"):
         return requested
     q = query.lower()
     comp_keywords = (
@@ -188,6 +211,45 @@ def detect_profile(query: str, requested: str = "auto") -> str:
     )
     if any(k in q for k in comp_keywords):
         return "comparative"
+    fin_keywords = (
+        "cổ phiếu",
+        "chứng khoán",
+        "báo cáo tài chính",
+        "tài chính",
+        "cổ tức",
+        "thị giá",
+        "doanh thu",
+        "lợi nhuận",
+        "biên lợi nhuận",
+        "dòng tiền",
+        "vốn hóa",
+        "p/e",
+        "p/b",
+        "eps",
+        "ebitda",
+        "vn-index",
+        "vnindex",
+        "hose",
+        "hnx",
+        "upcom",
+        "stock",
+        "stocks",
+        "equity",
+        "equities",
+        "valuation",
+        "earnings",
+        "dividend",
+        "sec edgar",
+        "10-k",
+        "10-q",
+        "8-k",
+        "market cap",
+        "yahoo finance",
+        "trái phiếu",
+        "định giá",
+    )
+    if any(k in q for k in fin_keywords) or re.search(r"\$[a-z]{1,6}\b", q):
+        return "financial"
     dev_keywords = (
         "python",
         "code",

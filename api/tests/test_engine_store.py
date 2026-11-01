@@ -121,6 +121,8 @@ class TestDefaults:
             "pubmed",
             "huggingface",
             "semanticscholar",
+            "yahoo_finance",
+            "sec_edgar",
         }
         assert configs["arxiv"].category == "academic"
         assert configs["wikipedia"].category == "reference"
@@ -130,6 +132,8 @@ class TestDefaults:
         assert configs["pubmed"].category == "academic"
         assert configs["huggingface"].category == "developer"
         assert configs["semanticscholar"].category == "academic"
+        assert configs["yahoo_finance"].category == "financial"
+        assert configs["sec_edgar"].category == "financial"
         assert configs["searxng"].adapter_path.endswith("SearXNGAdapter")
         assert configs["tavily"].adapter_path.endswith("TavilyAdapter")
 

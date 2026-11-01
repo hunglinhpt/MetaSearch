@@ -4,6 +4,17 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [0.9.0] — 2026-11-01 — Deep Financial & Equities Intelligence (Yahoo Finance & SEC EDGAR)
+
+### Added
+- **2 Financial Vertical Search Engines (Tổng cộng 15 engines)**:
+  - **Yahoo Finance Adapter (`yahoo_finance`)**: truy vấn dữ liệu thị trường theo thời gian thực (giá hiện tại, biến động ngày/52 tuần, vốn hóa, khối lượng, tin tức) qua endpoints keyless (`query2.finance.yahoo.com/v1/finance/search` và `query1.finance.yahoo.com/v8/finance/chart/{symbol}`). Hỗ trợ cổ phiếu quốc tế (US như `$NVDA`, `$AAPL`, `$TSLA`), cổ phiếu Việt Nam (HOSE/HNX với suffix `.VN` như `FPT.VN`, `VNM.VN`, `VIC.VN`), tiền mã hóa (crypto), ngoại tệ và chỉ số (`^VNINDEX`, `^GSPC`).
+  - **SEC EDGAR Adapter (`sec_edgar`)**: truy vấn trực tiếp kho báo cáo tài chính đã kiểm toán của Ủy ban Chứng khoán Hoa Kỳ qua REST search endpoint chính thức (`efts.sec.gov/LATEST/search-index`). Tra cứu nhanh các hồ sơ thường niên/quý (`10-K`, `10-Q`), báo cáo sự kiện trọng yếu (`8-K`) và cáo bạch (`S-1`) kèm mã số CIK, kỳ kế toán và link PDF/HTML trực tiếp đến báo cáo gốc. Zero CAPTCHA và tuân thủ chuẩn User-Agent của SEC.
+- **Dedicated Financial Domain Scaffolding trong Research Harness²**:
+  - Bổ sung profile `"financial"` trong `HARNESS_PROFILES` với cấu trúc báo cáo thẩm định chuyên sâu 6 phần: *Executive Summary & Valuation Snapshot -> Business Overview & Competitive Moat -> Financial Performance (Revenue, Margins & Cash Flow) -> Audited Filings & Key Risk Factors (Debt, Regulatory, Macro) -> Forward Outlook & Analyst Consensus -> References*.
+  - Tự động nhận diện (smart regex & keyword detection) cho câu hỏi tài chính tiếng Việt lẫn tiếng Anh: mã ticker (`$NVDA`, `$FPT`, `FPT.VN`), thuật ngữ chứng khoán (`cổ phiếu`, `báo cáo tài chính`, `tài chính`, `cổ tức`, `thị giá`, `doanh thu`, `lợi nhuận`, `P/E`, `EPS`, `EBITDA`, `VN-Index`, `SEC 10-K`, `valuation`, ...), tự động kích hoạt bộ engine `["financial", "general"]` để tổng hợp số liệu chính xác nhất.
+  - Cập nhật REST API `ResearchRequest.profile` cho phép chỉ định tường minh `profile="financial"`.
+
 ## [0.8.0] — 2026-10-31 — Universal Engine Expansion & Anti-CAPTCHA Architecture
 
 ### Added
