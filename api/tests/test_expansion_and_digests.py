@@ -1,4 +1,4 @@
-"""Tests for Google News RSS, Feng Shui adapter, Research Profiles & Daily Digests API."""
+"""Tests for Google News RSS, Feng Shui adapter, Research Profiles, Pipeline & Daily Digests API."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from app.main import create_app
 from app.orchestration.research import detect_profile
 from app.orchestration.scheduler import DEFAULT_TOPICS, synthesize_blog_content
 from app.retrieval.adapters.base import AdapterError
-from app.retrieval.adapters.fengshui import FengShuiAdapter
+from app.retrieval.adapters.fengshui import FengShuiAdapter, _calc_cung_phi_nam, _calc_cung_phi_nu
 from app.retrieval.adapters.google_news import GoogleNewsAdapter
 
 
@@ -58,7 +58,14 @@ class TestGoogleNewsAdapter:
         patched_httpx("app.retrieval.adapters.google_news", handler)
 
         adapter = GoogleNewsAdapter()
-        results = await adapter.search("chứng khoán hôm nay", k=5)
+        # Test both positional and pipeline keyword call
+        results = await adapter.search(
+            "chứng khoán hôm nay",
+            lang="vi",
+            categories=["news"],
+            max_results=5,
+            timeout_s=3.0,
+        )
         assert len(results) == 1
         assert "VN-Index tăng điểm" in results[0].title
         assert results[0].url == "https://vnexpress.net/vn-index-tang-diem-4800000.html"
@@ -83,9 +90,28 @@ class TestFengShuiAdapter:
         adapter = FengShuiAdapter()
         assert await adapter.search("   ") == []
 
+    def test_cung_phi_mathematical_precision(self):
+        # 1990: Nam Khảm (Đông tứ), Nữ Cấn (Tây tứ)
+        assert _calc_cung_phi_nam(1990) == "Khảm"
+        assert _calc_cung_phi_nu(1990) == "Cấn"
+        # 1989: Nam Khôn (Tây tứ), Nữ Tốn (Đông tứ)
+        assert _calc_cung_phi_nam(1989) == "Khôn"
+        assert _calc_cung_phi_nu(1989) == "Tốn"
+        # 1988: Nam Chấn (Đông tứ), Nữ Chấn (Đông tứ)
+        assert _calc_cung_phi_nam(1988) == "Chấn"
+        assert _calc_cung_phi_nu(1988) == "Chấn"
+        # 2000: Nam Ly (Đông tứ), Nữ Càn (Tây tứ)
+        assert _calc_cung_phi_nam(2000) == "Ly"
+        assert _calc_cung_phi_nu(2000) == "Càn"
+
     async def test_calculates_can_chi_and_bat_trach_1990(self):
         adapter = FengShuiAdapter()
-        results = await adapter.search("nam sinh năm 1990 hướng nhà phong thủy")
+        results = await adapter.search(
+            "nam sinh năm 1990 hướng nhà phong thủy",
+            lang="vi",
+            categories=["fengshui"],
+            max_results=5,
+        )
         assert len(results) >= 1
         top = results[0]
         assert "1990" in top.title
@@ -122,12 +148,13 @@ class TestDigestsAndScanner:
 
         topic = DEFAULT_TOPICS["ai_coding"]
         now = datetime.now(UTC)
-        slug, title, _summary, content_md, _citations = synthesize_blog_content(topic, [], now)
+        slug, title, _summary, content_md, citations = synthesize_blog_content(topic, [], now)
 
         assert "ai_coding" in slug
         assert "AI Coding" in title
         assert "Autonomous Coding Agent" in content_md
         assert len(content_md) > 200
+        assert isinstance(citations, list)
 
     async def test_api_digests_flow(self, tmp_path, monkeypatch):
         db_path = tmp_path / "test_digests.db"
@@ -159,6 +186,7 @@ class TestDigestsAndScanner:
         created = scan_resp.json()
         assert len(created) == 1
         post_slug = created[0]["slug"]
+        post_id = created[0]["id"]
 
         # 3. List digests
         list_resp = client.get("/v1/digests")
@@ -174,3 +202,8 @@ class TestDigestsAndScanner:
         assert detail["slug"] == post_slug
         assert "content_md" in detail
         assert len(detail["content_md"]) > 100
+
+        # 5. Get digest detail by ID
+        id_resp = client.get(f"/v1/digests/{post_id}")
+        assert id_resp.status_code == 200
+        assert id_resp.json()["id"] == post_id

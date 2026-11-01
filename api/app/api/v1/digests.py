@@ -18,7 +18,6 @@ from sqlalchemy import desc, select
 
 from app.api import deps
 from app.db.models import BlogPost
-from app.db.session import get_sessionmaker
 
 router = APIRouter(prefix="/digests", tags=["digests"])
 
@@ -89,7 +88,7 @@ async def list_digests(
     offset: int = Query(default=0, ge=0),
 ) -> list[BlogPostSummary]:
     """List published blog posts / daily briefings."""
-    async with get_sessionmaker()() as session:
+    async with deps.get_session_factory()() as session:
         stmt = select(BlogPost).order_by(desc(BlogPost.created_at)).offset(offset).limit(limit)
         if topic:
             stmt = stmt.where(BlogPost.topic == topic)
@@ -115,7 +114,7 @@ async def list_digests(
 @router.get("/{slug_or_id}", response_model=BlogPostDetail)
 async def get_digest(slug_or_id: str) -> BlogPostDetail:
     """Retrieve full blog post / briefing by ID or slug."""
-    async with get_sessionmaker()() as session:
+    async with deps.get_session_factory()() as session:
         # Check if valid UUID
         is_uuid = False
         parsed_id: uuid.UUID | None = None
@@ -125,10 +124,11 @@ async def get_digest(slug_or_id: str) -> BlogPostDetail:
         except ValueError:
             is_uuid = False
 
-        if is_uuid:
-            stmt = select(BlogPost).where(BlogPost.id == parsed_id)
-        else:
-            stmt = select(BlogPost).where(BlogPost.slug == slug_or_id)
+        stmt = (
+            select(BlogPost).where((BlogPost.id == parsed_id) | (BlogPost.slug == slug_or_id))
+            if is_uuid
+            else select(BlogPost).where(BlogPost.slug == slug_or_id)
+        )
 
         result = await session.execute(stmt)
         row = result.scalar_one_or_none()

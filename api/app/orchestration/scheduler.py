@@ -120,7 +120,7 @@ def synthesize_blog_content(
     topic: ScanTopic,
     results: list[Any],
     now: datetime,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str, list[dict[str, Any]]]:
     """Generate institutional-grade analytical briefing in Vietnamese with citations."""
     date_str = now.strftime("%d/%m/%Y")
     slug_date = now.strftime("%Y-%m-%d")
@@ -311,18 +311,28 @@ class AutomatedScanner:
         if not matching_adapters:
             matching_adapters = enabled_engines[:3]
 
-        collected_results: list[Any] = []
-        for cfg, adapter in matching_adapters[:3]:
+        async def _query_engine(c_cfg, c_adapter):
             try:
-                hits = await adapter.search(topic.query, k=5, timeout_s=cfg.timeout_ms / 1000)
-                collected_results.extend(hits)
+                return await c_adapter.search(
+                    topic.query,
+                    max_results=5,
+                    timeout_s=c_cfg.timeout_ms / 1000,
+                )
             except Exception as exc:
                 logger.warning(
                     "scanner_adapter_failed",
                     topic=topic_id,
-                    engine=cfg.id,
+                    engine=c_cfg.id,
                     error=str(exc),
                 )
+                return []
+
+        tasks = [_query_engine(cfg, adapter) for cfg, adapter in matching_adapters[:3]]
+        gathered = await asyncio.gather(*tasks, return_exceptions=True)
+        collected_results: list[Any] = []
+        for res in gathered:
+            if isinstance(res, list):
+                collected_results.extend(res)
 
         slug, title, summary, content_md, citations_list = synthesize_blog_content(
             topic, collected_results, now
@@ -370,9 +380,14 @@ class AutomatedScanner:
             while self._running:
                 try:
                     await self.scan_all()
+                except asyncio.CancelledError:
+                    break
                 except Exception as exc:
                     logger.error("scanner_loop_error", error=str(exc))
-                await asyncio.sleep(interval_hours * 3600)
+                try:
+                    await asyncio.sleep(interval_hours * 3600)
+                except asyncio.CancelledError:
+                    break
 
         self._background_task = asyncio.create_task(_loop())
 

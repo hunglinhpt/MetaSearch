@@ -11,6 +11,7 @@ from __future__ import annotations
 import html
 import re
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from defusedxml import ElementTree as DET
@@ -31,8 +32,11 @@ def _clean_snippet(raw: str) -> str:
 class GoogleNewsAdapter:
     """Zero-key, zero-CAPTCHA adapter for Google News RSS."""
 
+    id = "google_news"
+
     def __init__(
         self,
+        *,
         base_url: str = _DEFAULT_NEWS_URL,
         default_hl: str = "vi",
         default_gl: str = "VN",
@@ -44,8 +48,13 @@ class GoogleNewsAdapter:
     async def search(
         self,
         query: str,
-        k: int = 10,
+        *,
+        lang: str | None = None,
+        categories: list[str] | None = None,
+        freshness_days: int | None = None,
+        max_results: int = 10,
         timeout_s: float = 3.0,
+        **kwargs: Any,
     ) -> list[RawResult]:
         q = (query or "").strip()
         if not q:
@@ -115,7 +124,7 @@ class GoogleNewsAdapter:
         items = root.findall("./channel/item")
         results: list[RawResult] = []
 
-        for item in items[: max(k, 1)]:
+        for item in items[: max(max_results, 1)]:
             title_elem = item.find("title")
             link_elem = item.find("link")
             desc_elem = item.find("description")

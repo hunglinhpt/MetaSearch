@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from typing import Any
 
 from app.retrieval.models import RawResult
 
@@ -187,46 +188,47 @@ NGU_HANH_COLORS: dict[str, dict[str, str]] = {
 
 
 def _calc_cung_phi_nam(year: int) -> str:
-    # Nam sinh: cộng các chữ số của năm, rút gọn 1 chữ số
-    digits_sum = sum(int(d) for d in str(year))
-    while digits_sum > 9:
-        digits_sum = sum(int(d) for d in str(digits_sum))
-    # Trước năm 2000: 10 - sum; Từ năm 2000 trở đi: 9 - sum
-    val = (10 - digits_sum) if year < 2000 else (9 - digits_sum)
+    y_2 = year % 100
+    d_sum = (y_2 // 10) + (y_2 % 10)
+    while d_sum > 9:
+        d_sum = (d_sum // 10) + (d_sum % 10)
+    val = (10 - d_sum) if year < 2000 else (9 - d_sum)
     if val <= 0:
         val += 9
+    while val > 9:
+        val = (val // 10) + (val % 10)
     mapping = {
         1: "Khảm",
-        2: "Ly",
-        3: "Cấn",
-        4: "Đoài",
-        5: "Càn",
-        6: "Khôn",
-        7: "Tốn",
-        8: "Chấn",
-        9: "Khôn",
+        2: "Khôn",
+        3: "Chấn",
+        4: "Tốn",
+        5: "Khôn",
+        6: "Càn",
+        7: "Đoài",
+        8: "Cấn",
+        9: "Ly",
     }
     return mapping.get(val, "Khảm")
 
 
 def _calc_cung_phi_nu(year: int) -> str:
-    digits_sum = sum(int(d) for d in str(year))
-    while digits_sum > 9:
-        digits_sum = sum(int(d) for d in str(digits_sum))
-    # Trước năm 2000: sum + 5; Từ năm 2000 trở đi: sum + 6
-    val = (digits_sum + 5) if year < 2000 else (digits_sum + 6)
+    y_2 = year % 100
+    d_sum = (y_2 // 10) + (y_2 % 10)
+    while d_sum > 9:
+        d_sum = (d_sum // 10) + (d_sum % 10)
+    val = (d_sum + 5) if year < 2000 else (d_sum + 6)
     while val > 9:
-        val = sum(int(d) for d in str(val))
+        val = (val // 10) + (val % 10)
     mapping = {
-        1: "Cấn",
-        2: "Càn",
-        3: "Đoài",
-        4: "Cấn",
-        5: "Ly",
-        6: "Khảm",
-        7: "Khôn",
-        8: "Chấn",
-        9: "Tốn",
+        1: "Khảm",
+        2: "Khôn",
+        3: "Chấn",
+        4: "Tốn",
+        5: "Cấn",
+        6: "Càn",
+        7: "Đoài",
+        8: "Cấn",
+        9: "Ly",
     }
     return mapping.get(val, "Khôn")
 
@@ -234,11 +236,18 @@ def _calc_cung_phi_nu(year: int) -> str:
 class FengShuiAdapter:
     """Specialized Eastern Geomancy and Feng Shui calculation adapter."""
 
+    id = "fengshui"
+
     async def search(
         self,
         query: str,
-        k: int = 5,
+        *,
+        lang: str | None = None,
+        categories: list[str] | None = None,
+        freshness_days: int | None = None,
+        max_results: int = 5,
         timeout_s: float = 3.0,
+        **kwargs: Any,
     ) -> list[RawResult]:
         q = (query or "").strip()
         if not q:
@@ -326,4 +335,4 @@ class FengShuiAdapter:
                 )
             )
 
-        return results[:k]
+        return results[:max_results]
