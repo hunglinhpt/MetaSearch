@@ -626,6 +626,8 @@ def mask_api_key(key: str) -> str:
         return ""
     if len(k) <= 8:
         return "***"
+    if len(k) < 16:
+        return f"{k[:2]}...{k[-2:]}"
     return f"{k[:4]}...{k[-4:]}"
 
 

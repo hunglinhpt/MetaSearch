@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -119,6 +120,9 @@ async def _sse(
             kwargs["on_event"] = on_event
             async for event in deps.get_answer_pipeline().run(params, **kwargs):
                 await queue.put(event)
+        except asyncio.CancelledError:
+            # Client disconnected mid-flight; gracefully cancel
+            raise
         except MetaSearchError as exc:
             await queue.put(("error", {"code": exc.code.value, "message": exc.message}))
         except Exception as exc:
@@ -138,3 +142,5 @@ async def _sse(
             yield {"event": name, "data": json.dumps(data, ensure_ascii=False)}
     finally:
         task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

@@ -44,8 +44,70 @@ from app.retrieval.domain_intelligence import (
 
 logger = get_logger(__name__)
 
-_JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
 _QUANT_TOKEN_RE = re.compile(r"\b\d+(?:[.,]\d+)?(?:\s*%|\s*x|\s*tỷ|\s*triệu|\s*bps|\b)", re.I)
+
+
+def extract_json_object(text: str) -> dict[str, Any] | None:
+    """Robustly extract a JSON object from text, handling markdown code fences,
+    preceding/trailing prose, and nested braces.
+    """
+    clean_text = text.strip()
+    if not clean_text:
+        return None
+
+    # 1. Direct parse attempt
+    if clean_text.startswith("{") and clean_text.endswith("}"):
+        try:
+            val = json.loads(clean_text)
+            if isinstance(val, dict):
+                return val
+        except (json.JSONDecodeError, ValueError, TypeError):  # nosec B110
+            pass
+
+    # 2. Markdown fence extraction ```json ... ``` or ``` ... ```
+    fence_pattern = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+    for m in fence_pattern.finditer(clean_text):
+        try:
+            val = json.loads(m.group(1))
+            if isinstance(val, dict):
+                return val
+        except (json.JSONDecodeError, ValueError, TypeError):  # nosec B110
+            pass
+
+    # 3. Balanced braces extraction
+    start_idx = clean_text.find("{")
+    while start_idx != -1:
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start_idx, len(clean_text)):
+            c = clean_text[i]
+            if escape:
+                escape = False
+                continue
+            if c == "\\":
+                escape = True
+                continue
+            if c == '"':
+                in_string = not in_string
+                continue
+            if not in_string:
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = clean_text[start_idx : i + 1]
+                        try:
+                            val = json.loads(candidate)
+                            if isinstance(val, dict):
+                                return val
+                        except (json.JSONDecodeError, ValueError, TypeError):  # nosec B110
+                            pass
+                        break
+        start_idx = clean_text.find("{", start_idx + 1)
+
+    return None
 
 
 @dataclass(slots=True)
@@ -540,7 +602,34 @@ class DreamRSICouncilEngine:
                     error=str(exc)[:200],
                 )
 
-        return list(await asyncio.gather(*(_call_one(i, ov) for i, ov in enumerate(panel))))
+        async def _call_with_timeout(idx: int, ov: LLMOverride) -> PanelistDraft:
+            cand_id = f"Candidate {chr(ord('A') + idx)}"
+            prov = ov.provider or self.settings.llm_provider
+            mod = ov.model or ov.quick_model or self.settings.llm_quick_model
+            try:
+                return await asyncio.wait_for(_call_one(idx, ov), timeout=40.0)
+            except TimeoutError:
+                return PanelistDraft(
+                    candidate_id=cand_id,
+                    provider=str(prov),
+                    model=str(mod),
+                    answer_md="",
+                    valid_citations=[],
+                    invalid_citations=[],
+                    citation_precision=0.0,
+                    quantitative_density=0.0,
+                    source_coverage=0.0,
+                    deterministic_score=0.0,
+                    peer_score=0.0,
+                    composite_score=0.0,
+                    latency_ms=40000,
+                    status="failed",
+                    error="Endpoint call timed out after 40s",
+                )
+
+        return list(
+            await asyncio.gather(*(_call_with_timeout(i, ov) for i, ov in enumerate(panel)))
+        )
 
     async def _run_anonymous_cross_review(
         self,
@@ -600,28 +689,38 @@ class DreamRSICouncilEngine:
                 if delta.text:
                     parts.append(delta.text)
             raw_review = "".join(parts)
-            match = _JSON_OBJ_RE.search(raw_review)
-            if match:
-                parsed = json.loads(match.group(0))
+            parsed = extract_json_object(raw_review)
+            if parsed:
                 if isinstance(parsed.get("scores"), dict):
                     crit_summary = str(parsed.get("critique_summary") or "")
                     for cid, raw_val in parsed["scores"].items():
-                        val_f = float(raw_val)
-                        sc = val_f / 10.0 if val_f > 10.0 else val_f
-                        sc = max(0.0, min(10.0, sc))
-                        llm_scores_by_cand[str(cid)] = (sc, crit_summary)
-                        reviews_out.append(
-                            {
-                                "candidate_id": str(cid),
-                                "reviewer": f"{reviewer_ov.provider or 'council'}:{reviewer_model}",
-                                "peer_score": round(sc, 2),
-                                "strengths": crit_summary,
-                                "flaws": "",
-                            }
-                        )
+                        try:
+                            val_f = float(raw_val)
+                            sc = val_f / 10.0 if val_f > 10.0 else val_f
+                            sc = max(0.0, min(10.0, sc))
+                            llm_scores_by_cand[str(cid)] = (sc, crit_summary)
+                            reviews_out.append(
+                                {
+                                    "candidate_id": str(cid),
+                                    "reviewer": (
+                                        f"{reviewer_ov.provider or 'council'}:{reviewer_model}"
+                                    ),
+                                    "peer_score": round(sc, 2),
+                                    "strengths": crit_summary,
+                                    "flaws": "",
+                                }
+                            )
+                        except (ValueError, TypeError):
+                            continue
                 for item in parsed.get("reviews", []):
+                    if not isinstance(item, dict):
+                        continue
                     cid = str(item.get("candidate_id") or "")
-                    sc = float(item.get("score") or 7.5)
+                    raw_sc = item.get("score")
+                    try:
+                        sc = float(raw_sc) if raw_sc is not None else 7.5
+                    except (ValueError, TypeError):
+                        sc = 7.5
                     sc = max(0.0, min(10.0, sc))
                     strengths = str(item.get("strengths") or "")
                     flaws = str(item.get("flaws") or "")
@@ -728,14 +827,22 @@ class DreamRSICouncilEngine:
 
 
 def _compute_consensus_agreement(ok_drafts: list[PanelistDraft]) -> float:
-    """Measure citation & content overlap across council panelists (0..1)."""
+    """Measure citation & content overlap across council panelists (0..1).
+
+    Uses pairwise average Jaccard similarity across panelists' citation sets
+    combined with score spread harmony.
+    """
     if len(ok_drafts) <= 1:
         return 1.0
     citation_sets = [set(d.valid_citations) for d in ok_drafts if d.valid_citations]
     if len(citation_sets) >= 2:
-        union = set().union(*citation_sets)
-        inter = set(citation_sets[0]).intersection(*citation_sets[1:])
-        cite_jaccard = len(inter) / max(len(union), 1)
+        pair_jaccards: list[float] = []
+        for i in range(len(citation_sets)):
+            for j in range(i + 1, len(citation_sets)):
+                union_len = len(citation_sets[i].union(citation_sets[j]))
+                inter_len = len(citation_sets[i].intersection(citation_sets[j]))
+                pair_jaccards.append(inter_len / union_len if union_len > 0 else 1.0)
+        cite_jaccard = sum(pair_jaccards) / len(pair_jaccards) if pair_jaccards else 0.5
     else:
         cite_jaccard = 0.5
 

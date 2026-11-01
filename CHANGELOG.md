@@ -4,7 +4,7 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
-## [1.2.1] — 2026-11-02 — Multi-Platform Matrix CI (Windows, macOS, Linux) for Every Commit & Pre-Commit Hook Hardening
+## [1.2.1] — 2026-11-02 — Multi-Platform Matrix CI (Windows, macOS, Linux), 3-Round Deep Audit & Hardened Council
 
 ### Added
 - **Multi-Platform Matrix CI Trên Mọi Commit (`.github/workflows/ci.yml`)**:
@@ -19,6 +19,17 @@ version tuân theo [SemVer](https://semver.org/).
   - Hỗ trợ phát hiện thông minh môi trường thực thi trên macOS/Linux (`api/.venv/bin/python`, `python3`, `python`) và Windows (`api/.venv/Scripts/python.exe`).
   - Tự động cấp quyền thực thi `chmod +x` cho `.githooks/pre-commit` trên Unix/macOS và đồng bộ index mode 100755 trong Git.
   - Loại bỏ hoàn toàn cờ `shell=True` trong `run_command` của `scripts/release.py` (0 cảnh báo Bandit B602).
+- **Bộ Kiểm Thử Sâu Edge-Case Hội Đồng & Replay World (`api/tests/test_council_and_dream_rsi_deep.py`)**:
+  - Kiểm thử trích xuất JSON ngoặc nhọn cân bằng từ mọi định dạng phản hồi phức tạp, markdown code blocks, prose bao quanh.
+  - Kiểm thử độ ổn định giải thuật UCB1 khi số lần thử ban đầu là 0 hoặc lớn.
+
+### Fixed & Hardened (3-Round Deep Audit)
+- **Thuật Toán Trích Xuất JSON Cân Bằng (`api/app/llm/council.py`)**: Thay thế regex greedy `r"\{.*\}"` bằng balanced braces extraction parser và markdown fence cleaner, ngăn chặn triệt để lỗi parse khi LLM chèn prose hoặc code block.
+- **Xử Lý Điểm 0.0 Không Bị Đổi Thành Điểm Fallback (`api/app/llm/council.py`)**: Sửa lỗi falsy evaluation `item.get("score") or 7.5` khiến điểm 0.0 của model bị gán thành 7.5; bọc try/except an toàn riêng từng ứng viên.
+- **Tính Đồng Thuận Pairwise Jaccard Chuẩn Xác (`api/app/llm/council.py`)**: Cải tiến `_compute_consensus_agreement` sang trung bình Jaccard theo từng cặp ứng viên (Pairwise Jaccard), loại bỏ sai lệch khi có 1 model lệch nguồn.
+- **Cô Lập Timeout Từng Endpoint Hội Đồng (`api/app/llm/council.py`)**: Thiết lập timeout 40s độc lập cho mỗi panelist; một endpoint bị treo không làm nghẽn toàn bộ hội đồng.
+- **Dọn Dẹp Coroutine Khi Client Ngắt Kết Nối SSE (`api/app/api/v1/answer.py`)**: Bắt `asyncio.CancelledError` và await task cancellation với `contextlib.suppress`, triệt tiêu cảnh báo rò rỉ tài nguyên.
+- **Gia Cố Che Giấu Khóa API Ngắn (`api/app/llm/providers.py`)**: Nâng cấp `mask_api_key` với các key độ dài 8-16 ký tự để tránh brute-force.
 
 ## [1.2.0] — 2026-11-02 — Multi-Free-Endpoint LLM Council, Dream-RSI Replay World, Directory Integration (nejib1/Free-LLM & awesome-freellm-apis) & Universal Multi-Domain Intelligence
 
