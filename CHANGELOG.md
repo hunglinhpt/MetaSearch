@@ -7,6 +7,11 @@ version tuân theo [SemVer](https://semver.org/).
 ## [1.0.0] — 2026-11-01 — Institutional Financial Forensics, Quantitative Technicals & 5-Wave Deep Architectural Audit
 
 ### Added
+- **Automated Version Management, Quality Gates & Release Pipeline (`scripts/release.py`)**:
+  - Xây dựng hệ thống phát hành tự động hóa chuẩn mực: tự động dọn dẹp file tạm/cache (`clean_workspace`), cưỡng chế 6 cổng kiểm định chất lượng (`ruff`, `bandit`, `pytest`, `npm run typecheck`, `npm run build`), đồng bộ phiên bản nguyên tử giữa `api/app/__init__.py`, `api/pyproject.toml` và `frontend/package.json`.
+  - Tự động kiểm tra và trích xuất release notes từ `CHANGELOG.md`, đóng gói Git commit (`release: vX.Y.Z`) và annotated Git tag.
+  - Tích hợp GitHub Actions CI/CD release workflow (`.github/workflows/release.yml`) tự động tạo GitHub Release chính thức khi push tag.
+  - Tài liệu quy chuẩn chi tiết tại `docs/13-versioning-and-release.md`.
 - **Wave 3 — Institutional Financial Forensics (`app.retrieval.financial_forensics`)**:
   - Phân nhánh mô hình pháp y BCTC theo ngành (`industry_type`: `"banking"`, `"securities"`, `"real_estate"`, `"manufacturing"`).
   - **Mô hình CAMELS / Basel II-III cho Ngân hàng** (`VCB`, `TCB`, `MBB`, `ACB`): CAR, Tỷ lệ nợ xấu (NPL), Nợ nhóm 2, Tỷ lệ bao phủ nợ xấu (LLR), NIM, CASA, LDR, CIR.

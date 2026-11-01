@@ -117,6 +117,11 @@ cd api
 .venv/Scripts/python.exe -m uvicorn app.main:app --reload
 cd ../frontend && npm run typecheck && npm run build
 
+# Lệnh tự động hóa kiểm định và release:
+python scripts/release.py --clean-only        # dọn dẹp sạch tmp, caches, stale DBs
+python scripts/release.py --check             # chạy toàn bộ quality gates
+python scripts/release.py --bump patch --push # bump version, tag, update changelog & push
+
 # Stack đầy đủ (máy có Docker):
 cd ../deploy && docker compose up -d && docker compose --profile observability up -d
 METASEARCH_INTEGRATION=1 pytest tests/integration -q   # từ api/

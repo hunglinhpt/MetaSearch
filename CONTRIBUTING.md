@@ -38,6 +38,10 @@ thật mà không có Docker: cài SearXNG riêng và trỏ `SEARXNG_URL`.
    `tests/test_api_v1.py`).
 4. **Gate trước khi commit** (tất cả phải xanh):
    ```bash
+   # Chạy nhanh qua script tự động hóa:
+   python scripts/release.py --check
+
+   # Hoặc chạy thủ công từng công cụ:
    pytest -q
    ruff check app tests scripts && ruff format --check app tests scripts
    bandit -q -r app -x tests
@@ -46,6 +50,9 @@ thật mà không có Docker: cài SearXNG riêng và trỏ `SEARXNG_URL`.
 5. **Commit message**: dạng `type(scope): summary` (xem `git log` làm mẫu).
 6. **Docs đi cùng code**: checklist trong roadmap cần tick, CHANGELOG cần dòng
    mới nếu thay đổi đáng nhớ, AGENTS.md §2 cập nhật nếu trạng thái đổi.
+7. **Quy trình Release & Bumping Version**:
+   - Khi chuẩn bị phát hành phiên bản mới, tham khảo [docs/13-versioning-and-release.md](docs/13-versioning-and-release.md).
+   - Sử dụng `python scripts/release.py --bump {patch|minor|major} [--push]` để tự động dọn dẹp, kiểm tra cổng chất lượng, đồng bộ version trên toàn bộ repo, tạo release commit & tag.
 
 ## Thêm một search engine mới (target ≤ 1 file + 1 dòng)
 

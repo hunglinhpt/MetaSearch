@@ -175,6 +175,7 @@ MetaSearch/
 | [10 Security & Compliance](docs/10-security-compliance.md) | SSRF IP-pinning, RBAC admin, robots.txt, rate limit, secrets? |
 | [11 Testing Strategy](docs/11-testing-strategy.md) | Test strategy, 333 unit tests, golden set, đo citation accuracy? |
 | [12 Roadmap & Plan](docs/12-roadmap-plan.md) | **Plan chi tiết Phase 0–5 (v1.0.0), KPI, rủi ro & mitigation** |
+| [13 Versioning & Release](docs/13-versioning-and-release.md) | **Quy chuẩn SemVer, Quality Gates, script release tự động & CI/CD** |
 
 ## 6. Đứng trên vai người khổng lồ
 
