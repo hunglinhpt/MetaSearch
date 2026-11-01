@@ -194,6 +194,10 @@ MetaSearch không phát minh lại bánh xe — thiết kế này tổng hợp t
 
 Điểm **khác biệt** của MetaSearch: orchestration mỏng đứng trên 4 "gã khổng lồ" — **SearXNG** (meta-search), **crawl4ai** (JS extraction), **trafilatura** (static extraction), **FastMCP** (agent interface) — kết hợp cùng tầng **Pháp Y Tài Chính (CAMELS / Altman Z / Beneish M / Piotroski F)** và **Phân Tích Kỹ Thuật Định Lượng (Fibonacci / Ichimoku / MACD / Wilder's RSI & ATR)** chuyên sâu. Chiến lược chi tiết: [ADR-007](docs/adr/ADR-007-giants-first.md).
 
-## 7. License & phạm vi
+## 7. License & Đóng góp (Contributions)
 
-Repo private — dùng nội bộ. Tuân thủ robots.txt và điều khoản các engine (xem [docs/10-security-compliance.md](docs/10-security-compliance.md)).
+Dự án được phát hành dưới giấy phép mã nguồn mở **MIT License**.
+
+Chúng tôi rất hoan nghênh và chào đón mọi sự đóng góp từ cộng đồng (Issues, Feature Requests, Pull Requests)! Vui lòng xem hướng dẫn chi tiết tại [CONTRIBUTING.md](CONTRIBUTING.md) để bắt đầu thiết lập môi trường phát triển, nắm rõ workflow và quy ước kiểm thử chất lượng trước khi gửi đóng góp.
+
+*Lưu ý: Mọi hoạt động thu thập dữ liệu web và tìm kiếm cần tuân thủ `robots.txt` cũng như điều khoản dịch vụ của các nền tảng nguồn (xem thêm tại [docs/10-security-compliance.md](docs/10-security-compliance.md)).*
