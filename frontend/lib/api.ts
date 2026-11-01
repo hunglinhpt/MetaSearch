@@ -59,6 +59,7 @@ export type LLMProviderPresetInfo = {
   default_quick_model: string;
   default_report_model: string;
   is_free: boolean;
+  free_tier_type?: string;
   requires_api_key: boolean;
   env_key_name: string;
   signup_url: string;
@@ -83,16 +84,78 @@ export type ActiveLLMConfig = {
   fallback_models: string[];
   extra_headers_keys: string[];
   has_runtime_override: boolean;
+  council_enabled?: boolean;
+  council_endpoints?: string[];
+  dream_rsi_enabled?: boolean;
+};
+
+export type FreeDirectorySource = {
+  id: string;
+  name: string;
+  url: string;
+  description: string;
 };
 
 export type LLMProvidersResponse = {
   active: ActiveLLMConfig;
   providers: LLMProviderPresetInfo[];
+  free_directories?: FreeDirectorySource[];
   external_integration: {
     byo_llm_description: string;
     context_only_endpoint: string;
     citation_validation_endpoint: string;
+    council_endpoint?: string;
+    dream_rsi_endpoint?: string;
   };
+};
+
+export type CouncilPanelist = {
+  candidate_id: string;
+  provider: string;
+  model: string;
+  ok: boolean;
+  latency_ms: number;
+  deterministic_score: number;
+  peer_score: number;
+  composite_score: number;
+  error?: string;
+  answer_preview?: string;
+};
+
+export type CouncilCrossReview = {
+  reviewer_provider: string;
+  reviewer_model: string;
+  winner_id: string;
+  scores: Record<string, number>;
+  critique_summary: string;
+  latency_ms: number;
+};
+
+export type CouncilVerdict = {
+  domain: string;
+  chairman_model: string;
+  consensus_agreement_score: number;
+  total_latency_ms: number;
+  panelists: CouncilPanelist[];
+  cross_reviews: CouncilCrossReview[];
+  dream_rsi_policy: Record<string, unknown>;
+};
+
+export type DomainProfileInfo = {
+  id: string;
+  name_vi: string;
+  name_en: string;
+  category: string;
+  maturity: string;
+  preferred_engines: string[];
+  AnalyticalFrameworks: string[];
+  verification_rubric: string[];
+};
+
+export type DomainsResponse = {
+  flagship_pilot: string;
+  total_domains: number;
+  domains: DomainProfileInfo[];
 };
 
 export type LLMTestResult = {
@@ -128,6 +191,7 @@ export type AnswerHandlers = {
   onSources?: (sources: SourceItem[]) => void;
   onToken?: (text: string) => void;
   onCitations?: (citations: Citation[]) => void;
+  onCouncil?: (verdict: CouncilVerdict) => void;
   onDone?: (meta: AnswerMeta) => void;
   onError?: (code: string, message: string) => void;
 };
@@ -226,13 +290,58 @@ export async function testLLMConnection(
   return resp.json();
 }
 
+export async function getDomains(signal?: AbortSignal): Promise<DomainsResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/domains`, { signal });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function updateCouncilEndpoints(
+  endpoints: string[]
+): Promise<{ council_endpoints: string[]; count: number }> {
+  const resp = await fetch(`${API_BASE_URL}/v1/llm/council/endpoints`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoints }),
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function getDreamRSIState(
+  signal?: AbortSignal
+): Promise<Record<string, unknown>> {
+  const resp = await fetch(`${API_BASE_URL}/v1/llm/dream-rsi/state`, { signal });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function resetDreamRSIState(): Promise<Record<string, unknown>> {
+  const resp = await fetch(`${API_BASE_URL}/v1/llm/dream-rsi/reset`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
 export async function streamAnswer(
   query: string,
   handlers: AnswerHandlers,
   signal?: AbortSignal,
   engines?: string[],
   categories?: string[],
-  llm?: LLMOverridePayload
+  llm?: LLMOverridePayload,
+  councilMode?: boolean,
+  councilEndpoints?: string[],
+  domain?: string
 ): Promise<void> {
   const resp = await fetch(`${API_BASE_URL}/v1/answer`, {
     method: "POST",
@@ -243,6 +352,9 @@ export async function streamAnswer(
       engines: engines ?? undefined,
       categories: categories ?? undefined,
       llm: llm ?? undefined,
+      council_mode: councilMode ?? undefined,
+      council_endpoints: councilEndpoints ?? undefined,
+      domain: domain ?? undefined,
     }),
     signal,
   });
@@ -278,6 +390,9 @@ export async function streamAnswer(
         break;
       case "citations":
         handlers.onCitations?.((d.citations as Citation[]) ?? []);
+        break;
+      case "council":
+        handlers.onCouncil?.(d as unknown as CouncilVerdict);
         break;
       case "done":
         handlers.onDone?.(d as unknown as AnswerMeta);

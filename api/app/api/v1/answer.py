@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
@@ -12,7 +13,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.api import deps
 from app.api.v1.schemas import AnswerRequest, AnswerResponse, CitationItem
 from app.core.errors import ErrorCode, MetaSearchError
-from app.llm.providers import LLMOverride
+from app.llm.providers import coerce_council_endpoints
 from app.orchestration.pipeline import Event, SearchParams
 
 router = APIRouter(tags=["answer"])
@@ -31,29 +32,38 @@ def _params(request: AnswerRequest) -> SearchParams:
     )
 
 
+def _extra_run_kwargs(request: AnswerRequest) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {"model": request.model}
+    if request.llm is not None:
+        kwargs["llm_override"] = request.llm
+    if request.council_mode:
+        kwargs["council_mode"] = True
+    if request.council_endpoints:
+        kwargs["council_endpoints"] = coerce_council_endpoints(request.council_endpoints)
+    if request.domain and request.domain != "auto":
+        kwargs["domain"] = request.domain
+    return kwargs
+
+
 @router.post("/answer", response_model=AnswerResponse, response_model_exclude_none=True)
 async def answer(request: AnswerRequest):
     if request.stream:
-        return EventSourceResponse(_sse(_params(request), request.model, request.llm))
-    return await _json(_params(request), request.model, request.llm)
+        return EventSourceResponse(_sse(_params(request), _extra_run_kwargs(request)))
+    return await _json(_params(request), _extra_run_kwargs(request))
 
 
 async def _json(
     params: SearchParams,
-    model: str | None,
-    llm_override: LLMOverride | None = None,
+    run_kwargs: dict[str, Any],
 ) -> AnswerResponse:
     answer_md_parts: list[str] = []
     citations: list[CitationItem] = []
     sources: list[dict] = []
     meta: dict = {}
+    council_data: dict[str, Any] | None = None
     error: dict | None = None
 
-    run_kwargs: dict[str, object] = {"model": model}
-    if llm_override is not None:
-        run_kwargs["llm_override"] = llm_override
-
-    async for event, data in deps.get_answer_pipeline().run(params, **run_kwargs):  # type: ignore[arg-type]
+    async for event, data in deps.get_answer_pipeline().run(params, **run_kwargs):
         if event == "token":
             answer_md_parts.append(data["t"])
         elif event == "citations":
@@ -65,8 +75,12 @@ async def _json(
             ]
         elif event == "sources":
             sources = data["sources"]
+        elif event == "council":
+            council_data = data
         elif event == "done":
             meta = data
+            if council_data is None and data.get("council"):
+                council_data = data["council"]
         elif event == "error":
             error = data
 
@@ -85,19 +99,15 @@ async def _json(
         latency_ms=meta.get("latency_ms", 0),
         status=meta.get("status", "complete"),
         cached=bool(meta.get("cached", False)),
+        council=council_data,
     )
 
 
 async def _sse(
     params: SearchParams,
-    model: str | None,
-    llm_override: LLMOverride | None = None,
+    run_kwargs: dict[str, Any],
 ) -> AsyncIterator[dict]:
-    """Bridge pipeline events + mid-flight engine_done callbacks into SSE.
-
-    A queue interleaves the pipeline's own events with ``engine_done`` events
-    pushed by fan-out tasks while the search stage is still running.
-    """
+    """Bridge pipeline events + mid-flight engine_done callbacks into SSE."""
     queue: asyncio.Queue[Event | None] = asyncio.Queue()
 
     def on_event(event: Event) -> None:
@@ -105,10 +115,9 @@ async def _sse(
 
     async def producer() -> None:
         try:
-            run_kwargs: dict[str, object] = {"model": model, "on_event": on_event}
-            if llm_override is not None:
-                run_kwargs["llm_override"] = llm_override
-            async for event in deps.get_answer_pipeline().run(params, **run_kwargs):  # type: ignore[arg-type]
+            kwargs = dict(run_kwargs)
+            kwargs["on_event"] = on_event
+            async for event in deps.get_answer_pipeline().run(params, **kwargs):
                 await queue.put(event)
         except MetaSearchError as exc:
             await queue.put(("error", {"code": exc.code.value, "message": exc.message}))

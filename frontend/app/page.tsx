@@ -9,6 +9,8 @@ import {
   BlogPostDetail,
   BlogPostSummary,
   Citation,
+  CouncilVerdict,
+  DomainProfileInfo,
   EngineDone,
   EngineInfo,
   LLMOverridePayload,
@@ -17,6 +19,7 @@ import {
   SearchHit,
   SourceItem,
   getDigest,
+  getDomains,
   getLLMProviders,
   listDigests,
   listEngines,
@@ -25,6 +28,7 @@ import {
   streamAnswer,
   testLLMConnection,
   triggerScan,
+  updateCouncilEndpoints,
   updateLLMConfig,
 } from "../lib/api";
 
@@ -32,14 +36,14 @@ type Mode = "answer" | "raw";
 type AppTab = "search" | "blog" | "llm";
 
 const CATEGORY_CHIPS = [
-  { id: "auto", label: "⚡ Tự động (Smart Routing)" },
-  { id: "financial", label: "📈 Tài chính & Chứng khoán" },
-  { id: "news", label: "📰 Tin tức & Thời sự" },
-  { id: "developer", label: "💻 Lập trình & AI" },
-  { id: "academic", label: "🔬 Học thuật & Y sinh" },
+  { id: "auto", label: "⚡ Tự động (Universal Domain Intelligence)" },
+  { id: "financial", label: "📈 Tài chính & BCTC (Flagship Pilot)" },
+  { id: "news", label: "📰 Tin tức & Địa chính trị" },
+  { id: "developer", label: "💻 Công nghệ, AI & Kỹ thuật" },
+  { id: "academic", label: "🔬 Học thuật & Y sinh Lâm sàng" },
   { id: "fengshui", label: "🧭 Phong thủy & Bát trạch" },
-  { id: "reference", label: "📚 Bách khoa" },
-  { id: "social", label: "💬 Thảo luận" },
+  { id: "reference", label: "📚 Vĩ mô & Pháp lý" },
+  { id: "social", label: "💬 Thảo luận đa chiều" },
 ];
 
 const TOPIC_CHIPS = [
@@ -65,6 +69,13 @@ export default function HomePage() {
   const [sources, setSources] = useState<SourceItem[]>([]);
   const [answerMd, setAnswerMd] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
+  const [councilVerdict, setCouncilVerdict] = useState<CouncilVerdict | null>(null);
+  const [councilMode, setCouncilMode] = useState<boolean>(false);
+  const [councilEndpointsText, setCouncilEndpointsText] = useState<string>(
+    "openrouter:openrouter/free,pollinations:openai,groq:llama-3.3-70b-versatile,gemini:gemini-2.0-flash"
+  );
+  const [domains, setDomains] = useState<DomainProfileInfo[]>([]);
+  const [selectedDomain, setSelectedDomain] = useState<string>("");
   const [meta, setMeta] = useState<AnswerMeta | null>(null);
   const [error, setError] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -110,6 +121,12 @@ export default function HomePage() {
       setLlmQuickModel(data.active.quick_model);
       setLlmReportModel(data.active.report_model);
       setLlmFallbackProvider(data.active.fallback_provider || "");
+      if (data.active.council_endpoints && data.active.council_endpoints.length > 0) {
+        setCouncilEndpointsText(data.active.council_endpoints.join(","));
+      }
+      if (data.active.council_enabled) {
+        setCouncilMode(true);
+      }
     } catch {
       // Ignore on offline boot
     }
@@ -122,6 +139,9 @@ export default function HomePage() {
         setEngineOptions(items.filter((e) => e.enabled && e.adapter_ready))
       )
       .catch(() => setEngineOptions([]));
+    getDomains(controller.signal)
+      .then((resp) => setDomains(resp.domains))
+      .catch(() => setDomains([]));
     loadLLMState(controller.signal);
     return () => controller.abort();
   }, [loadLLMState]);
@@ -279,11 +299,31 @@ export default function HomePage() {
     setSources([]);
     setAnswerMd("");
     setCitations([]);
+    setCouncilVerdict(null);
     setMeta(null);
     setError("");
     setHits([]);
     setSearchInfo("");
   }, []);
+
+  const handleSaveCouncilEndpoints = async () => {
+    const specs = councilEndpointsText
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (specs.length === 0) return;
+    try {
+      const res = await updateCouncilEndpoints(specs);
+      setLlmStatusMsg(
+        `✅ Đã cập nhật Hội đồng Phán quyết (${res.count} endpoints): ${res.council_endpoints.join(", ")}`
+      );
+      await loadLLMState();
+    } catch (err: unknown) {
+      setLlmStatusMsg(
+        `❌ Lỗi cập nhật Hội đồng: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
 
   const run = useCallback(async () => {
     const q = query.trim();
@@ -295,6 +335,12 @@ export default function HomePage() {
     setBusy(true);
     const categoriesParam =
       selectedCategory === "auto" ? undefined : ["general", selectedCategory];
+    const councilEndpointsParam = councilMode
+      ? councilEndpointsText
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
     try {
       if (mode === "raw") {
         const resp = await search(q, {
@@ -316,12 +362,17 @@ export default function HomePage() {
             onSources: (items) => setSources(items),
             onToken: (text) => setAnswerMd((prev) => prev + text),
             onCitations: (items) => setCitations(items),
+            onCouncil: (verdict) => setCouncilVerdict(verdict),
             onDone: (m) => setMeta(m),
             onError: (code, message) => setError(`[${code}] ${message}`),
           },
           controller.signal,
           selectedEngines.length ? selectedEngines : undefined,
-          categoriesParam
+          categoriesParam,
+          undefined,
+          councilMode,
+          councilEndpointsParam,
+          selectedDomain || undefined
         );
       }
     } catch (err: unknown) {
@@ -330,7 +381,17 @@ export default function HomePage() {
     } finally {
       setBusy(false);
     }
-  }, [busy, mode, query, reset, selectedCategory, selectedEngines]);
+  }, [
+    busy,
+    councilEndpointsText,
+    councilMode,
+    mode,
+    query,
+    reset,
+    selectedCategory,
+    selectedDomain,
+    selectedEngines,
+  ]);
 
   const citationByUrl = new Map(citations.map((c) => [c.n, c]));
   const selectedPresetObj = llmPresets.find((p) => p.id === llmProvider);
@@ -415,18 +476,59 @@ export default function HomePage() {
                   </label>
                 </div>
 
-                {activeLlm && (
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
                   <button
                     type="button"
-                    className="chip chip-toggle on"
-                    onClick={() => setActiveTab("llm")}
-                    title="Bấm để đổi LLM Provider (OpenRouter Free, Pollinations, Gemini, Groq, Ollama, Custom...)"
+                    className={`chip chip-toggle ${councilMode ? "on" : ""}`}
+                    onClick={() => setCouncilMode((prev) => !prev)}
+                    disabled={busy}
+                    title="Gọi đồng thời nhiều endpoint LLM miễn phí, chấm chéo ẩn danh (Cross-Review) và cải tiến chính sách qua Dream-RSI"
                   >
-                    🤖 LLM: {activeLlm.provider} ({activeLlm.quick_model})
-                    {activeLlm.is_free ? " · FREE" : ""}
+                    ⚖️ Hội Đồng LLM + Dream-RSI: {councilMode ? "BẬT" : "TẮT"}
                   </button>
-                )}
+
+                  {activeLlm && (
+                    <button
+                      type="button"
+                      className="chip chip-toggle on"
+                      onClick={() => setActiveTab("llm")}
+                      title="Bấm để đổi LLM Provider (OpenRouter Free, Pollinations, Gemini, Groq, NVIDIA NIM, SambaNova, Ollama, Custom...)"
+                    >
+                      🤖 LLM: {activeLlm.provider} ({activeLlm.quick_model})
+                      {activeLlm.is_free ? " · FREE" : ""}
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {domains.length > 0 && (
+                <div className="category-bar" style={{ marginBottom: "0.4rem" }}>
+                  <span className="engine-filter-label" style={{ marginRight: "0.4rem" }}>
+                    Miền Chuyên Sâu (Universal Intelligence):
+                  </span>
+                  <button
+                    type="button"
+                    className={`chip chip-toggle ${selectedDomain === "" ? "on" : ""}`}
+                    onClick={() => setSelectedDomain("")}
+                    disabled={busy}
+                  >
+                    🧠 Tự nhận diện
+                  </button>
+                  {domains.map((dom) => (
+                    <button
+                      key={dom.id}
+                      type="button"
+                      className={`chip chip-toggle ${selectedDomain === dom.id ? "on" : ""}`}
+                      onClick={() => setSelectedDomain(dom.id)}
+                      disabled={busy}
+                      title={`Rubric: ${dom.verification_rubric.join(" | ")}`}
+                    >
+                      {dom.maturity === "flagship_pilot" ? "⭐ " : ""}
+                      {dom.name_vi}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <div className="category-bar">
                 <span className="engine-filter-label" style={{ marginRight: "0.4rem" }}>
@@ -505,6 +607,51 @@ export default function HomePage() {
                     )}
                   </header>
                   <AnswerMarkdown text={answerMd} citationByUrl={citationByUrl} />
+                  {councilVerdict && (
+                    <div
+                      style={{
+                        marginTop: "1rem",
+                        padding: "0.9rem",
+                        borderRadius: "8px",
+                        border: "1px solid var(--border)",
+                        background: "rgba(255,255,255,0.02)",
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      <h3 style={{ margin: "0 0 0.5rem", fontSize: "0.95rem" }}>
+                        ⚖️ Biên Bản Hội Đồng Phán Quyết (Multi-Endpoint Cross-Review & Dream-RSI)
+                      </h3>
+                      <p style={{ margin: "0 0 0.6rem", color: "var(--muted)" }}>
+                        Miền thẩm định: <strong>{councilVerdict.domain}</strong> · Chủ tịch Hội đồng:{" "}
+                        <code>{councilVerdict.chairman_model}</code> · Điểm đồng thuận:{" "}
+                        <strong>{(councilVerdict.consensus_agreement_score * 100).toFixed(1)}%</strong> ·{" "}
+                        {councilVerdict.total_latency_ms} ms
+                      </p>
+                      <div style={{ display: "grid", gap: "0.4rem" }}>
+                        {councilVerdict.panelists.map((p) => (
+                          <div
+                            key={p.candidate_id}
+                            style={{
+                              padding: "0.45rem 0.65rem",
+                              borderRadius: "6px",
+                              border: "1px solid var(--border)",
+                            }}
+                          >
+                            <strong>{p.candidate_id}</strong> ({p.provider}:<code>{p.model}</code>) —{" "}
+                            {p.ok ? (
+                              <>
+                                Tổng điểm: <strong>{(p.composite_score * 100).toFixed(1)}%</strong>{" "}
+                                (Định lượng: {(p.deterministic_score * 100).toFixed(0)}% · Peer Review:{" "}
+                                {(p.peer_score * 100).toFixed(0)}%) · {p.latency_ms} ms
+                              </>
+                            ) : (
+                              <span style={{ color: "#f87171" }}>Bỏ qua ({p.error})</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {citations.length > 0 && (
                     <div className="citations">
                       <h3>Trích dẫn nguồn ({citations.length})</h3>
@@ -680,7 +827,7 @@ export default function HomePage() {
 
           <div className="card">
             <h2 style={{ margin: "0 0 0.6rem", fontSize: "1.15rem" }}>
-              1. Chọn Nhà Cung Cấp LLM (OpenRouter Free, Các Nguồn Free Uy Tín & BYO-LLM)
+              1. Chọn Nhà Cung Cấp LLM (20 Presets từ OpenRouter Free, nejib1/Free-LLM & awesome-freellm-apis)
             </h2>
             <p style={{ margin: "0 0 1rem", color: "var(--muted)", fontSize: "0.88rem" }}>
               Hỗ trợ sẵn{" "}
@@ -691,10 +838,28 @@ export default function HomePage() {
                 style={{ color: "var(--accent)" }}
               >
                 OpenRouter Free Models Router (openrouter/free)
+              </a>
+              , danh mục{" "}
+              <a
+                href="https://github.com/nejib1/Free-LLM"
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "var(--accent)" }}
+              >
+                nejib1/Free-LLM (34+ Free LLM APIs)
               </a>{" "}
-              cùng các LLM miễn phí uy tín (Pollinations Keyless, Google Gemini Free, Groq LPU Free,
-              Cerebras Free, Mistral Free, GitHub Models, HuggingFace, Ollama Local) hoặc kết nối
-              trực tiếp vào LLM có sẵn trong hệ thống của bạn.
+              và{" "}
+              <a
+                href="https://github.com/open-free-llm-api/awesome-freellm-apis"
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "var(--accent)" }}
+              >
+                open-free-llm-api/awesome-freellm-apis (134+ Free LLM APIs)
+              </a>{" "}
+              (Pollinations Keyless, Google Gemini Free, Groq LPU Free, NVIDIA NIM, Cerebras,
+              SambaNova, Mistral, Cohere, Chutes, SiliconFlow, Hyperbolic, Cloudflare Workers AI,
+              GitHub Models, HuggingFace, Ollama Local) hoặc kết nối vào LLM nội bộ của bạn.
             </p>
 
             <div className="engine-chips" style={{ marginBottom: "1rem" }}>
@@ -914,7 +1079,55 @@ export default function HomePage() {
 
           <div className="card">
             <h2 style={{ margin: "0 0 0.6rem", fontSize: "1.15rem" }}>
-              2. Tích Hợp MetaSearch Với Hệ Thống Khác Đã Có Sẵn LLM
+              2. Hội Đồng Phán Quyết Đa Endpoint (LLM Council + Anonymous Cross-Review + Dream-RSI)
+            </h2>
+            <p style={{ margin: "0 0 0.8rem", color: "var(--muted)", fontSize: "0.88rem" }}>
+              Cho phép sử dụng đồng thời nhiều endpoint miễn phí trong 1 truy vấn: các model sinh câu
+              trả lời song song, ẩn danh thành <code>Candidate A, B, C...</code> để chấm điểm chéo
+              theo bộ tiêu chuẩn chuyên ngành (Cross-Review), tự động điều chỉnh chính sách trọng số
+              qua thế giới mô phỏng <strong>Dream-RSI Replay World</strong>, và tổng hợp phán quyết
+              cuối cùng bởi Chủ tịch Hội đồng (Chairman).
+            </p>
+            <div style={{ display: "grid", gap: "0.6rem" }}>
+              <label style={{ fontSize: "0.82rem", color: "var(--muted)" }}>
+                Danh sách Endpoints Hội đồng (định dạng <code>provider:model</code>, cách nhau dấu phẩy):
+              </label>
+              <input
+                type="text"
+                style={{
+                  width: "100%",
+                  padding: "0.55rem",
+                  borderRadius: "6px",
+                  border: "1px solid var(--border)",
+                  background: "var(--bg)",
+                  color: "var(--fg)",
+                }}
+                value={councilEndpointsText}
+                onChange={(e) => setCouncilEndpointsText(e.target.value)}
+                placeholder="openrouter:openrouter/free,pollinations:openai,groq:llama-3.3-70b-versatile,gemini:gemini-2.0-flash"
+              />
+              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="scan-btn"
+                  onClick={handleSaveCouncilEndpoints}
+                >
+                  ⚖️ Cập Nhật Danh Sách Hội Đồng
+                </button>
+                <button
+                  type="button"
+                  className={`chip chip-toggle ${councilMode ? "on" : ""}`}
+                  onClick={() => setCouncilMode((prev) => !prev)}
+                >
+                  Chế độ Hội đồng khi Tìm kiếm: {councilMode ? "ĐANG BẬT" : "ĐANG TẮT"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <h2 style={{ margin: "0 0 0.6rem", fontSize: "1.15rem" }}>
+              3. Tích Hợp MetaSearch Với Hệ Thống Khác Đã Có Sẵn LLM
             </h2>
             <p style={{ margin: "0 0 0.8rem", color: "var(--muted)", fontSize: "0.88rem" }}>
               Nếu hệ thống của bạn đã có sẵn LLM (Internal LLM Cluster, LangChain/LlamaIndex Agent,

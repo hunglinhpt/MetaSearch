@@ -14,6 +14,7 @@ from scripts.release import (  # noqa: E402
     SEMVER_REGEX,
     calculate_bump,
     clean_workspace,
+    ensure_git_pre_commit_hook,
     find_npm_executable,
     find_python_executable,
     find_repo_root,
@@ -57,10 +58,16 @@ def test_get_current_versions():
     assert "api_init" in versions
     assert "pyproject" in versions
     assert "frontend" in versions
-    # All components should be at 1.0.0
-    assert versions["api_init"] == "1.0.0"
-    assert versions["pyproject"] == "1.0.0"
-    assert versions["frontend"] == "1.0.0"
+    assert SEMVER_REGEX.match(versions["api_init"])
+    assert versions["api_init"] == versions["pyproject"]
+    assert versions["api_init"] == versions["frontend"]
+
+
+def test_mandatory_e2e_and_pre_commit_hook_present():
+    root = find_repo_root()
+    assert (root / ".githooks" / "pre-commit").exists()
+    assert (root / "api" / "tests" / "test_e2e_full_system.py").exists()
+    assert ensure_git_pre_commit_hook(root) is True
 
 
 def test_verify_changelog():

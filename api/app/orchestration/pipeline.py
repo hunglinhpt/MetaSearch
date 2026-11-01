@@ -394,9 +394,13 @@ class AnswerPipeline:
         *,
         model: str | None = None,
         llm_override: LLMOverride | None = None,
+        council_mode: bool = False,
+        council_endpoints: list[LLMOverride] | None = None,
+        domain: str = "auto",
         on_event: OnEvent = None,
     ) -> AsyncIterator[Event]:
         started = time.perf_counter()
+        use_council = council_mode or bool(council_endpoints) or self.settings.llm_council_enabled
         gateway = (
             self.gateway.with_override(llm_override)
             if llm_override is not None and hasattr(self.gateway, "with_override")
@@ -406,7 +410,11 @@ class AnswerPipeline:
         override_model = llm_override.model if llm_override and llm_override.model else None
         model = override_model or model or default_model
 
-        replay = await self._cache_hit(params, model) if llm_override is None else None
+        replay = (
+            await self._cache_hit(params, model)
+            if (llm_override is None and not use_council)
+            else None
+        )
         if replay is not None:
             async for event in replay:
                 yield event
@@ -436,16 +444,74 @@ class AnswerPipeline:
             )
 
         chunks = await self._rerank(normalize_query(params.query), scored_chunks)
-        yield ("status", {"stage": "synthesizing", "detail": f"{len(chunks)} chunks"})
-
         included = build_context(
             chunks,
             budget=self.settings.answer_context_budget,
             count=make_counter(self.settings),
         )
+        answer_id = uuid.uuid4()
+
+        if use_council:
+            from app.llm.council import DreamRSICouncilEngine
+
+            yield (
+                "status",
+                {
+                    "stage": "council_cross_review",
+                    "detail": f"Dream-RSI Council & Cross-Review ({len(chunks)} chunks)",
+                },
+            )
+            council_engine = DreamRSICouncilEngine(self.settings, gateway)
+            try:
+                verdict = await council_engine.run_council(
+                    normalize_query(params.query),
+                    included,
+                    endpoints=council_endpoints,
+                    domain=domain,
+                )
+            except LLMError as exc:
+                logger.warning("llm_council_failed", error=str(exc)[:200])
+                yield ("error", {"code": "internal", "message": str(exc)[:200]})
+                return
+
+            verdict_text = str(verdict.get("verdict_md") or "")
+            for i in range(0, len(verdict_text), 48):
+                yield ("token", {"t": verdict_text[i : i + 48]})
+            citations_payload = list(verdict.get("citations") or [])
+            yield (
+                "citations",
+                {
+                    "citations": citations_payload,
+                    "invalid_markers": list(verdict.get("invalid_markers") or []),
+                },
+            )
+            council_meta = {
+                "domain": verdict.get("domain"),
+                "domain_name": verdict.get("domain_name"),
+                "chairman_model": verdict.get("chairman_model"),
+                "consensus_agreement_score": verdict.get("consensus_agreement_score"),
+                "panelists": verdict.get("panelists"),
+                "cross_reviews": verdict.get("cross_reviews"),
+                "dream_rsi_policy": verdict.get("dream_rsi_policy"),
+            }
+            yield ("council", council_meta)
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            yield (
+                "done",
+                {
+                    "answer_id": str(answer_id),
+                    "latency_ms": latency_ms,
+                    "status": "complete",
+                    "model": str(verdict.get("chairman_model") or model),
+                    "cached": False,
+                    "council": council_meta,
+                },
+            )
+            return
+
+        yield ("status", {"stage": "synthesizing", "detail": f"{len(chunks)} chunks"})
         messages = build_messages(normalize_query(params.query), included)
 
-        answer_id = uuid.uuid4()
         text_parts: list[str] = []
         usage = Usage()
         try:
@@ -513,15 +579,19 @@ class AnswerPipeline:
         params: SearchParams,
         *,
         budget: int | None = None,
+        domain: str = "auto",
     ) -> dict[str, object]:
         """Run stages 3-10 (Search -> Scrape -> Chunk -> Rerank -> Context Pack)
         without calling an internal LLM.
 
         Designed for external systems that already have their own LLM and want
-        MetaSearch to act as their institutional RAG & financial/technical context engine.
+        MetaSearch to act as their institutional RAG & multi-domain context engine.
         """
+        from app.retrieval.domain_intelligence import build_domain_analysis_preview
+
         started = time.perf_counter()
         normalized = normalize_query(params.query)
+        domain_info = build_domain_analysis_preview(normalized, requested_domain=domain)
         inferred_cats = sorted(
             set(params.categories or ["general"])
             | infer_categories_from_query(normalized, news=params.news)
@@ -560,6 +630,7 @@ class AnswerPipeline:
             "query_id": str(outcome.query_id),
             "normalized_query": normalized,
             "inferred_categories": inferred_cats,
+            "domain_intelligence": domain_info,
             "context_md": context_md,
             "system_prompt": SYSTEM_PROMPT,
             "messages": messages,

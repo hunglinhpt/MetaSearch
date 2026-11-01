@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+# MetaSearch Mandatory Pre-Commit Quality & End-to-End Test Gate
+# Blocks any git commit if unit tests, E2E tests, ruff, or bandit fail.
+
+set -e
+
+echo "==> [Pre-Commit Gate] Running mandatory Unit + End-to-End (E2E) verification before commit..."
+
+if [ -x "api/.venv/Scripts/python.exe" ]; then
+    PYTHON_BIN="api/.venv/Scripts/python.exe"
+elif [ -x "api/.venv/bin/python" ]; then
+    PYTHON_BIN="api/.venv/bin/python"
+else
+    PYTHON_BIN="python"
+fi
+
+"$PYTHON_BIN" scripts/release.py --pre-commit-gate

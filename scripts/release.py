@@ -150,9 +150,35 @@ def run_command(cmd: list[str], *, cwd: Path, desc: str) -> None:
     log(f"PASSED: {desc}", level="SUCCESS")
 
 
-def run_quality_gates(root: Path, python_bin: Path, npm_bin: str) -> None:
-    """Enforce strict code formatting, linting, security scans, unit tests, and frontend build."""
-    log("Enforcing Quality Gates (Ruff, Bandit, Pytest, Next.js Build)...", prefix=">>")
+def ensure_git_pre_commit_hook(root: Path) -> bool:
+    """Ensure .githooks/pre-commit is registered as Git core.hooksPath."""
+    hook_file = root / ".githooks" / "pre-commit"
+    if not hook_file.exists():
+        return False
+    proc = subprocess.run(  # nosec B603, B607
+        ["git", "config", "core.hooksPath", ".githooks"],
+        check=False,
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode == 0
+
+
+def run_pre_commit_gate(root: Path, python_bin: Path) -> None:
+    """Mandatory pre-commit gate: Ruff, Bandit, E2E Full System Suite, and Unit Suite."""
+    log(
+        "Enforcing Mandatory Pre-Commit Gate (Ruff, Bandit, E2E Suite, Unit Suite)...",
+        prefix=">>",
+    )
+
+    e2e_file = root / "api" / "tests" / "test_e2e_full_system.py"
+    if not e2e_file.exists():
+        log(
+            f"BLOCKED: Mandatory E2E test suite missing at {e2e_file}!",
+            level="ERROR",
+        )
+        sys.exit(1)
 
     # 1. Ruff Format Check
     run_command(
@@ -175,28 +201,47 @@ def run_quality_gates(root: Path, python_bin: Path, npm_bin: str) -> None:
         desc="Bandit AST Security Audit",
     )
 
-    # 4. Pytest Unit Tests
+    # 4. Mandatory End-to-End (E2E) Full System Test Suite
+    run_command(
+        [str(python_bin), "-m", "pytest", "tests/test_e2e_full_system.py", "-q"],
+        cwd=root / "api",
+        desc="Mandatory End-to-End (E2E) Full System Verification Suite",
+    )
+
+    # 5. Full Pytest Unit & Integration Suite
     run_command(
         [str(python_bin), "-m", "pytest", "tests", "-q"],
         cwd=root / "api",
-        desc="Pytest Backend Test Suite",
+        desc="Pytest Backend Full Test Suite",
     )
 
-    # 5. Frontend Typecheck
+    log("Pre-Commit Gate Passed: 100% Unit & E2E Tests Green!", level="SUCCESS")
+
+
+def run_quality_gates(root: Path, python_bin: Path, npm_bin: str) -> None:
+    """Enforce strict code formatting, linting, security scans, E2E tests, unit tests, and frontend build."""
+    log(
+        "Enforcing 7 Mandatory Quality Gates (Ruff, Bandit, E2E, Pytest, Next.js Build)...",
+        prefix=">>",
+    )
+
+    run_pre_commit_gate(root, python_bin)
+
+    # 6. Frontend Typecheck
     run_command(
         [npm_bin, "run", "typecheck"],
         cwd=root / "frontend",
         desc="Frontend TypeScript Strict Typecheck",
     )
 
-    # 6. Frontend Build
+    # 7. Frontend Build
     run_command(
         [npm_bin, "run", "build"],
         cwd=root / "frontend",
         desc="Next.js Production Build Validation",
     )
 
-    log("All Quality Gates Passed with Zero Errors!", level="SUCCESS")
+    log("All 7 Quality & E2E Gates Passed with Zero Errors!", level="SUCCESS")
 
 
 def get_current_versions(root: Path) -> dict[str, str]:
@@ -404,6 +449,11 @@ def main() -> None:
         action="store_true",
         help="Run clean, quality gates, and version sanity check",
     )
+    group.add_argument(
+        "--pre-commit-gate",
+        action="store_true",
+        help="Run mandatory pre-commit verification (Ruff, Bandit, E2E Suite, Unit Suite)",
+    )
 
     parser.add_argument(
         "--dry-run",
@@ -434,6 +484,12 @@ def main() -> None:
     log(f"MetaSearch Repository Root: {root}")
     log(f"Python Runtime: {python_bin}")
     log(f"NPM Runtime: {npm_bin}")
+
+    ensure_git_pre_commit_hook(root)
+
+    if args.pre_commit_gate:
+        run_pre_commit_gate(root, python_bin)
+        return
 
     # 1. Clean workspace
     log("Cleaning temporary files, test databases, and build caches...", prefix=">>")
@@ -473,13 +529,7 @@ def main() -> None:
 
     log(f"Target Version: {target_version} (Current: {cur_ver})", prefix="==")
 
-    # 3. Quality Gates
-    if not args.skip_tests:
-        run_quality_gates(root, python_bin, npm_bin)
-    else:
-        log("Quality gates skipped via --skip-tests flag.", level="WARN")
-
-    # 4. Verify CHANGELOG.md
+    # 3. Verify CHANGELOG.md first
     ok, notes = verify_changelog(root, target_version)
     if not ok:
         log(notes, level="ERROR")
@@ -491,13 +541,29 @@ def main() -> None:
     else:
         log(f"Changelog verified for version {target_version}!", level="SUCCESS")
 
+    # 4. Apply version updates if bumping (before running tests so exact bumped code is verified)
+    if target_version != cur_ver and not args.check:
+        update_version_files(root, target_version, dry_run=args.dry_run)
+
+    # 5. Mandatory Quality & E2E Gates (Strict: commit is NEVER allowed if tests are skipped)
+    if args.skip_tests:
+        if not args.check and not args.dry_run:
+            log(
+                "BLOCKED: Commit/Release is strictly forbidden when --skip-tests is set! "
+                "All unit and E2E tests must run and pass with 0 errors before committing.",
+                level="ERROR",
+            )
+            sys.exit(1)
+        log(
+            "Quality gates skipped via --skip-tests flag (check/dry-run only).",
+            level="WARN",
+        )
+    else:
+        run_quality_gates(root, python_bin, npm_bin)
+
     if args.check:
         log("Pre-flight check & Quality Gates successfully completed!", level="SUCCESS")
         return
-
-    # 5. Apply version updates if bumping
-    if target_version != cur_ver:
-        update_version_files(root, target_version, dry_run=args.dry_run)
 
     # 6. Final Clean
     clean_workspace(root, dry_run=args.dry_run)

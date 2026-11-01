@@ -13,9 +13,15 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-02 — v1.1.0 Institutional Release + OpenRouter Free & BYO-LLM)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-02 — v1.2.0 Multi-Free-Endpoint Council, Dream-RSI & Universal Intelligence)
 
-- ✅ **OpenRouter Free & External System LLM Integration (v1.1.0)**: Tích hợp sẵn OpenRouter Free Router (`openrouter/free` — https://openrouter.ai/openrouter/free) và 13 LLM presets (Pollinations keyless free, Google Gemini Free, Groq Free, Cerebras Free, Mistral Free, GitHub Models, HuggingFace Router, Ollama/vLLM local, Custom Enterprise LLM), hot-config API (`/v1/llm/providers`, `/v1/llm/config`, `/v1/llm/test`), cùng Context-Only RAG & Citation Validator (`/v1/context`, `/v1/citations/validate`) cho phép tích hợp 2 chiều với hệ thống ngoài đã có sẵn LLM nội bộ. **352 unit tests pass**.
+- ✅ **Multi-Free-Endpoint LLM Council, Dream-RSI Replay World & Universal Domain Intelligence (v1.2.0)**:
+  - Tích hợp gọi song song đồng thời nhiều Free LLM endpoints (`openrouter/free`, `pollinations`, `groq`, `gemini`, `nvidia_nim`, `cerebras`, `sambanova`,...), ẩn danh thành `Candidate A, B, C...` để **Anonymous Cross-Review** lẫn nhau theo thang rubric chuyên ngành mà không bị thiên kiến.
+  - Tự động cải tiến chính sách hội đồng qua **Dream-RSI Replay World** (`ReplayTrajectory`, UCB1 exploration score, offline simulation).
+  - Tích hợp 2 danh mục Free LLM mở rộng (`nejib1/Free-LLM` và `open-free-llm-api/awesome-freellm-apis` — 20 presets).
+  - Kiến trúc **Universal Multi-Domain Deep Intelligence** (`financial` Flagship Pilot + 7 vertical packs: `biomedical_health`, `technology_ai`, `academic_research`, `legal_macro_policy`, `eastern_metaphysics`, `news_geopolitics`, `general_discovery`).
+  - Cưỡng chế quy trình release & pre-commit: hook `.githooks/pre-commit` chặn mọi commit nếu trượt bất kỳ kiểm định nào; **366+ unit & E2E tests pass**.
+- ✅ **OpenRouter Free & External System LLM Integration (v1.1.0)**: Tích hợp sẵn OpenRouter Free Router (`openrouter/free` — https://openrouter.ai/openrouter/free) và 13 LLM presets (Pollinations keyless free, Google Gemini Free, Groq Free, Cerebras Free, Mistral Free, GitHub Models, HuggingFace Router, Ollama/vLLM local, Custom Enterprise LLM), hot-config API (`/v1/llm/providers`, `/v1/llm/config`, `/v1/llm/test`), cùng Context-Only RAG & Citation Validator (`/v1/context`, `/v1/citations/validate`) cho phép tích hợp 2 chiều với hệ thống ngoài đã có sẵn LLM nội bộ.
 - ✅ **Institutional Release (v1.0.0)**: Hoàn tất rà soát 5-Wave Deep Audit (SA, BA/PO, QA/Security/Perf), nâng cấp pháp y BCTC chuyên sâu theo đặc thù ngành (CAMELS Ngân hàng, Margin/FVTPL Chứng khoán, Người mua trả tiền trước BĐS/KCN, Altman Z, Beneish M, Piotroski F), chỉ báo kỹ thuật định lượng (True EMA MACD, Wilder's RSI/ATR, Stochastic, EMA Ribbon, Fibonacci Golden Pocket & Extensions, Ichimoku Chikou, Linear Regression Channel $\pm 2\sigma$, 8 Chart Patterns, Custom Indicator Query Parser), 19 Search Engines, 40 Golden Evals (`--judge-faithfulness`), **352 unit tests pass**, 0 ruff/bandit issues, Next.js build sạch.
 - ✅ **Lite profile (v0.6.0)**: chạy KHÔNG Docker — DuckDuckGo keyless thay
   SearXNG, SQLite thay Postgres (dialect variants), Jina keyless thay crawl4ai,

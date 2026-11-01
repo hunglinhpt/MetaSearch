@@ -66,3 +66,22 @@ def build_messages(question: str, included: list[tuple[int, Chunk]]) -> list[dic
             "content": f"Sources:\n\n{render_context(included)}\n\nQuestion: {question}",
         },
     ]
+
+
+def build_domain_system_prompt(
+    base_prompt: str,
+    query: str,
+    requested_domain: str = "auto",
+) -> str:
+    """Enrich the base system prompt with specialized domain forensic guidelines and rubrics."""
+    from app.retrieval.domain_intelligence import classify_domain_intelligence
+
+    pack = classify_domain_intelligence(query, requested_domain=requested_domain)
+    rubric_text = "\n".join(f"- {r}" for r in pack.verification_rubric)
+    dimensions_text = "\n".join(f"- {d}" for d in pack.essence_dimensions)
+    return (
+        f"{base_prompt}\n\n"
+        f"Domain Specialization: {pack.name} (Domain ID: {pack.id}, Maturity: {pack.maturity})\n"
+        f"Domain Essence Dimensions:\n{dimensions_text}\n\n"
+        f"Verification Rubric:\n{rubric_text}"
+    )

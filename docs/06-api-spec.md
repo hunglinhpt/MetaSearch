@@ -110,11 +110,17 @@ Response: mỗi URL 1 object `{url, status, markdown, title, extractor_used, err
 
 | Method | Path | Quyền | Mô tả |
 |---|---|---|---|
-| GET | `/v1/llm/providers` | `user`/`admin` | Danh mục 13 provider presets (`openrouter` với `openrouter/free`, `pollinations` keyless free, `gemini`, `groq`, `cerebras`, `mistral`, `github_models`, `huggingface`, `ollama`, `custom`, `openai`, `anthropic`, `none`) + cấu hình đang kích hoạt |
+| GET | `/v1/llm/providers` | `user`/`admin` | Danh mục 20 provider presets (tổng hợp từ `OpenRouter Free Router`, `nejib1/Free-LLM`, và `awesome-freellm-apis`: `openrouter`, `pollinations`, `gemini`, `groq`, `nvidia_nim`, `cerebras`, `sambanova`, `mistral`, `github_models`, `cloudflare`, `cohere`, `chutes`, `siliconflow`, `hyperbolic`, `huggingface`, `ollama`, `custom`, `openai`, `anthropic`, `none`) + cấu hình đang kích hoạt |
 | GET | `/v1/llm/config` | `user`/`admin` | Xem cấu hình LLM hiện tại (API key đã được che mặt nạ `sk-o...xxxx`) |
 | PATCH | `/v1/llm/config` | `admin` | Cập nhật nóng `provider`, `protocol`, `base_url`, `api_key`, `quick_model`, `report_model`, `fallback_provider`, `extra_headers` ngay lập tức không cần restart |
 | POST | `/v1/llm/config/reset` | `admin` | Khôi phục cấu hình LLM về mặc định từ biến môi trường `.env` |
 | POST | `/v1/llm/test` | `user`/`admin` | Gửi gói tin kiểm tra kết nối và đo độ trễ `latency_ms` tới LLM endpoint |
+| POST | `/v1/llm/council` | `user`/`admin` | **Hội Đồng Phán Quyết Đa Endpoint (LLM Council + Cross-Review + Dream-RSI)**: Chạy song song nhiều free endpoints → ẩn danh `Candidate A, B, C...` → Cross-Review chấm chéo → Chủ tịch tổng hợp phán quyết tối hậu |
+| PATCH | `/v1/llm/council/endpoints` | `admin` | Cập nhật nóng danh sách các endpoint LLM phục vụ Hội đồng Phán quyết |
+| GET | `/v1/llm/dream-rsi/state` | `user`/`admin` | Xem trạng thái Replay Buffer, điểm UCB1, thế hệ chính sách và ranking của các endpoint |
+| POST | `/v1/llm/dream-rsi/reset` | `admin` | Xóa bộ nhớ quỹ đạo Dream-RSI để huấn luyện lại từ đầu |
+| GET | `/v1/domains` | `user`/`admin` | Danh mục 8 miền chuyên sâu Universal Intelligence (`financial` Flagship Pilot + 7 verticals) |
+| POST | `/v1/domains/analyze` | `user`/`admin` | Phân tích và dự kiến routing miền chuyên sâu, rubric thẩm định và prompt mẫu cho truy vấn |
 | POST | `/v1/context` | `user`/`admin` | **Context-Only RAG cho hệ thống ngoài đã có sẵn LLM**: chạy 19 search engines + BCTC Forensics/Technicals + Scrape + Chunk + Rerank → trả về `{query_id, normalized_query, inferred_categories, context_md, system_prompt, messages, chunks, sources, latency_ms}` |
 | POST | `/v1/citations/validate` | `user`/`admin` | **Hậu kiểm trích dẫn cho LLM ngoài**: nhận `{answer_md, chunks}` từ LLM của hệ thống đối tác, loại bỏ citation giả mạo và trả về `{validated_answer_md, citations, invalid_markers}` |
 

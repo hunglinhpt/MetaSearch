@@ -32,6 +32,9 @@ class AnswerRequest(SearchRequest):
     stream: bool = False
     model: str | None = Field(default=None, max_length=150)
     llm: LLMOverride | None = None
+    council_mode: bool = False
+    council_endpoints: list[LLMOverride | str] | None = None
+    domain: str = Field(default="auto", max_length=60)
 
 
 class ScrapeRequest(BaseModel):
@@ -67,6 +70,7 @@ class AnswerResponse(BaseModel):
     latency_ms: int = 0
     status: str = "complete"
     cached: bool = False
+    council: dict[str, Any] | None = None
 
 
 def new_id() -> str:

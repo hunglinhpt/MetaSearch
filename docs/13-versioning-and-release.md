@@ -23,18 +23,26 @@ Tài liệu này quy định chuẩn mực quản trị phiên bản (Versioning
 
 ---
 
-## 2. Các Cổng Kiểm Định Chất Lượng Bắt Buộc (Quality Gates)
+## 2. Các Cổng Kiểm Định Chất Lượng Bắt Buộc (Quality & Pre-Commit Gates)
 
-Trước khi phiên bản mới được đóng gói, pipeline tự động thực thi tuần tự 6 bước kiểm tra:
+Trước khi commit hoặc phát hành, pipeline và Git hook tự động thực thi tuần tự 7 bước kiểm tra bắt buộc (nghiêm cấm mọi lệnh `git commit` nếu có bất kỳ lỗi nào):
 
 | Cổng kiểm định | Công cụ & Lệnh | Tiêu chí chấp nhận |
 |---|---|---|
 | **1. Cleanliness** | `scripts/release.py --clean-only` | Xóa sạch `*.db*`, `*.tmp`, `*.log`, `.ruff_cache`, `.pytest_cache`, `.next`, `tsconfig.tsbuildinfo`, `__pycache__` |
-| **2. Code Formatting** | `ruff format --check api/app api/tests api/scripts` | 0 file cần format lại |
-| **3. Static Analysis & Lint** | `ruff check api/app api/tests api/scripts` | 0 cảnh báo / 0 lỗi linting |
+| **2. Code Formatting** | `ruff format --check api/app api/tests scripts` | 0 file cần format lại |
+| **3. Static Analysis & Lint** | `ruff check api/app api/tests scripts` | 0 cảnh báo / 0 lỗi linting |
 | **4. Security AST Audit** | `bandit -q -r api/app -x api/tests` | 0 lỗ hổng bảo mật (Exit code 0) |
-| **5. Backend Test Suite** | `pytest api/tests -q` | 100% tests PASS (hiện tại: 333 tests) |
-| **6. Frontend Typecheck & Build**| `npm run typecheck` + `npm run build` | TypeScript sạch, Next.js static build thành công |
+| **5. E2E Full System Suite**| `pytest api/tests/test_e2e_full_system.py -q` | 100% End-to-End tests PASS (20 presets, 8 domains, Council, Dream-RSI, SSE) |
+| **6. Backend Full Test Suite**| `pytest api/tests -q` | 100% tests PASS (366+ unit & integration tests) |
+| **7. Frontend Typecheck & Build**| `npm run typecheck` + `npm run build` | TypeScript sạch, Next.js static production build thành công |
+
+### Cưỡng Chế Git Pre-Commit Hook (`.githooks/pre-commit`)
+MetaSearch thiết lập pre-commit hook tại `.githooks/pre-commit`:
+```bash
+git config core.hooksPath .githooks
+```
+Mỗi khi lập trình viên thực hiện `git commit`, hook sẽ tự động chạy `python scripts/release.py --pre-commit-gate`. Nếu có bất kỳ bài test nào (kể cả E2E hay Unit) bị fail, lệnh commit sẽ bị hủy bỏ ngay lập tức.
 
 ---
 

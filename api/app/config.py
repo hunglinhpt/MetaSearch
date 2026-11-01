@@ -62,9 +62,16 @@ class Settings(BaseSettings):
         "pollinations",
         "gemini",
         "groq",
+        "nvidia_nim",
         "cerebras",
+        "sambanova",
         "mistral",
         "github_models",
+        "cloudflare",
+        "cohere",
+        "chutes",
+        "siliconflow",
+        "hyperbolic",
         "huggingface",
         "ollama",
         "custom",
@@ -86,17 +93,32 @@ class Settings(BaseSettings):
         "google/gemini-2.0-flash-exp:free,"
         "qwen/qwen-2.5-72b-instruct:free"
     )
-    # Reputable Free LLM Endpoints
+    # Reputable Free LLM Endpoints (curated from nejib1/Free-LLM & awesome-freellm-apis)
     pollinations_base_url: str = "https://text.pollinations.ai/openai"
     gemini_api_key: str = ""
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     groq_api_key: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
+    nvidia_nim_api_key: str = ""
+    nvidia_nim_base_url: str = "https://integrate.api.nvidia.com/v1"
     cerebras_api_key: str = ""
     cerebras_base_url: str = "https://api.cerebras.ai/v1"
+    sambanova_api_key: str = ""
+    sambanova_base_url: str = "https://api.sambanova.ai/v1"
     mistral_api_key: str = ""
     mistral_base_url: str = "https://api.mistral.ai/v1"
     github_models_base_url: str = "https://models.inference.ai.azure.com"
+    cloudflare_api_key: str = ""
+    cloudflare_account_id: str = ""
+    cloudflare_base_url: str = ""
+    cohere_api_key: str = ""
+    cohere_base_url: str = "https://api.cohere.ai/compatibility/v1"
+    chutes_api_key: str = ""
+    chutes_base_url: str = "https://llm.chutes.ai/v1"
+    siliconflow_api_key: str = ""
+    siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
+    hyperbolic_api_key: str = ""
+    hyperbolic_base_url: str = "https://api.hyperbolic.xyz/v1"
     hf_token: str = ""
     hf_base_url: str = "https://router.huggingface.co/v1"
     ollama_base_url: str = "http://127.0.0.1:11434/v1"
@@ -107,6 +129,10 @@ class Settings(BaseSettings):
     custom_llm_headers: str = ""
     # Automatic failover provider (e.g. "pollinations" or "openrouter") when primary hits 429/5xx
     llm_fallback_provider: str = ""
+    # Multi-Endpoint LLM Council + Cross-Review + Dream-RSI settings
+    llm_council_enabled: bool = False
+    llm_council_endpoints: str = "pollinations:openai,pollinations:mistral,pollinations:llama"
+    llm_dream_rsi_enabled: bool = True
     llm_quick_model: str = "gpt-4o-mini"
     llm_report_model: str = "gpt-4o"
     llm_temperature: float = 0.2

@@ -4,6 +4,40 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [1.2.0] — 2026-11-02 — Multi-Free-Endpoint LLM Council, Dream-RSI Replay World, Directory Integration (nejib1/Free-LLM & awesome-freellm-apis) & Universal Multi-Domain Intelligence
+
+### Added
+- **Multi-Free-Endpoint LLM Council & Anonymous Cross-Review (`app.llm.council`, `POST /v1/llm/council`, `PATCH /v1/llm/council/endpoints`)**:
+  - Hỗ trợ gọi song song đồng thời nhiều Free LLM endpoints trong 1 lượt truy vấn (mặc định OpenRouter Free, Pollinations keyless, Groq Free, Google Gemini Free).
+  - Cơ chế **Anonymous Cross-Review**: làm mù danh tính các model thành `Candidate A, B, C...` để các panelist chấm chéo lẫn nhau theo thang rubric chuyên ngành mà không bị thiên kiến tự chấm điểm cao cho chính mình.
+  - Kết hợp chấm điểm tất định (`deterministic_score` dựa trên độ chuẩn xác trích dẫn `[n]`, độ phủ nguồn context, và mật độ dữ liệu định lượng — trọng số 40%) với điểm bình duyệt đồng cấp từ LLM (`peer_score` — trọng số 60%) để chọn ra Candidate chiến thắng và giao Chủ tịch Hội đồng (`Chairman`) tổng hợp phán quyết tối hậu (`verdict_md`).
+  - Khả năng **Graceful Degradation**: tự động loại bỏ endpoint bị lỗi 429 hoặc timeout mà không làm hỏng cả hội đồng.
+- **Dream-RSI (Recursive Self-Improvement via Replay World) (`app.llm.council`, `GET /v1/llm/dream-rsi/state`, `POST /v1/llm/dream-rsi/reset`)**:
+  - Lưu trữ lịch sử phán quyết vào **Replay Buffer** (`ReplayTrajectory`), tính toán điểm tiềm năng khai phá **Upper Confidence Bound (UCB1)** cho từng endpoint.
+  - Tự động chạy **Dream Replay & Optimization** sau mỗi hội đồng: mô phỏng lại các truy vấn lịch sử để tự động tiến hóa chính sách chọn lựa panel tốt nhất (`recommended_panel`), tính độ lệch cải thiện qua các thế hệ (`replay_improvement_delta`) và điều chỉnh nhiệt độ tối ưu (`optimal_temperature`) theo từng miền chuyên sâu.
+- **Tích Hợp Danh Mục Free LLM Toàn Diện (nejib1/Free-LLM & awesome-freellm-apis)**:
+  - Tích hợp 2 danh mục Free LLM mở rộng từ [`nejib1/Free-LLM`](https://github.com/nejib1/Free-LLM) (34+ Free LLM APIs) và [`open-free-llm-api/awesome-freellm-apis`](https://github.com/open-free-llm-api/awesome-freellm-apis) (134+ Free LLM APIs).
+  - Mở rộng lên **20 LLM provider presets**: `openrouter`, `pollinations`, `gemini`, `groq`, `nvidia_nim`, `cerebras`, `sambanova`, `mistral`, `github_models`, `cloudflare`, `cohere`, `chutes`, `siliconflow`, `hyperbolic`, `huggingface`, `ollama`, `custom`, `openai`, `anthropic`, `none`.
+  - Phân loại rõ ràng thuộc tính gói cước (`keyless_free`, `permanent_free`, `trial_credits`, `local_free`, `paid_or_byo`).
+- **Kiến Trúc Universal Multi-Domain Deep Intelligence (`app.retrieval.domain_intelligence`, `GET /v1/domains`, `POST /v1/domains/analyze`)**:
+  - Mở rộng khả năng thẩm định bản chất chuyên sâu ("hiểu bản chất thay vì chỉ đọc bề mặt") sang đa lĩnh vực, với **Tài chính & Pháp y BCTC (`financial`)** giữ vai trò **Flagship Pilot** thử nghiệm chuyên sâu cao nhất (`flagship_pilot`).
+  - Bổ sung 7 gói chuyên sâu tích hợp sẵn:
+    1. `financial` (CAMELS, Margin/FVTPL, Unbilled Bookings, Altman/Beneish/Piotroski, Fibonacci Golden Pocket, Ichimoku, Linear Regression Channel $\pm 2\sigma$, 8 Chart Patterns).
+    2. `biomedical_health` (PICO Clinical Framing, Evidence Hierarchy, Mechanism of Action, Safety & Contraindications).
+    3. `technology_ai` (System Architecture, Algorithmic Complexity $O(\cdot)$, OWASP/CWE Security Auditing, Performance Benchmarks).
+    4. `academic_research` (First-Principles Formulation, Dataset & Ablation Validity, Consensus vs Contradictions).
+    5. `legal_macro_policy` (Transmission Channels, Regulatory Hierarchy, Sectoral & Macro Impact).
+    6. `eastern_metaphysics` (Can Chi, Ngũ Hành, Bát Trạch Cung Phi, Ergonomics kiến trúc khoa học).
+    7. `news_geopolitics` (Chronological Timeline, Multi-Source Cross-Verification, Geopolitical Implications).
+    8. `general_discovery` (Universal Multi-Engine Synthesis).
+- **Cổng Kiểm Định Pre-Commit Bắt Buộc & Toàn Trình E2E Test Suite (`scripts/release.py`, `.githooks/pre-commit`, `tests/test_e2e_full_system.py`)**:
+  - Xây dựng bộ test **End-to-End Full System Verification Suite** (`test_e2e_full_system.py`) kiểm tra toàn bộ 20 presets, 8 domains, Council đa endpoint, Cross-review, Dream-RSI, Answer JSON & SSE, Context-Only RAG, và Citation Validator.
+  - Cài đặt Git hook `.githooks/pre-commit` (kèm kích hoạt tự động `git config core.hooksPath .githooks`): **Nghiêm cấm mọi lệnh `git commit` nếu bộ kiểm thử Unit hoặc E2E có bất kỳ lỗi nào**.
+- **Nâng Cấp Giao Diện Web UI (`frontend/app/page.tsx`, `frontend/lib/api.ts`)**:
+  - Nút bật tắt nhanh **`⚖️ Hội Đồng LLM + Dream-RSI`** ngay trên thanh tìm kiếm.
+  - Thanh chọn **Miền Chuyên Sâu (Universal Intelligence)** hỗ trợ cả tự động nhận diện và chọn thủ công.
+  - Khung hiển thị **Biên Bản Hội Đồng Phán Quyết** trực quan (Chairman Model, Điểm đồng thuận, bảng điểm định lượng và Peer Review của từng Candidate A/B/C).
+
 ## [1.1.0] — 2026-11-02 — OpenRouter Free Router (`openrouter/free`), Reputable Free LLM Presets & External System LLM Integration
 
 ### Added
