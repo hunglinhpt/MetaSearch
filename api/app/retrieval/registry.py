@@ -30,6 +30,7 @@ from app.retrieval.adapters.sec_edgar import SecEdgarAdapter
 from app.retrieval.adapters.semanticscholar import SemanticScholarAdapter
 from app.retrieval.adapters.serper import SerperAdapter
 from app.retrieval.adapters.stackoverflow import StackOverflowAdapter
+from app.retrieval.adapters.stooq import StooqFinanceAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
 from app.retrieval.adapters.viet_stock import VietStockAdapter
 from app.retrieval.adapters.wikipedia import WikipediaAdapter
@@ -84,6 +85,7 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "semanticscholar": SemanticScholarAdapter(api_key=settings.semanticscholar_api_key),
         "yahoo_finance": YahooFinanceAdapter(),
         "sec_edgar": SecEdgarAdapter(user_agent=settings.sec_edgar_user_agent),
+        "stooq": StooqFinanceAdapter(),
         "google_news": GoogleNewsAdapter(),
         "fengshui": FengShuiAdapter(),
         "viet_stock": VietStockAdapter(),
