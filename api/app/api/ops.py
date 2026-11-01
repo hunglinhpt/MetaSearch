@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, Response
 from redis.asyncio import Redis
 from sqlalchemy import text
@@ -14,6 +13,7 @@ from app.config import get_settings
 from app.core.logging import get_logger
 from app.core.metrics import READINESS, render_metrics
 from app.db.session import get_engine
+from app.http import get_http_client
 
 logger = get_logger(__name__)
 
@@ -42,6 +42,9 @@ async def _check_redis() -> dict[str, Any]:
         await client.ping()
         return {"ok": True}
     except Exception as exc:
+        if not settings.searxng_enabled:
+            # Lite profile runs with in-process cache/rate-limit fallback when Redis is absent
+            return {"ok": True, "skipped": "optional_in_lite_mode", "error": type(exc).__name__}
         return {"ok": False, "error": type(exc).__name__}
     finally:
         if client is not None:
@@ -50,9 +53,14 @@ async def _check_redis() -> dict[str, Any]:
 
 async def _check_searxng() -> dict[str, Any]:
     settings = get_settings()
+    if not settings.searxng_enabled:
+        return {"ok": True, "skipped": "searxng_disabled"}
     try:
-        async with httpx.AsyncClient(timeout=settings.readiness_timeout_s) as client:
-            resp = await client.get(f"{settings.searxng_url.rstrip('/')}/healthz")
+        client = get_http_client()
+        resp = await client.get(
+            f"{settings.searxng_url.rstrip('/')}/healthz",
+            timeout=settings.readiness_timeout_s,
+        )
         return {"ok": resp.status_code < 500, "status": resp.status_code}
     except Exception as exc:
         return {"ok": False, "error": type(exc).__name__}

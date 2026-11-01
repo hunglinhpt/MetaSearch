@@ -24,21 +24,22 @@ async def ops_status() -> dict[str, Any]:
     settings = get_settings()
     readiness = await ops.collect_readiness()
     store = deps.get_engine_store()
+    registry = deps.get_registry()
     try:
         health = await store.health()
         snapshot = await store.snapshot()
+        adapters_by_id = {cfg.id: ad for cfg, ad in await registry.all_entries()}
     except Exception:  # store fallbacks swallow their own errors, be safe
-        health, snapshot = {}, {}
+        health, snapshot, adapters_by_id = {}, {}, {}
 
     engines = []
     for engine_id, cfg in snapshot.items():
         summary = health.get(engine_id)
-        entry = await deps.get_registry().get(engine_id)
         engines.append(
             {
                 "id": engine_id,
                 "enabled": cfg.enabled,
-                "adapter_ready": bool(entry and entry[1]),
+                "adapter_ready": adapters_by_id.get(engine_id) is not None,
                 "disabled_reason": cfg.disabled_reason,
                 "calls": summary.calls if summary else 0,
                 "failures": summary.failures if summary else 0,

@@ -72,7 +72,7 @@ class ResearchJob:
             except TimeoutError:
                 return after_index, None
             if after_index < len(self.events):
-                return after_index + 1, list(self.events)[after_index]
+                return after_index + 1, self.events[after_index]
             return after_index, None
 
 
@@ -146,10 +146,13 @@ class ResearchJobStore:
 
                 answer_row = (
                     await session.execute(
-                        select(AnswerRow).where(
+                        select(AnswerRow)
+                        .where(
                             AnswerRow.query_id == job_id,
                             AnswerRow.kind == "research",
                         )
+                        .order_by(AnswerRow.created_at.desc())
+                        .limit(1)
                     )
                 ).scalar_one_or_none()
                 if answer_row is None:
@@ -175,7 +178,9 @@ class ResearchJobStore:
                 job = ResearchJob(
                     id=job_id,
                     query=query_row.raw_text,
-                    status="done" if answer_row.status == "complete" else answer_row.status,
+                    status="done"
+                    if answer_row.status in ("complete", "truncated")
+                    else answer_row.status,
                     finished=True,
                     result={
                         "report_md": answer_row.content_md or "",
@@ -231,6 +236,8 @@ async def run_job(job: ResearchJob, params) -> None:
     from app.orchestration.research import ResearchPipeline
 
     job.status = "running"
+    if getattr(params, "research_id", None) is None:
+        params.research_id = job.id
     pipeline = ResearchPipeline(
         get_settings(),
         get_answer_pipeline().search,
@@ -239,17 +246,20 @@ async def run_job(job: ResearchJob, params) -> None:
     )
     report_parts: list[str] = []
     citations: list[dict] = []
+    learnings_acc: list[str] = []
     try:
         async for name, data in pipeline.run(params, on_event=lambda e: push_event(job, e)):
             if name == "report_token":
                 report_parts.append(data["t"])
             elif name == "citations":
                 citations = data["citations"]
+            elif name == "learnings":
+                learnings_acc.extend(data.get("learnings", []))
             push_event(job, (name, data))
         job.result = {
             "report_md": "".join(report_parts),
             "citations": citations,
-            "learnings": [],  # streamed via learnings events; result keeps the report
+            "learnings": learnings_acc,
         }
         logger.info("research_job_done", research_id=str(job.id), status=job.status)
     except asyncio.CancelledError:

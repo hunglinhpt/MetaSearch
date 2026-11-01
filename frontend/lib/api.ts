@@ -69,6 +69,7 @@ export type AnswerHandlers = {
 export type SearchOptions = {
   signal?: AbortSignal;
   engines?: string[];
+  categories?: string[];
   k?: number;
 };
 
@@ -79,7 +80,12 @@ export async function search(
   const resp = await fetch(`${API_BASE_URL}/v1/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, k: opts.k ?? 10, engines: opts.engines ?? undefined }),
+    body: JSON.stringify({
+      query,
+      k: opts.k ?? 10,
+      engines: opts.engines ?? undefined,
+      categories: opts.categories ?? undefined,
+    }),
     signal: opts.signal,
   });
   if (!resp.ok) {
@@ -110,12 +116,18 @@ export async function streamAnswer(
   query: string,
   handlers: AnswerHandlers,
   signal?: AbortSignal,
-  engines?: string[]
+  engines?: string[],
+  categories?: string[]
 ): Promise<void> {
   const resp = await fetch(`${API_BASE_URL}/v1/answer`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, stream: true, engines: engines ?? undefined }),
+    body: JSON.stringify({
+      query,
+      stream: true,
+      engines: engines ?? undefined,
+      categories: categories ?? undefined,
+    }),
     signal,
   });
   if (!resp.ok || !resp.body) {

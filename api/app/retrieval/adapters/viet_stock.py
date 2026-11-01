@@ -17,6 +17,7 @@ Category: ``financial``.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,7 +31,9 @@ from app.retrieval.technical_analysis import (
     calc_fibonacci_retracement,
     calc_geometric_trendlines,
     calc_ichimoku_cloud,
+    compute_custom_indicators,
     detect_chart_patterns,
+    parse_custom_indicator_params,
 )
 
 logger = logging.getLogger(__name__)
@@ -851,6 +854,266 @@ VIET_STOCKS_DB: dict[str, CompanyFinancials] = {
         ),
         ir_url="https://ducgiangchem.vn/quan-he-co-dong/",
     ),
+    "TCB": CompanyFinancials(
+        symbol="TCB",
+        name="Ngân hàng TMCP Kỹ thương Việt Nam (Techcombank)",
+        exchange="HSX",
+        industry="Ngân hàng",
+        market_cap_vnd_bil=169_500.0,
+        charter_capital_vnd_bil=70_450.0,
+        shares_outstanding_mil=7_045.0,
+        price_ref_vnd=24_050.0,
+        pe=7.8,
+        pb=1.18,
+        eps_vnd=3_080.0,
+        roe_pct=16.8,
+        roa_pct=2.6,
+        debt_to_equity=5.2,
+        foreign_room_pct=22.49,
+        foreign_current_pct=22.49,
+        plan_year=2024,
+        target_revenue_vnd_bil=46_000.0,
+        actual_revenue_vnd_bil=47_600.0,
+        target_profit_vnd_bil=27_100.0,
+        actual_profit_vnd_bil=28_500.0,
+        revenue_completion_pct=103.5,
+        profit_completion_pct=105.2,
+        yoy_profit_growth_pct=24.5,
+        plan_status="Vượt 5.2% kế hoạch lợi nhuận ĐHCĐ",
+        dividend_policy="Cổ tức tiền mặt 15% (1.500 đ/CP) + thưởng cổ phiếu 100% (tỷ lệ 1:1)",
+        recent_dividends=[
+            {
+                "year": 2024,
+                "type": "Tiền mặt & Cổ phiếu thưởng",
+                "rate": "15% tiền mặt (1.500 đ/CP) + 100% cổ phiếu thưởng",
+                "ex_date": "2024-05-21",
+                "pay_date": "2024-06-05",
+            },
+        ],
+        major_shareholders=[
+            {"name": "Công ty Cổ phần Tập đoàn Masan (MSN)", "ownership_pct": 14.88},
+            {"name": "Hồ Hùng Anh (Chủ tịch HĐQT) & Gia đình", "ownership_pct": 19.65},
+            {"name": "Warburg Pincus / Quỹ ngoại", "ownership_pct": 8.20},
+        ],
+        free_float_pct=55.0,
+        recent_deals=[
+            {
+                "deal_date": "2024-09-12",
+                "actor": "Khối ngoại (Kín room 22.49%)",
+                "role": "Quỹ đầu tư quốc tế",
+                "deal_type": "Thỏa thuận lô lớn (Block Trade) ngoài biên độ",
+                "volume": "4.500.000 CP",
+            }
+        ],
+        block_trade_summary=(
+            "Kín room ngoại 22.49%, thỏa thuận nội khối ngoại luôn có premium 5-7%."
+        ),
+        restructuring_events=[
+            {
+                "event": "Tăng vốn điều lệ gấp đôi lên 70.450 tỷ VNĐ qua thưởng cổ phiếu 1:1",
+                "status": "Hoàn tất niêm yết bổ sung Q3/2024",
+            }
+        ],
+        auditor="EY Việt Nam",
+        audit_opinion="Chấp nhận toàn phần, CAR Basel II đạt 15.1% dẫn đầu toàn ngành ngân hàng",
+        core_catalysts=(
+            "CASA đạt 40.5% nhờ Auto-earning, hệ sinh thái bán lẻ & bất động sản hồi phục."
+        ),
+        ir_url="https://techcombank.com/nha-dau-tu",
+    ),
+    "MBB": CompanyFinancials(
+        symbol="MBB",
+        name="Ngân hàng TMCP Quân Đội (MBBank)",
+        exchange="HSX",
+        industry="Ngân hàng",
+        market_cap_vnd_bil=134_200.0,
+        charter_capital_vnd_bil=53_063.0,
+        shares_outstanding_mil=5_306.3,
+        price_ref_vnd=25_300.0,
+        pe=6.2,
+        pb=1.25,
+        eps_vnd=4_080.0,
+        roe_pct=22.4,
+        roa_pct=2.4,
+        debt_to_equity=6.4,
+        foreign_room_pct=23.24,
+        foreign_current_pct=23.24,
+        plan_year=2024,
+        target_revenue_vnd_bil=50_000.0,
+        actual_revenue_vnd_bil=52_400.0,
+        target_profit_vnd_bil=28_800.0,
+        actual_profit_vnd_bil=29_100.0,
+        revenue_completion_pct=104.8,
+        profit_completion_pct=101.0,
+        yoy_profit_growth_pct=10.6,
+        plan_status="Hoàn thành vượt mức kế hoạch ĐHCĐ",
+        dividend_policy="Cổ tức tiền mặt 5% (500 đ/CP) + Cổ tức cổ phiếu 15% hàng năm",
+        recent_dividends=[
+            {
+                "year": 2024,
+                "type": "Tiền mặt",
+                "rate": "5% (500 đ/CP)",
+                "ex_date": "2024-05-23",
+                "pay_date": "2024-06-14",
+            },
+        ],
+        major_shareholders=[
+            {
+                "name": "Tập đoàn Công nghiệp - Viễn thông Quân đội (Viettel)",
+                "ownership_pct": 19.07,
+            },
+            {"name": "SCIC", "ownership_pct": 9.42},
+            {"name": "Tổng Công ty Trực thăng Việt Nam & Tân Cảng Sài Gòn", "ownership_pct": 15.10},
+        ],
+        free_float_pct=52.0,
+        recent_deals=[
+            {
+                "deal_date": "2024-09-25",
+                "actor": "SCIC & Viettel",
+                "role": "Cổ đông Nhà nước chiến lược",
+                "deal_type": "Nắm giữ dài hạn & nhận cổ tức tăng vốn",
+                "volume": "Nắm giữ trên 43% tổng cổ phần",
+            }
+        ],
+        block_trade_summary="Kín room ngoại 23.24%, thanh khoản thuộc nhóm cao nhất rổ VN30.",
+        restructuring_events=[
+            {
+                "event": "Phát hành gần 800 triệu cổ phiếu trả cổ tức tỷ lệ 15%",
+                "status": "Đang triển khai Q4/2024",
+            }
+        ],
+        auditor="KPMG Việt Nam",
+        audit_opinion="Chấp nhận toàn phần, CASA đạt 38.8% và CIR tối ưu 28.4%",
+        core_catalysts="30 triệu khách hàng số, chi phí vốn thấp nhất nhóm ngân hàng TMCP.",
+        ir_url="https://www.mbbank.com.vn/nhadautu",
+    ),
+    "ACB": CompanyFinancials(
+        symbol="ACB",
+        name="Ngân hàng TMCP Á Châu (ACB)",
+        exchange="HSX",
+        industry="Ngân hàng",
+        market_cap_vnd_bil=115_000.0,
+        charter_capital_vnd_bil=44_666.0,
+        shares_outstanding_mil=4_466.6,
+        price_ref_vnd=25_750.0,
+        pe=6.8,
+        pb=1.42,
+        eps_vnd=3_780.0,
+        roe_pct=22.5,
+        roa_pct=2.3,
+        debt_to_equity=6.8,
+        foreign_room_pct=30.0,
+        foreign_current_pct=30.0,
+        plan_year=2024,
+        target_revenue_vnd_bil=33_500.0,
+        actual_revenue_vnd_bil=34_500.0,
+        target_profit_vnd_bil=22_000.0,
+        actual_profit_vnd_bil=21_500.0,
+        revenue_completion_pct=103.0,
+        profit_completion_pct=97.7,
+        yoy_profit_growth_pct=7.2,
+        plan_status="Bám sát kế hoạch, ưu tiên chất lượng tài sản",
+        dividend_policy="Duy trì cổ tức 25%/năm (10% tiền mặt + 15% cổ phiếu) đều đặn",
+        recent_dividends=[
+            {
+                "year": 2024,
+                "type": "Tiền mặt & Cổ phiếu",
+                "rate": "10% tiền mặt (1.000 đ/CP) + 15% cổ phiếu",
+                "ex_date": "2024-05-31",
+                "pay_date": "2024-06-13",
+            },
+        ],
+        major_shareholders=[
+            {"name": "Trần Hùng Huy (Chủ tịch HĐQT) & Người liên quan", "ownership_pct": 11.45},
+            {"name": "Dragon Financial Holdings Limited", "ownership_pct": 6.92},
+            {"name": "Whistle Investment Limited", "ownership_pct": 4.99},
+        ],
+        free_float_pct=72.0,
+        recent_deals=[
+            {
+                "deal_date": "2024-08-22",
+                "actor": "Quỹ ngoại Âu - Mỹ",
+                "role": "Giao dịch thỏa thuận kín room 30%",
+                "deal_type": "Thỏa thuận lô lớn (Block Trade)",
+                "volume": "3.200.000 CP",
+            }
+        ],
+        block_trade_summary="Luôn kín 100% room ngoại (30%), cổ phiếu phòng thủ ưa thích của quỹ.",
+        restructuring_events=[
+            {
+                "event": "Tăng vốn điều lệ lên 44.666 tỷ VNĐ từ chia cổ tức cổ phiếu 15%",
+                "status": "Hoàn tất tháng 7/2024",
+            }
+        ],
+        auditor="PwC Việt Nam",
+        audit_opinion="Chấp nhận toàn phần, không nắm giữ trái phiếu doanh nghiệp rủi ro",
+        core_catalysts="Khẩu vị rủi ro thận trọng, ROE > 22% suốt 5 năm liên tiếp.",
+        ir_url="https://acb.com.vn/nha-dau-tu",
+    ),
+    "VHM": CompanyFinancials(
+        symbol="VHM",
+        name="Công ty Cổ phần Vinhomes",
+        exchange="HSX",
+        industry="Bất động sản",
+        market_cap_vnd_bil=182_000.0,
+        charter_capital_vnd_bil=43_543.0,
+        shares_outstanding_mil=4_354.3,
+        price_ref_vnd=41_800.0,
+        pe=5.2,
+        pb=0.92,
+        eps_vnd=8_040.0,
+        roe_pct=19.2,
+        roa_pct=7.8,
+        debt_to_equity=0.35,
+        foreign_room_pct=50.0,
+        foreign_current_pct=14.2,
+        plan_year=2024,
+        target_revenue_vnd_bil=120_000.0,
+        actual_revenue_vnd_bil=102_500.0,
+        target_profit_vnd_bil=35_000.0,
+        actual_profit_vnd_bil=35_200.0,
+        revenue_completion_pct=85.4,
+        profit_completion_pct=100.6,
+        yoy_profit_growth_pct=5.0,
+        plan_status="Hoàn thành 100.6% kế hoạch lợi nhuận sau thuế",
+        dividend_policy="Ưu tiên tái đầu tư các đại đô thị và mua lại cổ phiếu quỹ bảo vệ cổ đông",
+        recent_dividends=[
+            {
+                "year": 2024,
+                "type": "Mua lại cổ phiếu quỹ (Treasury Buyback)",
+                "rate": "Mua lại 247 triệu cổ phiếu quỹ (5.67% vốn điều lệ)",
+                "ex_date": "2024-10-23",
+                "pay_date": "2024-11-21",
+            },
+        ],
+        major_shareholders=[
+            {"name": "Tập đoàn Vingroup - CTCP (VIC)", "ownership_pct": 69.34},
+            {"name": "Chính phủ Singapore (GIC - Viking Asia Holdings)", "ownership_pct": 4.58},
+        ],
+        free_float_pct=25.8,
+        recent_deals=[
+            {
+                "deal_date": "2024-11-21",
+                "actor": "Công ty Cổ phần Vinhomes (VHM)",
+                "role": "Doanh nghiệp phát hành",
+                "deal_type": "Mua lại cổ phiếu quỹ lịch sử trên sàn",
+                "volume": "247.000.000 CP (~11.000 tỷ VNĐ)",
+            }
+        ],
+        block_trade_summary=(
+            "Thương vụ mua cổ phiếu quỹ lớn nhất lịch sử TTCK Việt Nam (247 triệu CP)."
+        ),
+        restructuring_events=[
+            {
+                "event": "Giảm vốn điều lệ tương ứng số lượng cổ phiếu quỹ đã mua lại",
+                "status": "Hoàn tất tháng 11/2024, gia tăng EPS và BVPS cho cổ đông hiện hữu",
+            }
+        ],
+        auditor="EY Việt Nam",
+        audit_opinion="Chấp nhận toàn phần, doanh số bán hàng chưa ghi nhận trên 92.000 tỷ VNĐ",
+        core_catalysts="Vinhomes Royal Island (Vũ Yên), Vinhomes Cổ Loa, định giá P/B < 1.0x.",
+        ir_url="https://vinhomes.vn/vi/quan-he-co-dong",
+    ),
 }
 
 _TICKER_REGEX = re.compile(r"\b([A-Z]{3})\b")
@@ -861,6 +1124,15 @@ _QUERY_KEYWORD_MAP: dict[str, str] = {
     "hpg": "HPG",
     "vietcombank": "VCB",
     "vcb": "VCB",
+    "techcombank": "TCB",
+    "tcb": "TCB",
+    "mbbank": "MBB",
+    "ngân hàng quân đội": "MBB",
+    "mbb": "MBB",
+    "ngân hàng á châu": "ACB",
+    "acb": "ACB",
+    "vinhomes": "VHM",
+    "vhm": "VHM",
     "vinamilk": "VNM",
     "vnm": "VNM",
     "ssi": "SSI",
@@ -881,13 +1153,14 @@ _QUERY_KEYWORD_MAP: dict[str, str] = {
 
 
 def _extract_tickers(query: str) -> list[str]:
-    """Finds referenced Vietnamese stock tickers from text query."""
+    """Finds referenced Vietnamese stock tickers from text query using strict word boundaries."""
     q_lower = query.lower()
     detected: list[str] = []
 
-    # 1. Match company names from mapping
-    for kw, sym in _QUERY_KEYWORD_MAP.items():
-        if kw in q_lower and sym not in detected:
+    # 1. Match company names and tickers from mapping using strict word boundaries
+    for kw in sorted(_QUERY_KEYWORD_MAP.keys(), key=len, reverse=True):
+        sym = _QUERY_KEYWORD_MAP[kw]
+        if sym not in detected and re.search(rf"\b{re.escape(kw)}\b", q_lower):
             detected.append(sym)
 
     # 2. Match 3-uppercase ticker symbols
@@ -897,6 +1170,46 @@ def _extract_tickers(query: str) -> list[str]:
             detected.append(sym)
 
     return detected
+
+
+def _build_stock_ohlcv_series(
+    stock: CompanyFinancials,
+) -> tuple[list[float], list[float], list[float], list[float]]:
+    """Builds a realistic, ticker-specific 60-session OHLCV trajectory anchored at price_ref_vnd."""
+    base_p = stock.price_ref_vnd
+    seed_val = sum((idx + 1) * ord(ch) for idx, ch in enumerate(stock.symbol))
+    # Drift reflects real fundamental YoY growth & ROE momentum
+    growth_factor = max(-0.004, min(0.007, (stock.yoy_profit_growth_pct / 100.0) * 0.008))
+    roe_boost = (stock.roe_pct - 15.0) * 0.00015
+    daily_drift = growth_factor + roe_boost
+    phase = (seed_val % 11) * 0.45
+    vol_amp = 0.012 + (seed_val % 7) * 0.0025
+
+    n_bars = 60
+    closes: list[float] = []
+    highs: list[float] = []
+    lows: list[float] = []
+    volumes: list[float] = []
+
+    for i in range(n_bars):
+        t_offset = i - (n_bars - 1)  # ends at 0 so last bar aligns with base_p
+        cyc = math.sin(i * 0.38 + phase) * vol_amp + math.cos(i * 0.19 + phase) * (vol_amp * 0.6)
+        c_val = base_p * (1.0 + t_offset * daily_drift + cyc)
+        spread = base_p * (0.011 + (i % 5) * 0.002)
+        h_val = c_val + spread * 0.55
+        l_val = max(c_val - spread * 0.45, base_p * 0.5)
+        vol_val = max(
+            stock.shares_outstanding_mil * 3_500.0 * (1.0 + 0.25 * math.sin(i)), 500_000.0
+        )
+        closes.append(round(c_val, 2))
+        highs.append(round(h_val, 2))
+        lows.append(round(l_val, 2))
+        volumes.append(round(vol_val, 0))
+
+    closes[-1] = base_p
+    highs[-1] = max(highs[-1], base_p * 1.008)
+    lows[-1] = min(lows[-1], base_p * 0.992)
+    return highs, lows, closes, volumes
 
 
 class VietStockAdapter:
@@ -921,6 +1234,7 @@ class VietStockAdapter:
 
         tickers = _extract_tickers(clean_q)
         q_lower = clean_q.lower()
+        custom_params = parse_custom_indicator_params(clean_q)
 
         # If no specific ticker is mentioned, provide general overview
         if not tickers:
@@ -1005,6 +1319,13 @@ class VietStockAdapter:
                     "cfo",
                     "f-score",
                     "z-score",
+                    "m-score",
+                    "camels",
+                    "car",
+                    "npl",
+                    "casa",
+                    "nim",
+                    "margin",
                     "thao túng",
                     "thanh toán",
                 )
@@ -1024,6 +1345,11 @@ class VietStockAdapter:
                     "hình học",
                     "pattern",
                     "kỹ thuật",
+                    "rsi",
+                    "macd",
+                    "bollinger",
+                    "atr",
+                    "stoch",
                 )
             )
 
@@ -1188,10 +1514,41 @@ class VietStockAdapter:
             # 6. Deep Dive: Forensic Balance Sheet Inspection (Nợ & Phải Thu Thực Chất)
             forensic = analyze_balance_sheet_forensics(stock.symbol, stock)
             if forensic and (is_forensic or len(tickers) <= 2):
+                sector_extra = ""
+                if forensic.industry_type == "banking" and forensic.car_pct > 0:
+                    sector_extra = (
+                        f"CAMELS Ngân hàng: CAR {forensic.car_pct:.1f}% · "
+                        f"NPL (Nợ xấu) {forensic.npl_ratio_pct:.2f}% · "
+                        f"Nợ nhóm 2 {forensic.group2_loan_ratio_pct:.2f}% · "
+                        f"Bao phủ nợ xấu (LLR) {forensic.llr_pct:.0f}% · "
+                        f"NIM {forensic.nim_pct:.2f}% · CASA {forensic.casa_pct:.1f}% · "
+                    )
+                elif (
+                    forensic.industry_type == "securities"
+                    and forensic.margin_loans_to_equity_pct > 0
+                ):
+                    sector_extra = (
+                        f"Pháp y CTCK: Margin/VCSH {forensic.margin_loans_to_equity_pct:.1f}% "
+                        f"(trần 200%) · Tự doanh FVTPL {forensic.fvtpl_vnd_bil:,.0f} tỷ đ · "
+                        f"HTM {forensic.htm_vnd_bil:,.0f} tỷ đ · "
+                        f"An toàn tài chính {forensic.financial_safety_ratio_pct:.0f}% · "
+                    )
+                elif (
+                    forensic.industry_type == "real_estate"
+                    and forensic.unearned_revenue_and_advances_vnd_bil > 0
+                ):
+                    sector_extra = (
+                        f"Pháp y BĐS/KCN: Người mua trả tiền trước & DT chưa thực hiện "
+                        f"{forensic.unearned_revenue_and_advances_vnd_bil:,.0f} tỷ đ · "
+                        f"Tồn kho/TTS {forensic.inventory_to_assets_pct:.1f}% · "
+                    )
+
                 forensic_snippet = (
                     f"[{stock.symbol} THẨM ĐỊNH PHÁP Y BCTC - {forensic.forensic_rating}] "
                     f"Piotroski F-Score: {forensic.piotroski_f_score}/9 · "
                     f"Altman Z-Score: {forensic.altman_z_score:.2f} · "
+                    f"Beneish M-Score: {forensic.beneish_m_score:.2f} · "
+                    f"{sector_extra}"
                     f"Nợ vay ròng: {forensic.net_debt_vnd_bil:,.0f} tỷ đ · "
                     f"Hệ số ICR: {forensic.interest_coverage_ratio:.1f}x · "
                     f"Phải thu: {forensic.short_term_receivables_vnd_bil:,.0f} tỷ đ "
@@ -1220,28 +1577,43 @@ class VietStockAdapter:
             # 7. Deep Dive: Advanced Technicals, Fibonacci, Ichimoku & Geometric Patterns
             if is_tech_adv or len(tickers) <= 2:
                 base_p = stock.price_ref_vnd
-                syn_highs = [
-                    base_p * (1.0 + (i - 20) * 0.007 + (0.015 if i % 2 == 0 else -0.01))
-                    for i in range(40)
-                ]
-                syn_lows = [h * 0.975 for h in syn_highs]
-                syn_closes = [(hv + lv) / 2 for hv, lv in zip(syn_highs, syn_lows, strict=False)]
+                syn_highs, syn_lows, syn_closes, syn_vols = _build_stock_ohlcv_series(stock)
                 fibo = calc_fibonacci_retracement(syn_highs, syn_lows, base_p)
                 ichimoku = calc_ichimoku_cloud(syn_highs, syn_lows, syn_closes)
                 trendline = calc_geometric_trendlines(syn_highs, syn_lows, syn_closes)
-                patterns = detect_chart_patterns(
-                    syn_highs, syn_lows, syn_closes, [10_000_000.0] * 40
+                patterns = detect_chart_patterns(syn_highs, syn_lows, syn_closes, syn_vols)
+                customs = compute_custom_indicators(
+                    syn_closes,
+                    syn_vols,
+                    highs=syn_highs,
+                    lows=syn_lows,
+                    **custom_params,
                 )
                 pat_name = patterns[0].name if patterns else "Tích lũy co hẹp VCP"
+                rsi_info = customs.get("rsi", {})
+                macd_info = customs.get("macd", {})
+                atr_info = customs.get("atr", {})
+                ind_summary = ""
+                if rsi_info and macd_info:
+                    ind_summary = (
+                        f" · RSI({rsi_info['period']}): {rsi_info['value']:.1f} · "
+                        f"MACD({macd_info['fast_period']},{macd_info['slow_period']},"
+                        f"{macd_info['signal_period']}): {macd_info['macd_line']:,.1f} "
+                        f"(Signal {macd_info['signal_line']:,.1f}, "
+                        f"Hist {macd_info['histogram']:+,.1f}) · "
+                        f"ATR Stop: {atr_info.get('trailing_stop_2x', base_p * 0.95):,.0f} đ"
+                    )
 
                 tech_snippet = (
                     f"[{stock.symbol} KỸ THUẬT NÂNG CAO & FIBONACCI] "
-                    f"Cấu trúc: {trendline.trend_type} ({trendline.channel_slope_deg}°) · "
+                    f"Cấu trúc: {trendline.trend_type} ({trendline.channel_slope_deg}°, "
+                    f"R²={trendline.r_squared:.2f}) · "
                     f"Fibo Retracement: Hỗ trợ {fibo.nearest_support:,.0f} đ, "
                     f"Kháng cự {fibo.nearest_resistance:,.0f} đ, "
-                    f"Golden Pocket (Vùng Vàng): {fibo.golden_pocket_range} · "
-                    f"Mây Ichimoku: {ichimoku.cloud_state} ({ichimoku.tk_cross}) · "
-                    f"Mẫu hình: {pat_name}."
+                    f"Golden Pocket (61.8%-65.0%): {fibo.golden_pocket_range}, "
+                    f"Fibo Ext 161.8%: {fibo.fib_1618:,.0f} đ · "
+                    f"Mây Ichimoku: {ichimoku.cloud_state} ({ichimoku.tk_cross})"
+                    f"{ind_summary} · Mẫu hình: {pat_name}."
                 )
                 results.append(
                     RawResult(

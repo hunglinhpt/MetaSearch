@@ -5,8 +5,9 @@ rerank into a ContextPack) -> Extractor (LLM: learnings + gaps) -> loop within
 budget -> Synthesizer (streaming report with [n] citations).
 
 Harness²-inspired adaptive scaffolding (Google Research pattern):
-Dynamic domain profiles (developer, academic, comparative, general) tailor
-planning directives, search categories, extraction depth, and report structure.
+Dynamic domain profiles (developer, academic, comparative, financial, news,
+fengshui, health, general) tailor planning directives, search categories,
+extraction depth, and report structure.
 
 Every stage emits events consumed by both the SSE endpoint and the MCP layer:
 plan, iteration_start, engine_done, learnings, report_token, done.
@@ -14,16 +15,18 @@ plan, iteration_start, engine_done, learnings, report_token, done.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from app.config import Settings
 from app.core.logging import get_logger
-from app.extraction.chunker import Chunk
+from app.extraction.chunker import Chunk, chunk_markdown
 from app.extraction.scraper import PageContent, Scraper
 from app.llm.citations import validate_citations
 from app.llm.gateway import LLMError, LLMGateway, Usage
@@ -36,6 +39,8 @@ from app.orchestration.pipeline import (
     SearchPipeline,
     normalize_query,
 )
+from app.retrieval.canonical import canonicalize
+from app.retrieval.models import ScoredResult
 from app.retrieval.scoring import heuristic_chunk_score
 
 logger = get_logger(__name__)
@@ -43,6 +48,8 @@ logger = get_logger(__name__)
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 _MAX_SUB_QUERIES = 5
 _EXTRACTOR_MAX_CHARS = 12_000
+_MAX_CHUNKS_PER_DOC_IN_MERGE = 3
+_QUANT_ADAPTERS = frozenset({"viet_stock", "stooq", "yahoo_finance", "sec_edgar", "fengshui"})
 
 
 @dataclass(slots=True)
@@ -62,20 +69,33 @@ class ContextPack:
     stats: dict = field(default_factory=dict)
     _seen_urls: set[str] = field(default_factory=set)
     _seen_chunk_urls: set[str] = field(default_factory=set)
+    _seen_chunk_keys: set[tuple[str, int]] = field(default_factory=set)
 
     def merge(self, chunks: list[Chunk], sources: list[dict]) -> list[Chunk]:
-        """Dedup sources by URL; chunks dedup against already-merged chunk URLs."""
+        """Dedup sources by URL; accept up to 3 chunks per new document URL in a pass,
+        then mark those document URLs seen so subsequent iterations do not re-ingest them."""
         for source in sources:
             if source["url"] not in self._seen_urls:
                 self._seen_urls.add(source["url"])
                 self.sources.append(source)
+        already_seen_urls = set(self._seen_chunk_urls)
+        newly_seen_urls: set[str] = set()
+        per_doc_count: Counter[str] = Counter()
         accepted: list[Chunk] = []
         for chunk in chunks:
-            if chunk.document_url in self._seen_chunk_urls:
+            if chunk.document_url in already_seen_urls:
                 continue
-            self._seen_chunk_urls.add(chunk.document_url)
+            key = (chunk.document_url, chunk.position)
+            if key in self._seen_chunk_keys:
+                continue
+            if per_doc_count[chunk.document_url] >= _MAX_CHUNKS_PER_DOC_IN_MERGE:
+                continue
+            self._seen_chunk_keys.add(key)
+            per_doc_count[chunk.document_url] += 1
+            newly_seen_urls.add(chunk.document_url)
             self.chunks.append(chunk)
             accepted.append(chunk)
+        self._seen_chunk_urls.update(newly_seen_urls)
         return accepted
 
     def next_citation_number(self) -> int:
@@ -157,26 +177,30 @@ HARNESS_PROFILES: dict[str, ResearchHarness] = {
         profile="financial",
         default_categories=["financial", "general", "news"],
         planner_instructions=(
-            "Decompose into rigorous financial, equities & corporate sub-queries covering: "
-            "(1) business plans & results (revenue, profit, plan completion %, YoY growth), "
-            "(2) valuation multiples & key ratios (P/E, P/B, EPS, ROE, ROA, Debt/Equity, BVPS), "
-            "(3) dividend history & policy (cash dividends, stock dividends, ex-dividend dates), "
-            "(4) shareholder structure, foreign room, insider & block trades (thỏa thuận), "
-            "(5) capital restructuring (rights issue, ESOP) and audited regulatory filings. "
+            "Decompose into rigorous institutional financial, forensic & technical sub-queries: "
+            "(1) business plans vs actual results (revenue, net profit, % plan achieved, YoY), "
+            "(2) balance sheet forensics & quality of earnings (Altman Z-Score, Beneish M-Score, "
+            "Piotroski F-Score, CFO/Net Income, DSO, ICR, or Banking CAMELS/NIM/CASA/NPL/LLR), "
+            "(3) quantitative technical analysis (Fibonacci Retracement & Golden Pocket 61.8%-65%, "
+            "Ichimoku Cloud, MACD/RSI/ATR/Bollinger, Linear Regression Trend & Chart Patterns), "
+            "(4) valuation multiples (P/E, P/B, EPS, ROE, ROA) & dividend policy (cash/stock), "
+            "(5) shareholder structure, foreign room, insider/block trades & regulatory filings. "
             "Categories must include 'financial', 'general' and 'news'."
         ),
         extractor_instructions=(
-            "Extract concrete financial numbers (revenue, net income, % plan achieved), "
-            "dividend details with ex-dates, major shareholder percentages, insider trade volumes, "
-            "and auditor opinions with full citations."
+            "Extract concrete financial metrics (revenue, profit, P/E, ROE), forensic scores "
+            "(Altman Z, Beneish M, Piotroski F, CFO/NI, DSO, ICR, NPL, NIM, CASA), technical "
+            "levels (Fibonacci 38.2%/50%/61.8%, Ichimoku Tenkan/Kijun/Kumo, RSI, MACD, Regression "
+            "Slope), dividend ex-dates, and block/insider trades with full citations."
         ),
         report_structure=(
             "Structure the report: Executive Summary & Corporate Profile -> "
             "Business Plans vs Actual Financial Performance -> "
-            "Valuation Ratios & Financial Health (P/E, EPS, ROE, Debt) -> "
-            "Dividend History & Capital Restructuring (ESOP, Rights Issue) -> "
-            "Ownership Structure, Major Shareholders & Block Trades (Trao Tay) -> "
-            "Audited Filings, Catalysts & Strategic Outlook -> References."
+            "Institutional Financial Forensics & Balance Sheet Quality (Altman Z / Beneish M / "
+            "Piotroski F / CAMELS / Debt & Cashflow Structure) -> "
+            "Quantitative Technical Analysis (Fibonacci, Ichimoku Cloud, Indicators & Patterns) -> "
+            "Dividends, Capital Restructuring & Insider/Block Trades -> "
+            "Audited Filings, Risks & Strategic Investment Outlook -> References."
         ),
     ),
     "news": ResearchHarness(
@@ -252,7 +276,7 @@ HARNESS_PROFILES: dict[str, ResearchHarness] = {
 
 def detect_profile(query: str, requested: str = "auto") -> str:
     """Classify the query into a domain scaffolding profile (Harness² pattern)."""
-    if requested in ("developer", "academic", "comparative", "financial", "general"):
+    if requested != "auto" and requested in HARNESS_PROFILES:
         return requested
     q = query.lower()
     comp_keywords = (
@@ -317,6 +341,31 @@ def detect_profile(query: str, requested: str = "auto") -> str:
         "yahoo finance",
         "trái phiếu",
         "định giá",
+        "fibonacci",
+        "fibo",
+        "ichimoku",
+        "kumo",
+        "tenkan",
+        "kijun",
+        "rsi",
+        "macd",
+        "bollinger",
+        "atr",
+        "stochastic",
+        "altman",
+        "piotroski",
+        "beneish",
+        "camels",
+        "nim",
+        "casa",
+        "npl",
+        "dso",
+        "icr",
+        "pháp y",
+        "mẫu hình",
+        "hỗ trợ",
+        "kháng cự",
+        "trendline",
     )
     if any(k in q for k in fin_keywords) or re.search(r"\$[a-z]{1,6}\b", q):
         return "financial"
@@ -528,7 +577,8 @@ class ResearchParams:
     max_time_s: int | None = None
     max_tokens: int | None = None
     k: int = 6  # results per sub-query
-    profile: str = "auto"  # auto | general | developer | academic | comparative
+    profile: str = "auto"  # auto | general | developer | academic | comparative | financial | ...
+    research_id: uuid.UUID | None = None
 
 
 class ResearchPipeline:
@@ -549,6 +599,7 @@ class ResearchPipeline:
     ) -> AsyncIterator[Event]:
         started = time.perf_counter()
         deadline = params.max_time_s or self.settings.research_max_time_s
+        token_budget = params.max_tokens or self.settings.research_max_tokens
         question = normalize_query(params.query)
         breadth = max(2, min(params.breadth, _MAX_SUB_QUERIES))
         depth = max(1, min(params.depth, self.settings.research_max_iterations))
@@ -561,7 +612,11 @@ class ResearchPipeline:
             "status",
             {"stage": "planning", "detail": f"{question} [profile: {harness.profile}]"},
         )
-        sub_queries, categories = await self._plan(question, breadth, params.lang, harness)
+        sub_queries, categories, plan_usage = await self._plan(
+            question, breadth, params.lang, harness
+        )
+        usage_total.input_tokens += plan_usage.input_tokens
+        usage_total.output_tokens += plan_usage.output_tokens
         # Yielded only (no on_event): run_job forwards generator events itself
         yield (
             "plan",
@@ -575,7 +630,10 @@ class ResearchPipeline:
         pack = ContextPack()
         truncated = False
         for iteration in range(depth):
-            if time.perf_counter() - started > deadline:
+            if (
+                time.perf_counter() - started > deadline
+                or (usage_total.input_tokens + usage_total.output_tokens) >= token_budget
+            ):
                 truncated = True
                 break
             yield ("iteration_start", {"iteration": iteration + 1, "max_iterations": depth})
@@ -585,29 +643,49 @@ class ResearchPipeline:
                     (f"{gap} evidence analysis", "gap follow-up") for gap in pack.gaps[:breadth]
                 ]
 
-            queries = [q for q, _purpose in sub_queries]
-            outcome = await self.search.run(
-                SearchParams(
-                    query=" ".join(queries),
-                    lang=params.lang,
-                    k=params.k * max(len(queries), 1),
-                    categories=categories,
-                    engines=None,
+            queries = [q for q, _purpose in sub_queries] or [question]
+            outcomes = await asyncio.gather(
+                *(
+                    self.search.run(
+                        SearchParams(
+                            query=sub_q,
+                            lang=params.lang,
+                            k=params.k,
+                            categories=categories,
+                            engines=None,
+                        ),
+                        on_event=on_event,
+                    )
+                    for sub_q in queries
                 ),
-                on_event=on_event,
+                return_exceptions=True,
             )
-            if not outcome.results:
+            deduped_results: dict[str, ScoredResult] = {}
+            for out in outcomes:
+                if isinstance(out, Exception):
+                    continue
+                for r in out.results:
+                    existing = deduped_results.get(r.canonical_url)
+                    if existing is None or r.score > existing.score:
+                        deduped_results[r.canonical_url] = r
+
+            merged_results = sorted(deduped_results.values(), key=lambda r: -r.score)[
+                : params.k * max(len(queries), 1)
+            ]
+            if not merged_results:
                 break
 
-            pages = await self.scraper.scrape_many([r.url for r in outcome.results])
+            pages = await self.scraper.scrape_many([r.url for r in merged_results])
             ok_pages = [p for p in pages if isinstance(p, PageContent)]
             chunk_start = pack.next_citation_number()  # last chunk number so far
-            new_chunks = self._chunks(question, outcome.results, ok_pages, offset=chunk_start)
+            new_chunks = self._chunks(question, merged_results, ok_pages, offset=chunk_start)
             sources = [
                 {"url": r.url, "title": r.title, "domain": r.domain, "score": round(r.score, 4)}
-                for r in outcome.results
+                for r in merged_results
             ]
             accepted = pack.merge(new_chunks, sources)
+            if ok_pages and accepted:
+                persist.persist_pages(ok_pages, accepted)
 
             learnings, gaps, usage = await self._extract(
                 question, _render_pack(accepted, start=chunk_start + 1), harness
@@ -629,7 +707,7 @@ class ResearchPipeline:
                 break
 
         yield ("status", {"stage": "writing_report", "detail": f"{len(pack.chunks)} chunks"})
-        report_id = uuid.uuid4()
+        report_id = params.research_id or uuid.uuid4()
         answer_parts: list[str] = []
         try:
             included = pack.chunks[:60]
@@ -699,11 +777,11 @@ class ResearchPipeline:
         breadth: int,
         lang: str | None,
         harness: ResearchHarness | None = None,
-    ) -> tuple[list[tuple[str, str]], list[str]]:
+    ) -> tuple[list[tuple[str, str]], list[str], Usage]:
         """Planner LLM call with domain-adaptive harness; heuristic fallback."""
         h = harness or HARNESS_PROFILES["general"]
         try:
-            text, _usage = await self.gateway.complete(
+            text, usage = await self.gateway.complete(
                 _planner_messages(question, breadth, lang, harness=h),
                 model=self.settings.llm_quick_model,
                 task="planner",
@@ -718,7 +796,7 @@ class ResearchPipeline:
                 h.default_categories
             )
             if sub_queries:
-                return sub_queries, categories
+                return sub_queries, categories, usage
         except (LLMError, ValueError, KeyError, TypeError) as exc:
             logger.warning("research_planner_fallback", error=type(exc).__name__)
 
@@ -740,6 +818,7 @@ class ResearchPipeline:
         return (
             [(f"{question} — {aspect}", aspect) for aspect in aspects[:breadth]],
             h.default_categories,
+            Usage(),
         )
 
     async def _extract(
@@ -771,25 +850,54 @@ class ResearchPipeline:
     def _chunks(
         self,
         question: str,
-        results: list,
+        results: list[ScoredResult],
         pages: list[PageContent],
         *,
         offset: int,
     ) -> list[Chunk]:
-        from app.extraction.chunker import chunk_markdown
-
         scored: list[tuple[float, Chunk]] = []
-        score_of = {r.url: r.score for r in results}
+        res_by_url: dict[str, ScoredResult] = {}
+        for r in results:
+            res_by_url[r.url] = r
+            res_by_url.setdefault(r.canonical_url, r)
+
+        scraped_urls: set[str] = set()
         for page in pages:
-            page_chunks = chunk_markdown(
-                page.markdown, document_url=page.url, source_title=page.title
-            )
+            scraped_urls.add(page.url)
+            scraped_urls.add(page.final_url)
+            scraped_urls.add(canonicalize(page.url))
+            matched_res = res_by_url.get(page.url) or res_by_url.get(canonicalize(page.url))
+            result_score = matched_res.score if matched_res else 0.0
+            md_body = page.markdown
+            if (
+                matched_res is not None
+                and matched_res.snippet
+                and any(a in _QUANT_ADAPTERS for a in matched_res.adapters)
+                and matched_res.snippet[:80] not in md_body
+            ):
+                md_body = f"{matched_res.snippet}\n\n{md_body}"
+            page_chunks = chunk_markdown(md_body, document_url=page.url, source_title=page.title)
             for chunk in page_chunks:
+                # Score using within-document position BEFORE adding offset
+                score = heuristic_chunk_score(question, chunk.content, result_score, chunk.position)
                 chunk.position += offset
-                score = heuristic_chunk_score(
-                    question, chunk.content, score_of.get(page.url, 0.0), chunk.position
-                )
                 scored.append((score, chunk))
+
+        for r in results:
+            if r.url in scraped_urls or r.canonical_url in scraped_urls:
+                continue
+            snippet_text = (r.snippet or "").strip()
+            if not snippet_text:
+                continue
+            fallback_md = f"# {r.title}\n\n{snippet_text}" if r.title else snippet_text
+            fallback_chunks = chunk_markdown(
+                fallback_md, document_url=r.url, source_title=r.title or r.url
+            )
+            for chunk in fallback_chunks:
+                score = heuristic_chunk_score(question, chunk.content, r.score, chunk.position)
+                chunk.position += offset
+                scored.append((score, chunk))
+
         scored.sort(key=lambda pair: -pair[0])
         return [chunk for _, chunk in scored]
 

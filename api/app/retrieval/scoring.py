@@ -4,8 +4,8 @@
           + 0.25 x consensus                log2(1 + n_engines) / log2(1 + max_engines)
           + 0.15 x engine_weight            weighted average of adapter weights
           + 0.10 x freshness                exp(-age_days / 30), 0.3 when unknown
-          + 0.10 x domain_authority         neutral 0.5 until a trust table exists
-          + 0.05 x snippet_quality          length-shaped trapezoid
+          + 0.10 x domain_authority         curated institutional trust table (0.5 default)
+          + 0.05 x snippet_quality          length & structure trapezoid
 
 All signals are normalized to 0..1 so weights stay meaningful as new signals
 (SimHash, vector similarity, ONNX rerank) land in Phase 2.
@@ -89,7 +89,38 @@ _STOPWORDS = frozenset(
     ]
 )
 
-_TRUSTED_DOMAINS: dict[str, float] = {}
+_TRUSTED_DOMAINS: dict[str, float] = {
+    # Financial & Regulatory
+    "sec.gov": 0.95,
+    "finance.yahoo.com": 0.90,
+    "stooq.com": 0.90,
+    "iboard.ssi.com.vn": 0.92,
+    "ssi.com.vn": 0.90,
+    "s.cafef.vn": 0.88,
+    "cafef.vn": 0.85,
+    "finance.vietstock.vn": 0.90,
+    "vietstock.vn": 0.88,
+    "hsx.vn": 0.95,
+    "hnx.vn": 0.95,
+    "fireant.vn": 0.85,
+    "simplize.vn": 0.85,
+    # Academic & Bio-Medical
+    "arxiv.org": 0.95,
+    "pubmed.ncbi.nlm.nih.gov": 0.95,
+    "ncbi.nlm.nih.gov": 0.95,
+    "semanticscholar.org": 0.92,
+    # Developer & AI
+    "github.com": 0.90,
+    "stackoverflow.com": 0.90,
+    "huggingface.co": 0.90,
+    "docs.python.org": 0.92,
+    "postgresql.org": 0.92,
+    # Reference & Knowledge
+    "en.wikipedia.org": 0.85,
+    "vi.wikipedia.org": 0.85,
+    "wikipedia.org": 0.85,
+    "metasearch.local": 0.88,
+}
 
 
 def tokenize(text: str) -> list[str]:
@@ -146,19 +177,24 @@ def freshness(published_at: datetime | None, now: datetime | None = None) -> flo
 
 
 def snippet_quality(snippet: str) -> float:
-    """Trapezoid over snippet length: best around 60-320 chars."""
-    n = len(snippet.strip())
+    """Trapezoid over snippet length: best around 60-320 chars; structured
+    markdown reports (tables/bold metrics) retain high quality up to 2000 chars."""
+    stripped = snippet.strip()
+    n = len(stripped)
     if n == 0:
         return 0.0
     if n < 60:
         return n / 60.0
     if n <= 320:
         return 1.0
-    return max(1.0 - (n - 320) / 680.0, 0.2)
+    if "|" in stripped or "**" in stripped or "\n-" in stripped:
+        return 0.95
+    return max(1.0 - (n - 320) / 1200.0, 0.35)
 
 
 def domain_authority(domain: str) -> float:
-    return _TRUSTED_DOMAINS.get(domain.lower(), 0.5)
+    clean = domain.lower().removeprefix("www.")
+    return _TRUSTED_DOMAINS.get(clean, _TRUSTED_DOMAINS.get(domain.lower(), 0.5))
 
 
 def apply_signals(

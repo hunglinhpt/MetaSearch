@@ -22,11 +22,9 @@ from app.orchestration.research_jobs import get_job_store, run_job
 
 router = APIRouter(tags=["research"])
 
+_active_research_tasks: set[asyncio.Task[None]] = set()
 
-_PROFILE_PATTERN = (
-    r"^(auto|general|developer|academic|comparative|"
-    r"financial|news|fengshui|health)$"
-)
+_PROFILE_PATTERN = r"^(auto|general|developer|academic|comparative|financial|news|fengshui|health)$"
 
 
 class ResearchRequest(BaseModel):
@@ -51,8 +49,10 @@ async def create_research(request: ResearchRequest) -> dict[str, Any]:
         max_time_s=request.max_time_s,
         k=request.k,
         profile=request.profile,
+        research_id=job.id,
     )
     task = asyncio.create_task(run_job(job, params))
+    _active_research_tasks.add(task)
     task.add_done_callback(_log_task)
     return {"research_id": str(job.id), "status": job.status}
 
@@ -91,6 +91,7 @@ async def _event_stream(job) -> AsyncIterator[dict]:
 
 
 def _log_task(task: asyncio.Task) -> None:
+    _active_research_tasks.discard(task)
     if task.done() and not task.cancelled():
         exc = task.exception()
         if exc is not None:

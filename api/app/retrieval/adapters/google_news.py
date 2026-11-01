@@ -60,8 +60,8 @@ class GoogleNewsAdapter:
         if not q:
             return []
 
-        # Determine locale: if query contains Vietnamese markers, use vi/VN, else en-US
-        is_vietnamese = bool(
+        # Determine locale: respect explicit lang="vi" or Vietnamese markers in query
+        is_vietnamese = (lang or "").lower().startswith("vi") or bool(
             re.search(
                 r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]",
                 q,

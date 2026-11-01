@@ -12,12 +12,17 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 
 from app.api import deps
+from app.core.auth import require_admin
+from app.core.errors import ErrorCode, MetaSearchError
+from app.core.logging import get_logger
 from app.db.models import BlogPost
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/digests", tags=["digests"])
 
@@ -60,6 +65,34 @@ class ScanTopicInfo(BaseModel):
     last_post_id: str | None
 
 
+def _to_summary(r: Any) -> BlogPostSummary:
+    return BlogPostSummary(
+        id=str(r.id),
+        slug=r.slug,
+        topic=r.topic,
+        title=r.title,
+        summary=r.summary,
+        tags=r.tags,
+        published_at=r.published_at.isoformat() if r.published_at else None,
+        created_at=r.created_at.isoformat() if getattr(r, "created_at", None) else None,
+    )
+
+
+def _to_detail(r: Any) -> BlogPostDetail:
+    return BlogPostDetail(
+        id=str(r.id),
+        slug=r.slug,
+        topic=r.topic,
+        title=r.title,
+        summary=r.summary,
+        content_md=r.content_md,
+        tags=r.tags,
+        sources=r.sources,
+        published_at=r.published_at.isoformat() if r.published_at else None,
+        created_at=r.created_at.isoformat() if getattr(r, "created_at", None) else None,
+    )
+
+
 @router.get("/topics", response_model=list[ScanTopicInfo])
 async def list_topics() -> list[ScanTopicInfo]:
     """List all available automated scanning topics and their latest scan state."""
@@ -87,70 +120,67 @@ async def list_digests(
     limit: int = Query(default=10, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
 ) -> list[BlogPostSummary]:
-    """List published blog posts / daily briefings."""
-    async with deps.get_session_factory()() as session:
-        stmt = select(BlogPost).order_by(desc(BlogPost.created_at)).offset(offset).limit(limit)
-        if topic:
-            stmt = stmt.where(BlogPost.topic == topic)
+    """List published blog posts / daily briefings (with graceful memory fallback)."""
+    try:
+        async with deps.get_session_factory()() as session:
+            stmt = select(BlogPost).order_by(desc(BlogPost.created_at)).offset(offset).limit(limit)
+            if topic:
+                stmt = stmt.where(BlogPost.topic == topic)
 
-        result = await session.execute(stmt)
-        rows = result.scalars().all()
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+            if rows:
+                return [_to_summary(r) for r in rows]
+    except Exception as exc:
+        logger.warning("digests_list_db_unavailable", error=type(exc).__name__)
 
-        return [
-            BlogPostSummary(
-                id=str(r.id),
-                slug=r.slug,
-                topic=r.topic,
-                title=r.title,
-                summary=r.summary,
-                tags=r.tags,
-                published_at=r.published_at.isoformat() if r.published_at else None,
-                created_at=r.created_at.isoformat() if r.created_at else None,
-            )
-            for r in rows
-        ]
+    scanner = deps.get_scanner()
+    mem_posts = scanner.list_memory_posts(topic=topic, limit=limit, offset=offset)
+    return [_to_summary(r) for r in mem_posts]
 
 
 @router.get("/{slug_or_id}", response_model=BlogPostDetail)
 async def get_digest(slug_or_id: str) -> BlogPostDetail:
     """Retrieve full blog post / briefing by ID or slug."""
-    async with deps.get_session_factory()() as session:
-        # Check if valid UUID
+    is_uuid = False
+    parsed_id: uuid.UUID | None = None
+    try:
+        parsed_id = uuid.UUID(slug_or_id)
+        is_uuid = True
+    except ValueError:
         is_uuid = False
-        parsed_id: uuid.UUID | None = None
-        try:
-            parsed_id = uuid.UUID(slug_or_id)
-            is_uuid = True
-        except ValueError:
-            is_uuid = False
 
-        stmt = (
-            select(BlogPost).where((BlogPost.id == parsed_id) | (BlogPost.slug == slug_or_id))
-            if is_uuid
-            else select(BlogPost).where(BlogPost.slug == slug_or_id)
+    row: BlogPost | None = None
+    try:
+        async with deps.get_session_factory()() as session:
+            stmt = (
+                select(BlogPost).where((BlogPost.id == parsed_id) | (BlogPost.slug == slug_or_id))
+                if is_uuid
+                else select(BlogPost).where(BlogPost.slug == slug_or_id)
+            )
+            result = await session.execute(stmt)
+            row = result.scalar_one_or_none()
+    except Exception as exc:
+        logger.warning("digest_get_db_unavailable", error=type(exc).__name__)
+
+    if row is None:
+        row = deps.get_scanner().get_memory_post(slug_or_id)
+
+    if row is None:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            "Blog post not found",
+            status_code=404,
         )
 
-        result = await session.execute(stmt)
-        row = result.scalar_one_or_none()
-
-        if not row:
-            raise HTTPException(status_code=404, detail="Blog post not found")
-
-        return BlogPostDetail(
-            id=str(row.id),
-            slug=row.slug,
-            topic=row.topic,
-            title=row.title,
-            summary=row.summary,
-            content_md=row.content_md,
-            tags=row.tags,
-            sources=row.sources,
-            published_at=row.published_at.isoformat() if row.published_at else None,
-            created_at=row.created_at.isoformat() if row.created_at else None,
-        )
+    return _to_detail(row)
 
 
-@router.post("/scan", response_model=list[BlogPostSummary])
+@router.post(
+    "/scan",
+    response_model=list[BlogPostSummary],
+    dependencies=[Depends(require_admin)],
+)
 async def trigger_scan(
     payload: TriggerScanRequest | None = None,
 ) -> list[BlogPostSummary]:
@@ -160,25 +190,14 @@ async def trigger_scan(
 
     if topic_id:
         if topic_id not in scanner.topics:
-            raise HTTPException(
+            raise MetaSearchError(
+                ErrorCode.INVALID_REQUEST,
+                f"Unknown topic: {topic_id}. Valid topics: {list(scanner.topics.keys())}",
                 status_code=400,
-                detail=f"Unknown topic: {topic_id}. Valid topics: {list(scanner.topics.keys())}",
             )
         post = await scanner.scan_topic(topic_id)
         created_posts = [post]
     else:
         created_posts = await scanner.scan_all()
 
-    return [
-        BlogPostSummary(
-            id=str(p.id),
-            slug=p.slug,
-            topic=p.topic,
-            title=p.title,
-            summary=p.summary,
-            tags=p.tags,
-            published_at=p.published_at.isoformat() if p.published_at else None,
-            created_at=p.created_at.isoformat() if p.created_at else None,
-        )
-        for p in created_posts
-    ]
+    return [_to_summary(p) for p in created_posts]

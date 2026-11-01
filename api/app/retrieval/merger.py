@@ -13,6 +13,8 @@ from app.retrieval.models import EngineConfig, RawResult, ScoredResult
 from app.retrieval.scoring import apply_signals
 from app.retrieval.simhash import is_near_duplicate, simhash64
 
+_DEEP_VERTICAL_ADAPTERS = frozenset({"viet_stock", "stooq", "fengshui", "sec_edgar"})
+
 
 def merge(
     raws: list[RawResult],
@@ -99,8 +101,10 @@ def diversity_cap(
 ) -> list[ScoredResult]:
     """Keep at most ``max_per_domain`` results per domain within the top ``limit``.
 
-    Over-cap results are not dropped: they fall back to a reserve pool that
-    backfills any remaining slots after the first pass.
+    Multi-aspect quantitative reports from deep vertical adapters (e.g. VietStock
+    BCTC Forensics + Technical Analysis + Dividends) are granted up to 4 slots per
+    domain so multi-facet or multi-ticker queries do not lose core reports.
+    Over-cap results fall back to a reserve pool that backfills any remaining slots.
     """
     picked: list[ScoredResult] = []
     reserve: list[ScoredResult] = []
@@ -110,7 +114,12 @@ def diversity_cap(
         if len(picked) >= limit:
             reserve.append(item)
             continue
-        if per_domain[item.domain] >= max_per_domain:
+        domain_cap = (
+            max(max_per_domain, 4)
+            if any(a in _DEEP_VERTICAL_ADAPTERS for a in item.adapters)
+            else max_per_domain
+        )
+        if per_domain[item.domain] >= domain_cap:
             reserve.append(item)
             continue
         per_domain[item.domain] += 1

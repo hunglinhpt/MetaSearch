@@ -29,11 +29,22 @@
     {"query": "hướng dẫn tối ưu hóa hiệu năng website Next.js", "lang": "vi", "expect_terms": ["next.js", "tối ưu"], "categories": ["developer"]},
     {"query": "so sánh Ollama và vLLM tự host mô hình ngôn ngữ lớn", "lang": "vi", "expect_terms": ["ollama", "vllm"], "categories": ["general"]},
     {"query": "Playwright headless browser web extraction python", "lang": "en", "expect_terms": ["playwright", "browser", "extraction"], "categories": ["developer"]},
-    {"query": "FastMCP python model context protocol server implementation", "lang": "en", "expect_terms": ["fastmcp", "mcp"], "categories": ["developer"]}
+    {"query": "FastMCP python model context protocol server implementation", "lang": "en", "expect_terms": ["fastmcp", "mcp"], "categories": ["developer"]},
+    {"query": "phân tích pháp y BCTC cổ phiếu FPT cấu trúc nợ và dòng tiền CFO", "lang": "vi", "expect_terms": ["fpt", "cfo", "piotroski", "z-score"], "categories": ["financial"]},
+    {"query": "thẩm định ngân hàng VCB hệ số CAR nợ xấu NPL và CASA", "lang": "vi", "expect_terms": ["vcb", "car", "npl", "casa"], "categories": ["financial"]},
+    {"query": "phân tích cổ phiếu HPG kế hoạch kinh doanh và dự án Dung Quất 2", "lang": "vi", "expect_terms": ["hpg", "dung quất", "doanh thu"], "categories": ["financial"]},
+    {"query": "chứng khoán SSI dư nợ margin trên VCSH và danh mục tự doanh FVTPL", "lang": "vi", "expect_terms": ["ssi", "margin", "fvtpl"], "categories": ["financial"]},
+    {"query": "cổ phiếu IDC doanh thu chưa thực hiện khu công nghiệp và cổ tức tiền mặt", "lang": "vi", "expect_terms": ["idc", "cổ tức", "chưa thực hiện"], "categories": ["financial"]},
+    {"query": "phân tích kỹ thuật cổ phiếu FPT Fibonacci Golden Pocket và mây Ichimoku RSI 9", "lang": "vi", "expect_terms": ["fpt", "fibonacci", "golden pocket", "ichimoku", "rsi(9)"], "categories": ["financial"]},
+    {"query": "$NVDA technical analysis Fibonacci retracement and Ichimoku Cloud", "lang": "en", "expect_terms": ["nvda", "fibonacci", "ichimoku"], "categories": ["financial"]},
+    {"query": "giá vàng XAUUSD phân tích kỹ thuật hỗ trợ kháng cự Fibonacci", "lang": "vi", "expect_terms": ["xauusd", "fibo", "ichimoku"], "categories": ["financial"]},
+    {"query": "tra cứu phong thủy bát trạch tuổi Canh Ngọ 1990 hướng tốt sinh khí", "lang": "vi", "expect_terms": ["1990", "canh ngọ", "lộ bàng thổ", "khảm"], "categories": ["fengshui"]},
+    {"query": "phong thủy tuổi Giáp Thìn 2024 mệnh gì hợp màu gì tam hợp", "lang": "vi", "expect_terms": ["2024", "giáp thìn", "phúc đăng hỏa", "tam hợp"], "categories": ["fengshui"]}
   ],
   "thresholds": {
     "hit_at_5": 0.7,
     "citation_accuracy": 0.9,
-    "answer_rate": 0.8
+    "answer_rate": 0.8,
+    "faithfulness": 0.75
   }
 }

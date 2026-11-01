@@ -386,7 +386,7 @@ class DbEngineStore:
         self._settings = settings or get_settings()
         self._fallback = fallback or InMemoryEngineStore.from_settings(self._settings)
         self._refresh_s = refresh_s if refresh_s is not None else self._settings.registry_refresh_s
-        self._db_timeout_s = settings.engine_store_db_timeout_s if settings else 0.5
+        self._db_timeout_s = self._settings.engine_store_db_timeout_s
         self._cache: dict[str, EngineConfig] | None = None
         self._cache_at = 0.0
         self._db_warned = False
@@ -509,17 +509,19 @@ class DbEngineStore:
         return base
 
     async def record_result(self, engine_id: str, *, ok: bool, latency_ms: int) -> None:
+        await self._fallback.record_result(engine_id, ok=ok, latency_ms=latency_ms)
         try:
-            await self._guarded(self._record_db(engine_id, ok=ok))
+            state_changed = await self._guarded(self._record_db(engine_id, ok=ok))
         except Exception as exc:
             logger.warning("engine_health_db_failed", error=type(exc).__name__)
-            await self._fallback.record_result(engine_id, ok=ok, latency_ms=latency_ms)
             return
-        self._cache = None
+        if state_changed:
+            self._cache = None
 
-    async def _record_db(self, engine_id: str, *, ok: bool) -> None:
+    async def _record_db(self, engine_id: str, *, ok: bool) -> bool:
         settings = get_settings()
         window_start = _window_start()
+        state_changed = False
         async with get_sessionmaker()() as session:
             row = (
                 await session.execute(
@@ -528,7 +530,31 @@ class DbEngineStore:
                     )
                 )
             ).first()
-            consecutive = 0 if ok else int((row[0] if row else 0) or 0) + 1
+            if row is None:
+                # Ensure row exists before updating health/failure counter
+                defaults = default_configs(self._settings).get(engine_id)
+                if defaults is not None:
+                    await session.execute(
+                        _dialect_insert(session)(EngineRow)
+                        .values(
+                            id=defaults.id,
+                            name=defaults.name,
+                            category=defaults.category,
+                            adapter=defaults.adapter_path,
+                            weight=defaults.weight,
+                            enabled=defaults.enabled,
+                            timeout_ms=defaults.timeout_ms,
+                            max_results=defaults.max_results,
+                            requires_key=defaults.requires_key,
+                            consecutive_failures=0,
+                        )
+                        .on_conflict_do_nothing(index_elements=["id"])
+                    )
+                    row = (0, defaults.enabled)
+
+            prev_consecutive = int((row[0] if row else 0) or 0)
+            is_enabled = bool(row[1]) if row is not None else True
+            consecutive = 0 if ok else prev_consecutive + 1
 
             await session.execute(
                 _dialect_insert(session)(EngineHealthRow)
@@ -550,17 +576,26 @@ class DbEngineStore:
                     },
                 )
             )
-            if consecutive >= settings.engine_auto_disable_threshold and row is not None and row[1]:
+            if consecutive >= settings.engine_auto_disable_threshold and is_enabled:
                 await session.execute(
                     update(EngineRow)
                     .where(EngineRow.id == engine_id)
                     .values(
                         enabled=False,
                         disabled_reason=f"auto: {consecutive} consecutive failures",
+                        consecutive_failures=consecutive,
                     )
                 )
+                state_changed = True
                 logger.warning("engine_auto_disabled", engine=engine_id, failures=consecutive)
+            elif consecutive != prev_consecutive:
+                await session.execute(
+                    update(EngineRow)
+                    .where(EngineRow.id == engine_id)
+                    .values(consecutive_failures=consecutive)
+                )
             await session.commit()
+        return state_changed
 
     async def _load_health(self):
         async with get_sessionmaker()() as session:

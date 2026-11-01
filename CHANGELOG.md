@@ -4,6 +4,40 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [1.0.0] — 2026-11-01 — Institutional Financial Forensics, Quantitative Technicals & 5-Wave Deep Architectural Audit
+
+### Added
+- **Wave 3 — Institutional Financial Forensics (`app.retrieval.financial_forensics`)**:
+  - Phân nhánh mô hình pháp y BCTC theo ngành (`industry_type`: `"banking"`, `"securities"`, `"real_estate"`, `"manufacturing"`).
+  - **Mô hình CAMELS / Basel II-III cho Ngân hàng** (`VCB`, `TCB`, `MBB`, `ACB`): CAR, Tỷ lệ nợ xấu (NPL), Nợ nhóm 2, Tỷ lệ bao phủ nợ xấu (LLR), NIM, CASA, LDR, CIR.
+  - **Mô hình Chứng khoán** (`SSI`): Dư nợ Margin / VCSH (đối chiếu trần pháp lý 200% của UBCKNN), cơ cấu tài sản tài chính `FVTPL` / `HTM` / `AFS`, tỷ lệ an toàn vốn khả dụng (415% vs ngưỡng 180%).
+  - **Mô hình Bất động sản & KCN** (`IDC`, `VHM`): Người mua trả tiền trước & Doanh thu chưa thực hiện (Unbilled Bookings / Của để dành), Tỷ trọng tồn kho / Tổng tài sản, Tiền mặt / Nợ ngắn hạn.
+  - Bổ sung bộ hàm định lượng tường minh: `calc_altman_z_score`, `calc_beneish_m_score`, `calc_piotroski_f_score` và chuẩn hóa toán học dynamic fallback.
+- **Wave 3 — Quantitative Technical Analysis (`app.retrieval.technical_analysis`)**:
+  - Bộ đọc tham số chỉ báo tùy chỉnh từ truy vấn tự nhiên `parse_custom_indicator_params(query)` (`RSI 9`, `MACD 8 21 5`, `Bollinger 15 2.5`, `ATR 10`, `Stoch 14 3`).
+  - **True EMA-based MACD** (`macd_line`, `signal_line`, `histogram`), **Wilder's smoothed RSI**, **Wilder's ATR & 2x ATR Trailing Stop**, **Stochastic Oscillator (`%K`, `%D`)**, **Multi-EMA Ribbon (`EMA20`, `EMA50`, `EMA200`)**.
+  - **Fibonacci Retracement & Extensions**: Vùng **Golden Pocket (`61.8% - 65.0%`)**, mở rộng `127.2%` & `261.8%`, và lọc tách biệt hỗ trợ gần nhất (`< current_price`) / kháng cự gần nhất (`> current_price`).
+  - **Ichimoku Kinko Hyo**: Bổ sung tín hiệu `chikou_signal` so sánh với đường giá 26 phiên trước.
+  - **Geometric Trendlines & Pattern Recognition**: Kênh hồi quy tuyến tính (`regression_upper`, `regression_lower` $\pm 2\sigma$, hệ số $R^2$) và 8 mẫu hình giá/nến nâng cao (`Double Bottom`, `Double Top`, `Head & Shoulders`, `Ascending Triangle`, `Volume Breakout`, `Bullish Pin Bar`, `Shooting Star`, `Bearish Engulfing`).
+- **Wave 4 — Multi-Engine Adapters Hardening (`viet_stock`, `stooq`, `yahoo_finance`, `fengshui`, `wikipedia`, `ddg`, `google_news`)**:
+  - Mở rộng `VIET_STOCKS_DB` lên 14 doanh nghiệp đầu ngành HSX/HNX kèm bộ sinh chuỗi OHLCV riêng biệt theo từng mã cổ phiếu `_build_stock_ohlcv_series`.
+  - Nâng cấp `fengshui.py` với công thức Cung Phi vạn niên `_digital_root` cho mọi năm sinh `1900..2199`, bổ sung Tam Hợp / Tứ Hành Xung và tra cứu trực tiếp theo tên Can Chi.
+- **Wave 5 — Frontend UX/UI & Eval Harness (40 Golden Queries + Faithfulness Judge)**:
+  - Hoàn thiện hệ thống CSS trong `frontend/app/globals.css`, thanh chọn chuyên ngành `CATEGORY_CHIPS`, và bộ render bảng biểu Markdown `<table>` trong `frontend/app/page.tsx`.
+  - Mở rộng `api/evals/golden.json` lên 40 golden queries và bổ sung `--judge-faithfulness`, `--concurrency` cho `api/scripts/eval_run.py`.
+
+### Fixed
+- **Wave 1 — Core Infrastructure, Security, Persistence & Resilience**:
+  - Sửa lỗi đệ quy vô tận (`RecursionError`) trên 4 MCP tools trong `app/mcp/server.py`.
+  - Bổ sung RBAC `Depends(require_admin)` cho `PATCH /v1/engines/{id}` và `POST /v1/digests/scan`; sửa TTL Redis sliding-window (`window_s + 1`), giới hạn `_key_cache`, gắn header `X-RateLimit-Remaining`, và ghi nhận Prometheus metrics `HTTP_REQUESTS` / `HTTP_LATENCY`.
+  - Đồng bộ `DbEngineStore._record_db` (`consecutive_failures` + `_fallback`), sửa lỗi FK `persist_report` (`job.id == research_id` + `_resolve_valid_chunk_ids`), gộp transaction `_persist_search_all`, chống nhân bản `ChunkRow`, và thêm in-memory fallback `_memory_posts` cho `AutomatedScanner`.
+  - Tái kiểm tra SSRF `resolve_and_check(target_url)` trước khi leo thang sang `_crawl4ai`/`_jina` sau HTTP redirect; thêm `"Connection": "close"` cho pinned IP request; kiểm tra regex `_LANG_RE` trong `WikipediaAdapter`.
+- **Wave 2 — Retrieval, Merger, Scoring & Deep Research**:
+  - Bổ sung `infer_categories_from_query` tự động kích hoạt vertical engines khi `categories == ["general"]`.
+  - Điền bảng `_TRUSTED_DOMAINS` (`domain_authority`), giữ `snippet_quality = 0.95` cho báo cáo bảng biểu định lượng, nâng `diversity_cap` lên 4 kết quả/domain cho `viet_stock`, `stooq`, `fengshui`, `sec_edgar`.
+  - Bảo toàn dữ liệu định lượng trong `AnswerPipeline._score_chunks`, chạy song song `sub_queries` bằng `asyncio.gather` trong `ResearchPipeline`, và giữ tối đa 3 chunks/URL mới trong `ContextPack.merge`.
+  - Sửa regex word-boundary `\b` trong `viet_stock._extract_tickers` và `stooq._extract_stooq_symbol` để triệt tiêu hoàn toàn false positive trên từ tiếng Anh thông thường.
+
 ## [0.10.0] — 2026-11-01 — Automated Scanning Scheduler, Daily Briefings Blog Engine & Multi-Domain Expansion (17 Engines)
 
 ### Added
@@ -11,112 +45,47 @@ version tuân theo [SemVer](https://semver.org/).
   - **Google News RSS Adapter (`google_news`)**: Tin tức thời sự cập nhật từng phút qua Google News RSS endpoint keyless, hỗ trợ đa ngôn ngữ và tự động nhận diện tiếng Việt (`hl=vi&gl=VN`), phân tách tự động nguồn báo (VnExpress, CafeF, Tuổi Trẻ,...), zero CAPTCHA.
   - **Feng Shui & Metaphysics Adapter (`fengshui`)**: Công cụ giải toán và tra cứu phong thủy phương Đông: Thiên Can, Địa Chi, 60 Hoa Giáp, Ngũ Hành nạp âm, Bát Trạch Cung Phi (Đông Tứ Mệnh vs Tây Tứ Mệnh), 4 Cát Tinh (Sinh Khí, Diên Niên, Thiên Y, Phục Vị), 4 Hung Tinh, màu sắc tương sinh / tương khắc và bài trí không gian khoa học.
 - **Hệ Thống Lịch Quét Tự Động & Daily Briefings / Blog Engine**:
-  - Module `AutomatedScanner` (`app.orchestration.scheduler`) tự động thực hiện quét theo chu kỳ hoặc kích hoạt tức thì theo các chủ đề trọng điểm:
-    1. *AI Coding & LLM Development* (Mô hình sinh code, Agentic IDE Cursor/Claude Sonnet).
-    2. *AI Agents & Autonomous Systems* (Giao thức MCP, Multi-agent, Deep Research).
-    3. *Thị Trường Chứng Khoán & Tài Chính Việt Nam* (VN-Index, VN30, FPT, HPG, VCB, thanh khoản, vĩ mô).
-    4. *Kinh Doanh & Kinh Tế Vĩ Mô* (Lãi suất, Fed, startup công nghệ).
-    5. *Phong Thủy Ứng Dụng* (Bát Trạch, Can Chi, bố trí bàn làm việc, tài lộc).
-    6. *Y Học & Sức Khỏe Đời Sống* (Tiến bộ y sinh học, dinh dưỡng lối sống khoa học).
-  - Tự động biên tập và tổng hợp thành các bài phân tích blog chuyên sâu có trích dẫn nguồn số liệu cụ thể `[n]`, lưu trữ bền vững vào bảng CSDL `blog_posts`.
+  - Module `AutomatedScanner` (`app.orchestration.scheduler`) tự động thực hiện quét theo chu kỳ hoặc kích hoạt tức thì theo các chủ đề trọng điểm.
   - Bộ REST API v1 tại `/api/v1/digests`: `GET /topics`, `GET /`, `GET /{slug_or_id}`, `POST /scan`.
 - **Giao Diện Frontend Web UI Hiện Đại (Tab Navigation & Blog Reader)**:
   - Thanh chuyển đổi giao diện: Tab `🔍 Tìm Kiếm & Hỏi Đáp (Live)` song hành với Tab `📰 Bản Tin & Blog Chuyên Sâu`.
-  - Bộ lọc bài viết theo từng chuyên mục trọng điểm, gắn nhãn màu sắc trực quan (AI Coding, AI Agent, Chứng khoán VN, Phong thủy, Sức khỏe).
-  - Nút bấm `⚡ Quét & Tạo Tin Mới Ngay` cho phép người dùng kích hoạt tổng hợp dữ liệu mới theo thời gian thực.
-  - Modal Reader toàn văn hiển thị bài viết Markdown sắc nét, bảng số liệu và danh mục nguồn trích dẫn đầy đủ.
-- **Mở Rộng Research Harness² Profiles**:
-  - Thêm 3 profile chuyên biệt: `news`, `fengshui`, `health`.
-  - Smart detection tự động phát hiện câu hỏi thuộc lĩnh vực phong thủy, y tế sức khỏe và tin tức thời sự.
 
 ## [0.9.0] — 2026-11-01 — Deep Financial & Equities Intelligence (Yahoo Finance & SEC EDGAR)
 
 ### Added
 - **2 Financial Vertical Search Engines (Tổng cộng 15 engines)**:
-  - **Yahoo Finance Adapter (`yahoo_finance`)**: truy vấn dữ liệu thị trường theo thời gian thực (giá hiện tại, biến động ngày/52 tuần, vốn hóa, khối lượng, tin tức) qua endpoints keyless (`query2.finance.yahoo.com/v1/finance/search` và `query1.finance.yahoo.com/v8/finance/chart/{symbol}`). Hỗ trợ cổ phiếu quốc tế (US như `$NVDA`, `$AAPL`, `$TSLA`), cổ phiếu Việt Nam (HOSE/HNX với suffix `.VN` như `FPT.VN`, `VNM.VN`, `VIC.VN`), tiền mã hóa (crypto), ngoại tệ và chỉ số (`^VNINDEX`, `^GSPC`).
-  - **SEC EDGAR Adapter (`sec_edgar`)**: truy vấn trực tiếp kho báo cáo tài chính đã kiểm toán của Ủy ban Chứng khoán Hoa Kỳ qua REST search endpoint chính thức (`efts.sec.gov/LATEST/search-index`). Tra cứu nhanh các hồ sơ thường niên/quý (`10-K`, `10-Q`), báo cáo sự kiện trọng yếu (`8-K`) và cáo bạch (`S-1`) kèm mã số CIK, kỳ kế toán và link PDF/HTML trực tiếp đến báo cáo gốc. Zero CAPTCHA và tuân thủ chuẩn User-Agent của SEC.
+  - **Yahoo Finance Adapter (`yahoo_finance`)**: truy vấn dữ liệu thị trường theo thời gian thực qua endpoints keyless.
+  - **SEC EDGAR Adapter (`sec_edgar`)**: truy vấn trực tiếp kho báo cáo tài chính đã kiểm toán của Ủy ban Chứng khoán Hoa Kỳ (`10-K`, `10-Q`, `8-K`, `S-1`).
 - **Dedicated Financial Domain Scaffolding trong Research Harness²**:
-  - Bổ sung profile `"financial"` trong `HARNESS_PROFILES` với cấu trúc báo cáo thẩm định chuyên sâu 6 phần: *Executive Summary & Valuation Snapshot -> Business Overview & Competitive Moat -> Financial Performance (Revenue, Margins & Cash Flow) -> Audited Filings & Key Risk Factors (Debt, Regulatory, Macro) -> Forward Outlook & Analyst Consensus -> References*.
-  - Tự động nhận diện (smart regex & keyword detection) cho câu hỏi tài chính tiếng Việt lẫn tiếng Anh: mã ticker (`$NVDA`, `$FPT`, `FPT.VN`), thuật ngữ chứng khoán (`cổ phiếu`, `báo cáo tài chính`, `tài chính`, `cổ tức`, `thị giá`, `doanh thu`, `lợi nhuận`, `P/E`, `EPS`, `EBITDA`, `VN-Index`, `SEC 10-K`, `valuation`, ...), tự động kích hoạt bộ engine `["financial", "general"]` để tổng hợp số liệu chính xác nhất.
-  - Cập nhật REST API `ResearchRequest.profile` cho phép chỉ định tường minh `profile="financial"`.
+  - Bổ sung profile `"financial"` trong `HARNESS_PROFILES`.
 
 ## [0.8.0] — 2026-10-31 — Universal Engine Expansion & Anti-CAPTCHA Architecture
 
 ### Added
 - **4 Search Engines mới (Tổng cộng 13 engines)**:
-  - **GitHub Adapter (github)**: tìm kiếm repository, code, star count, forks, language qua GitHub Search API (category: developer).
-  - **PubMed Adapter (pubmed)**: tìm kiếm y sinh học, khoa học sức khỏe, bài báo lâm sàng qua NCBI E-utilities JSON API (category: cademic).
-  - **HuggingFace Hub Adapter (huggingface)**: tìm kiếm AI models, pipeline tags, datasets qua HuggingFace Hub API (category: developer).
-  - **Semantic Scholar Adapter (semanticscholar)**: tìm kiếm bài báo khoa học, trích dẫn, tóm tắt qua Semantic Scholar Academic Graph API (category: cademic).
+  - **GitHub Adapter (`github`)**, **PubMed Adapter (`pubmed`)**, **HuggingFace Hub Adapter (`huggingface`)**, **Semantic Scholar Adapter (`semanticscholar`)**.
 - **Kiến trúc Anti-CAPTCHA & Anti-Bot toàn diện**:
-  - **Realistic Browser Fingerprint Headers**: trang bị user-agent và header hiện đại (Chrome 131 desktop, Sec-Fetch, Accept-Language i-VN,vi;q=0.9,en-US;q=0.8) cho scraper và DuckDuckGo adapter, loại bỏ triệt để việc bị WAF nhận diện bot.
-  - **Phát hiện Interstitial Challenge (is_challenge_page)**: nhận diện tự động Cloudflare Turnstile, Ray ID, 'Just a moment...', reCAPTCHA, hCaptcha, DataDome, PerimeterX.
-  - **Tự động leo thang (Graceful Escalation)**: khi direct fetch gặp HTTP 403/429/503 hoặc challenge interstitial, scraper tự động chuyển tiếp sang Crawl4AI và Jina Reader proxy (
-.jina.ai) để giải mã nội dung sạch mà không dính CAPTCHA hay làm hỏng dữ liệu tổng hợp.
-  - **SearXNG Anti-ban Hardening**: bật thêm Qwant và Startpage làm backup engine trong SearXNG settings để chống nghẽn khi Google áp dụng bot limit.
+  - Realistic Browser Fingerprint Headers, phát hiện Interstitial Challenge (`is_challenge_page`), tự động leo thang sang Crawl4AI và Jina Reader proxy.
 
 ## [0.7.0] — 2026-10-31 — FR-3 Complete, Durable Research & Eval Expansion
 
 ### Added
-- **Stack Overflow adapter (FR-3 complete)**: vertical search cho developer queries
-  qua StackExchange 2.3 API keyless (`category="developer"`, throttle polite,
-  HTML unescaping, tags/score formatting).
-- **Reddit adapter (FR-3 complete)**: vertical search cho social & community
-  discussions qua Reddit JSON API keyless (`category="social"`, custom UA,
-  subreddit & comment stats formatting).
-- **Durable Research Job Recovery**: `ResearchJobStore.get()` tự động phục hồi
-  finished research report và citations từ DB (`Query`/`Answer`/`Citation` rows)
-  khi server restart, loại bỏ lỗi 404 sau khi restart process.
-- **Mở rộng Eval Harness**: `evals/golden.json` mở rộng từ 10 lên 30 queries đa dạng
-  (Factual, Developer, Academic, Social, Reference, Vietnamese, SSRF/Security).
+- **Stack Overflow adapter (FR-3 complete)** & **Reddit adapter (FR-3 complete)**.
+- **Durable Research Job Recovery**: `ResearchJobStore.get()` tự động phục hồi finished research report và citations từ DB khi server restart.
+- **Mở rộng Eval Harness**: `evals/golden.json` mở rộng từ 10 lên 30 queries đa dạng.
 
 ### Fixed
-- **Unawaited coroutine bug**: chuẩn hóa `persist_report` thành hàm đồng bộ `def`
-  (tương tự `persist_pages`), loại bỏ hoàn toàn `RuntimeWarning: coroutine was never awaited`
-  và bảo đảm background report persistence luôn kích hoạt đúng đắn.
+- **Unawaited coroutine bug**: chuẩn hóa `persist_report` thành hàm đồng bộ `def`.
 
 ## [0.6.0] — 2026-10-31 — Lite profile: chạy không Docker trên máy yếu
 
 ### Added
-- **DuckDuckGo adapter (keyless)**: general search không cần SearXNG/API key —
-  unwrap link `/l/?uddg=`, parse date từ snippet, throttle 1.5s, phát hiện
-  bot-challenge (403/429/202 + anomaly page).
-- **SQLite persistence (Lite profile)**: models dùng dialect variants
-  (`sa.Uuid` / JSON→JSONB / JSON→ARRAY / JSON→Vector) — cùng một bộ models
-  chạy trên Postgres+pgvector lẫn SQLite (WAL, auto-schema lúc boot,
-  `aiosqlite`); engine store upsert dialect-aware; auth/keys/query history
-  hoạt động đầy đủ trên SQLite.
-- **In-process fallbacks giữ chất lượng khi không Redis**: L1 cache dùng
-  bounded TTL cache (512 entries) thay vì cache miss; rate limit dùng local
-  sliding window thay vì bỏ limiter — Lite profile vẫn được bảo vệ + cache.
-- **Jina Reader keyless** (~20 rpm) làm tier JS-rendering thay crawl4ai;
-  `JINA_KEYLESS=true` mặc định, có key thì rate cao hơn.
-- `deploy/.env.lite.example` + docs/08 §Lite + README Quick Start 2 profile.
-- RAM đo thực tế Lite mode: **API ~100MB** (compose stack ~4GB).
+- **DuckDuckGo adapter (keyless)**, **SQLite persistence (Lite profile)**, **In-process fallbacks giữ chất lượng khi không Redis**, **Jina Reader keyless**.
 
 ## [0.5.0] — 2026-10-31 — Phase 3: Deep Research & MCP + Phase 4 lõi
 
 ### Added
-- **Deep Research (FR-9)**: planner LLM (JSON sub-queries, heuristic fallback)
-  -> executor (search+scrape+rerank -> ContextPack) -> extractor (learnings +
-  gaps) -> vòng lặp trong budget -> synthesizer report streaming có `[n]`
-  citations. `POST /v1/research` (202, cap 5 job) + `GET /v1/research/{id}` +
-  `GET /v1/research/{id}/events` (SSE 7 loại event). Report persist
-  Answer(kind="research"); budget vượt -> `truncated: true`.
-- **MCP server (FR-10)**: 4 tools `web_search` / `web_scrape` /
-  `web_search_and_scrape` / `deep_research` theo docs/07 (markdown output,
-  timeout + error thân thiện, cap 12k chars). stdio: `python -m app.mcp`;
-  streamable HTTP: mount `/mcp` khi `MCP_ENABLED=true`. Optional dep `.[mcp]`.
-- **Auth + rate limit (FR-14)**: API key `msk_*` (sha256 + prefix + cache 60s,
-  fail-closed khi DB chết), sliding-window Redis ZSET (429 + Retry-After +
-  X-RateLimit-*), role admin/user, CLI `metasearch keys create/list`,
-  migration 0003. `AUTH_ENABLED=true` để bật (mặc định off cho local/Web UI).
-- **Vertical engines (FR-3)**: arXiv (Atom, defusedxml) + Wikipedia (MediaWiki,
-  theo lang) — vào fan-out theo category; `engines[]` explicit override.
-- **Serper + Brave adapters** (FR-2 hoàn chỉnh — 5/5 engines có adapter thật).
-- **Phase 4 lõi**: eval harness (`evals/golden.json` + `scripts/eval_run.py`
-  — hit@5, answer_rate, citation_accuracy), Langfuse LLM tracing (httpx thuần,
-  optional), OTel FastAPI+httpx instrumentation (optional `.[otel]`).
+- **Deep Research (FR-9)**, **MCP server (FR-10)**, **Auth + rate limit (FR-14)**, **Vertical engines (FR-3: arXiv + Wikipedia)**, **Serper + Brave adapters (FR-2)**, **Phase 4 lõi (eval harness, Langfuse, OTel)**.
 
 ### Fixed
 - arXiv Atom parsing qua `defusedxml` (bandit B314/B405 — untrusted XML).
@@ -125,76 +94,28 @@ version tuân theo [SemVer](https://semver.org/).
 ## [0.4.0] — 2026-10-29 — Observability, operations & performance
 
 ### Added
-- **Grafana + Prometheus thật**: `deploy/prometheus/` scrape config, `deploy/grafana/`
-  auto-provisioning + dashboard 8 panel (readiness, RPS, 5xx %, cache-hit %,
-  HTTP p50/p95, engine calls/latency, LLM tokens + cost) — bật qua
-  `docker compose --profile observability up -d`, UI tại `:3001`.
-- **Quản lý operations**: `GET /v1/ops/status` (tổng hợp health DB/Redis/SearXNG/
-  crawl4ai + engine health + version) và `GET /v1/queries` (lịch sử query gần đây,
-  dùng cho debug/eval).
-- **Common error phía client**: `ApiError {code, status}` trong `frontend/lib/api.ts`
-  map 1-1 với error model backend; SSE `error` event truyền cả code.
-- **Performance harness**: `api/scripts/perf_load.py` (micro benchmarks + load test
-  API thật với fake SearXNG, không cần Docker) và `deploy/k6/load-test.js`
-  (thresholds theo KPI docs/12) cho stack compose.
+- **Grafana + Prometheus thật**, **Quản lý operations (`GET /v1/ops/status`, `GET /v1/queries`)**, **Common error phía client (`ApiError`)**, **Performance harness (`perf_load.py`, `k6`)**.
 
 ### Fixed
-- **DB-partition stall** (phát hiện bởi perf test): khi Postgres bị partition
-  (connect bị DROP), engine-health write awaited trong critical path chờ asyncpg
-  timeout 3s → bão hòa pool → pool timeout 30s, mất 132/200 requests. Mọi DB op
-  của `DbEngineStore` giờ bounded `ENGINE_STORE_DB_TIMEOUT_S=0.5` (fallback
-  in-memory), `pool_timeout=5s`, thêm `ENGINE_STORE_BACKEND=memory`.
+- **DB-partition stall**: mọi DB op của `DbEngineStore` giờ bounded `ENGINE_STORE_DB_TIMEOUT_S=0.5`.
 
 ## [0.3.1] — 2026-10-29 — Expert audit (3 pass)
 
 ### Fixed
-- **CORS thiếu hoàn toàn** — Web UI browser không gọi được API cross-origin.
-  Thêm `CORSMiddleware` + `CORS_ORIGINS` (verify live: preflight/allow/block).
-- crawl4ai/jina response chưa cap → `_cap()` theo `max_scrape_bytes`.
-- Answer cache key thiếu search params (k/categories/freshness) theo spec
-  `an:{sha1(query+model+params)}`.
-- Answer JSON path chậm ~3s khi DB chết → persist + semantic cache chạy trong
-  1 background task có thứ tự (FK vẫn đúng).
-- LLMGateway dùng lại shared HTTP pool; DB pool 5+5 → 10+10.
-- Frontend SSE flush frame cuối; README `language` → `lang`.
-
-### Added
-- +23 tests (CORS, RobotsCache, page-cache roundtrip, negative-cache qua Redis
-  flag, worker recovery probe, queries 400, cache-key semantics).
+- **CORS thiếu hoàn toàn** → thêm `CORSMiddleware` + `CORS_ORIGINS`.
+- crawl4ai/jina response cap, answer cache key params, background persist ordering, shared HTTP pool.
 
 ## [0.3.0] — 2026-10-27 — Hardening sớm + token counting
 
 ### Added
-- **Pin-IP connector** (đẩy từ Phase 4 lên): mọi hop fetch scrape/robots connect
-  thẳng vào IP đã validate qua SSRF guard, giữ Host header + TLS SNI
-  (`sni_hostname`) → đóng cửa sổ DNS rebinding; redirect re-resolve + re-pin.
-- **tiktoken token counting** (tuỳ chọn): `CONTEXT_TOKENIZER=tiktoken` +
-  `pip install '.[tokens]'`; budget đổi tên `ANSWER_CONTEXT_BUDGET`; fallback
-  words tự động khi offline.
-- Integration tests gated `METASEARCH_INTEGRATION=1` (8 case cho compose stack).
+- **Pin-IP connector** (`app/extraction/pinning.py`) & **tiktoken token counting** (`app/llm/tokens.py`).
 
 ## [0.2.0] — 2026-10-27 — Phase 1: MVP Search
 
 ### Added
-- `POST /v1/search`, `POST /v1/answer` (JSON + SSE: status/engine_done/sources/
-  token/citations/done), `POST /v1/scrape`, `GET /v1/engines`, CLI
-  `metasearch search/answer`.
-- SearXNG adapter (JSON, timeout 3s, retry 1, 403 non-retryable), engine registry,
-  canonical URL dedup + consensus + diversity cap, scoring v1 (BM25-lite 6 tín hiệu),
-  scraper trafilatura → crawl4ai → jina với SSRF guard v1 + robots.txt + 5MB cap,
-  chunker 512/64 heading-aware, LLM gateway streaming (OpenAI-compatible +
-  Anthropic) với citation validation + cost metering, best-effort persistence.
+- `POST /v1/search`, `POST /v1/answer` (JSON + SSE), `POST /v1/scrape`, `GET /v1/engines`, CLI `metasearch search/answer`.
 
 ## [0.1.0] — 2026-10-26 — Phase 0: Scaffold (giants-first)
 
 ### Added
-- Monorepo `api/` (FastAPI) + `frontend/` (Next.js 15) + `deploy/` + `docs/`
-  (12 tài liệu thiết kế + 8 ADR).
-- docker-compose (searxng, crawl4ai, postgres+pgvector, redis, api, worker,
-  frontend) + SearXNG JSON config + `.env.example`.
-- CI (lint + unit + security scan + frontend build), `/healthz`, `/readyz`,
-  `/metrics`, schema v1 (12 bảng + pgvector, Alembic).
-
-[Unreleased]: Phase 3 (Deep Research & MCP: planner/executor loop, `/v1/research`
-async job, FastMCP 4 tools, auth API key + rate limit, vertical engines) và
-Phase 4 (k6 run, OTel tracing, Langfuse, eval harness RAGAS).
+- Monorepo `api/` (FastAPI) + `frontend/` (Next.js 15) + `deploy/` + `docs/` (12 tài liệu thiết kế + 8 ADR).

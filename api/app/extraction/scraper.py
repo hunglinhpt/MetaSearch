@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_NEGATIVE_CACHE_MAX = 4096
+
 
 @dataclass(slots=True)
 class PageContent:
@@ -181,11 +183,15 @@ class Scraper:
                         fetched_at=_utcnow(),
                     )
 
-        page = await self._crawl4ai(url, timeout_s)
+        # Ensure the target URL passed to service extractors passed SSRF check
+        target_url = final_url or url
+        await ssrf.resolve_and_check(target_url)
+
+        page = await self._crawl4ai(target_url, timeout_s, original_url=url)
         if page is not None and not is_challenge_page(page.markdown):
             return page
 
-        page = await self._jina(url, timeout_s)
+        page = await self._jina(target_url, timeout_s, original_url=url)
         if page is not None and not is_challenge_page(page.markdown):
             return page
 
@@ -208,12 +214,14 @@ class Scraper:
             client = self._client or get_http_client()
             stealth_headers = {
                 **pin_headers,
+                "Connection": "close",
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
                 ),
                 "Accept": (
-                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                    "image/avif,image/webp,*/*;q=0.8"
                 ),
                 "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
                 "Sec-Fetch-Dest": "document",
@@ -245,7 +253,9 @@ class Scraper:
 
         raise RuntimeError(f"too many redirects fetching {url}")
 
-    async def _crawl4ai(self, url: str, timeout_s: float) -> PageContent | None:
+    async def _crawl4ai(
+        self, url: str, timeout_s: float, *, original_url: str | None = None
+    ) -> PageContent | None:
         settings = self._settings
         headers: dict[str, str] = {}
         if settings.crawl4ai_api_token:
@@ -267,10 +277,11 @@ class Scraper:
         markdown, title = _crawl4ai_markdown(payload)
         if not markdown:
             return None
+        req_url = original_url or url
         return PageContent(
-            url=url,
+            url=req_url,
             final_url=str(payload.get("url") or url),
-            title=title or url,
+            title=title or req_url,
             markdown=self._cap(markdown),
             extractor_used="crawl4ai",
             fetched_at=_utcnow(),
@@ -281,7 +292,9 @@ class Scraper:
         the direct fetch enforces the same limit while streaming."""
         return text[: self._settings.max_scrape_bytes]
 
-    async def _jina(self, url: str, timeout_s: float) -> PageContent | None:
+    async def _jina(
+        self, url: str, timeout_s: float, *, original_url: str | None = None
+    ) -> PageContent | None:
         settings = self._settings
         # Keyless r.jina.ai (~20 rpm) keeps the Lite profile functional without
         # crawl4ai; an API key simply raises the rate ceiling.
@@ -309,10 +322,11 @@ class Scraper:
             if line.startswith("Title:"):
                 title = line[len("Title:") :].strip()
                 break
+        req_url = original_url or url
         return PageContent(
-            url=url,
+            url=req_url,
             final_url=url,
-            title=title or url,
+            title=title or req_url,
             markdown=self._cap(text),
             extractor_used="jina",
             fetched_at=_utcnow(),
@@ -336,8 +350,19 @@ class Scraper:
     async def _mark_failed(self, url: str) -> None:
         from app.cache import negative_cache_key
 
+        now = time.monotonic()
         async with self._lock:
-            self._negative[url] = time.monotonic()
+            if len(self._negative) >= _NEGATIVE_CACHE_MAX:
+                expired = [
+                    k
+                    for k, ts in self._negative.items()
+                    if now - ts > self._settings.negative_cache_ttl_s
+                ]
+                for k in expired:
+                    self._negative.pop(k, None)
+                if len(self._negative) >= _NEGATIVE_CACHE_MAX:
+                    self._negative.pop(next(iter(self._negative)), None)
+            self._negative[url] = now
         if self._cache is not None:
             await self._cache.set_flag(
                 negative_cache_key(url), ttl_s=int(self._settings.negative_cache_ttl_s)

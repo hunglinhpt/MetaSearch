@@ -18,6 +18,7 @@ from app.retrieval.models import RawResult
 DEFAULT_BASE_URL = "https://{lang}.wikipedia.org/w/api.php"
 _TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
+_LANG_RE = re.compile(r"^[a-z]{2,12}$")
 
 
 def _strip_html(text: str) -> str:
@@ -52,7 +53,8 @@ class WikipediaAdapter:
         max_results: int = 15,
         timeout_s: float = 3.0,
     ) -> list[RawResult]:
-        language = (lang or "en").split("-")[0].lower()
+        raw_lang = (lang or "en").split("-")[0].lower().strip()
+        language = raw_lang if _LANG_RE.match(raw_lang) else "en"
         params: dict[str, str] = {
             "action": "query",
             "list": "search",

@@ -17,6 +17,11 @@ import httpx
 
 from app.retrieval.adapters.base import AdapterError
 from app.retrieval.models import RawResult
+from app.retrieval.technical_analysis import (
+    calc_fibonacci_retracement,
+    calc_ichimoku_cloud,
+    calc_wilder_rsi,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,22 +42,15 @@ def _calc_sma(prices: list[float], period: int) -> float | None:
 
 
 def _calc_rsi(prices: list[float], period: int = 14) -> float | None:
-    if len(prices) < period + 1 or period <= 0:
-        return None
-    deltas = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
-    window_deltas = deltas[-period:]
-    gains = [d for d in window_deltas if d > 0]
-    losses = [-d for d in window_deltas if d < 0]
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
-    if avg_loss == 0.0:
-        return 100.0 if avg_gain > 0 else 50.0
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
+    return calc_wilder_rsi(prices, period)
 
 
 def _calc_technical_summary(
-    closes: list[float], volumes: list[float], current_price: float | None
+    closes: list[float],
+    volumes: list[float],
+    current_price: float | None,
+    highs: list[float] | None = None,
+    lows: list[float] | None = None,
 ) -> str:
     valid_closes = [float(c) for c in closes if c is not None and isinstance(c, (int, float))]
     valid_vols = [float(v) for v in volumes if v is not None and isinstance(v, (int, float))]
@@ -80,6 +78,17 @@ def _calc_technical_summary(
             parts.append("Trend: Bearish ↓")
         else:
             parts.append("Trend: Neutral/Consolidating")
+
+    v_h = [float(h) for h in (highs or []) if h is not None and isinstance(h, (int, float))]
+    v_l = [float(lv) for lv in (lows or []) if lv is not None and isinstance(lv, (int, float))]
+    if v_h and v_l and current_price is not None:
+        fibo = calc_fibonacci_retracement(v_h, v_l, float(current_price))
+        ichi = calc_ichimoku_cloud(v_h, v_l, valid_closes)
+        parts.append(
+            f"Fibo Sup/Res: {fibo.nearest_support:,.2f}/{fibo.nearest_resistance:,.2f} "
+            f"(Golden Pocket {fibo.golden_pocket_range})"
+        )
+        parts.append(f"Ichimoku: {ichi.tk_cross}")
 
     if len(valid_vols) >= 20 and valid_vols[-1] > 0:
         avg_vol20 = sum(valid_vols[-20:]) / 20
@@ -183,8 +192,12 @@ class YahooFinanceAdapter:
                             q_item = quote_list[0] if quote_list else {}
                             closes = q_item.get("close") or []
                             vols = q_item.get("volume") or []
+                            highs = q_item.get("high") or []
+                            lows = q_item.get("low") or []
                             cur_price = meta.get("regularMarketPrice")
-                            tech_str = _calc_technical_summary(closes, vols, cur_price)
+                            tech_str = _calc_technical_summary(
+                                closes, vols, cur_price, highs=highs, lows=lows
+                            )
                             if tech_str:
                                 price_tech[top_sym] = tech_str
             except Exception as exc:

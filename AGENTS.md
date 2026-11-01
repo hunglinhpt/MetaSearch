@@ -13,18 +13,19 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-10-31)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-01 — v1.0.0 Institutional Release)
 
+- ✅ **Institutional Release (v1.0.0)**: Hoàn tất rà soát 5-Wave Deep Audit (SA, BA/PO, QA/Security/Perf), nâng cấp pháp y BCTC chuyên sâu theo đặc thù ngành (CAMELS Ngân hàng, Margin/FVTPL Chứng khoán, Người mua trả tiền trước BĐS/KCN, Altman Z, Beneish M, Piotroski F), chỉ báo kỹ thuật định lượng (True EMA MACD, Wilder's RSI/ATR, Stochastic, EMA Ribbon, Fibonacci Golden Pocket & Extensions, Ichimoku Chikou, Linear Regression Channel $\pm 2\sigma$, 8 Chart Patterns, Custom Indicator Query Parser), 19 Search Engines, 40 Golden Evals (`--judge-faithfulness`), **333 unit tests pass**, 0 ruff/bandit issues, Next.js build sạch.
 - ✅ **Lite profile (v0.6.0)**: chạy KHÔNG Docker — DuckDuckGo keyless thay
   SearXNG, SQLite thay Postgres (dialect variants), Jina keyless thay crawl4ai,
   cache + rate limit in-process fallback khi không Redis. API ~100MB RAM.
   Quick start: `deploy/.env.lite.example`; docs/08 §Lite. Docker vẫn là full
   profile (SearXNG consensus, crawl4ai, pgvector) — cùng một bộ code.
-- ✅ **Phase 0-3 + lõi Phase 4 hoàn tất** (v0.5.0 — xem [CHANGELOG.md](CHANGELOG.md)):
-  toàn bộ FR-1..FR-16 trừ vài mục nhỏ; Deep Research (planner/executor/synthesizer
-  + async job + SSE), MCP server 4 tools (stdio + HTTP), auth API key + sliding-window
-  rate limit, vertical engines (arXiv/Wikipedia), 5/5 key-engines có adapter,
-  eval harness (hit@5/citation accuracy), Langfuse + OTel optional.
+- ✅ **Phase 0-4 + Phase 5 hoàn tất** (v1.0.0 — xem [CHANGELOG.md](CHANGELOG.md)):
+  toàn bộ FR-1..FR-16 hoàn chỉnh; Deep Research (planner/executor/synthesizer
+  + async job + SSE + durable DB recovery), MCP server 4 tools (stdio + HTTP), auth API key + RBAC admin + sliding-window
+  rate limit, 14 vertical engines (19 engines tổng cộng),
+  eval harness (40 queries, hit@5/citation accuracy/faithfulness judge), Langfuse + OTel optional.
 - ⏭️ **Còn lại (cần Docker)**: chạy k6 trên compose, integration tests thật,
   backup job + runbook vận hành.
 - ⏭️ Ý tưởng sau v0.5: RAGAS LLM-judge vào eval harness, Generative UI cho

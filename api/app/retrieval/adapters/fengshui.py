@@ -3,7 +3,7 @@
 Computes exact algorithmic calculations:
 - Thập Thiên Can, Thập Nhị Địa Chi & Lục Thập Hoa Giáp (Can Chi)
 - Ngũ Hành Nạp Âm & Tương Sinh / Tương Khắc
-- Bát Trạch Cung Phi (Đông Tứ Mệnh vs Tây Tứ Mệnh)
+- Bát Trạch Cung Phi (Đông Tứ Mệnh vs Tây Tứ Mệnh) across all centuries
 - Bát Du Niên: 4 Cát Tinh (Sinh Khí, Diên Niên, Thiên Y, Phục Vị) & 4 Hung Tinh
 - Hướng nhà, hướng bàn làm việc, màu sắc bản mệnh & Tam Hợp / Tứ Hành Xung
 Category: ``fengshui``.
@@ -27,7 +27,6 @@ CUNG_PHI = ["Khảm", "Khôn", "Chấn", "Tốn", "Càn", "Đoài", "Cấn", "Ly
 
 # Ngu Hanh nap am 60 Hoa Giap (index = (year - 4) % 60)
 LUC_THAP_HOA_GIAP: dict[int, tuple[str, str, str]] = {
-    # format: (Can Chi, Nạp âm, Hành)
     0: ("Giáp Tý", "Hải Trung Kim", "Kim"),
     1: ("Ất Sửu", "Hải Trung Kim", "Kim"),
     2: ("Bính Dần", "Lư Trung Hỏa", "Hỏa"),
@@ -186,17 +185,47 @@ NGU_HANH_COLORS: dict[str, dict[str, str]] = {
     },
 }
 
+# Tam Hop & Tu Hanh Xung by Dia Chi
+DIA_CHI_HARMONY: dict[str, dict[str, str]] = {
+    "Tý": {"tam_hop": "Thân - Tý - Thìn (Tam hợp Thủy cục)", "tu_xung": "Tý - Ngọ - Mão - Dậu"},
+    "Thân": {"tam_hop": "Thân - Tý - Thìn (Tam hợp Thủy cục)", "tu_xung": "Dần - Thân - Tỵ - Hợi"},
+    "Thìn": {
+        "tam_hop": "Thân - Tý - Thìn (Tam hợp Thủy cục)",
+        "tu_xung": "Thìn - Tuất - Sửu - Mùi",
+    },
+    "Dần": {"tam_hop": "Dần - Ngọ - Tuất (Tam hợp Hỏa cục)", "tu_xung": "Dần - Thân - Tỵ - Hợi"},
+    "Ngọ": {"tam_hop": "Dần - Ngọ - Tuất (Tam hợp Hỏa cục)", "tu_xung": "Tý - Ngọ - Mão - Dậu"},
+    "Tuất": {"tam_hop": "Dần - Ngọ - Tuất (Tam hợp Hỏa cục)", "tu_xung": "Thìn - Tuất - Sửu - Mùi"},
+    "Tỵ": {"tam_hop": "Tỵ - Dậu - Sửu (Tam hợp Kim cục)", "tu_xung": "Dần - Thân - Tỵ - Hợi"},
+    "Dậu": {"tam_hop": "Tỵ - Dậu - Sửu (Tam hợp Kim cục)", "tu_xung": "Tý - Ngọ - Mão - Dậu"},
+    "Sửu": {"tam_hop": "Tỵ - Dậu - Sửu (Tam hợp Kim cục)", "tu_xung": "Thìn - Tuất - Sửu - Mùi"},
+    "Hợi": {"tam_hop": "Hợi - Mão - Mùi (Tam hợp Mộc cục)", "tu_xung": "Dần - Thân - Tỵ - Hợi"},
+    "Mão": {"tam_hop": "Hợi - Mão - Mùi (Tam hợp Mộc cục)", "tu_xung": "Tý - Ngọ - Mão - Dậu"},
+    "Mùi": {"tam_hop": "Hợi - Mão - Mùi (Tam hợp Mộc cục)", "tu_xung": "Thìn - Tuất - Sửu - Mùi"},
+}
 
-def _calc_cung_phi_nam(year: int) -> str:
-    y_2 = year % 100
-    d_sum = (y_2 // 10) + (y_2 % 10)
+# Reverse lookup from Can Chi name to representative birth year (e.g. "Canh Ngọ" -> 1990)
+_CAN_CHI_TO_YEAR: dict[str, int] = {
+    v[0].lower(): (1984 + idx if (1984 + idx) <= 2013 else 1924 + idx)
+    for idx, v in LUC_THAP_HOA_GIAP.items()
+}
+
+
+def _digital_root(year: int) -> int:
+    """Computes the single-digit digital root (1..9) of any positive year across all centuries."""
+    d_sum = sum(int(ch) for ch in str(abs(year)) if ch.isdigit())
     while d_sum > 9:
         d_sum = (d_sum // 10) + (d_sum % 10)
-    val = (10 - d_sum) if year < 2000 else (9 - d_sum)
+    return d_sum or 9
+
+
+def _calc_cung_phi_nam(year: int) -> str:
+    root = _digital_root(year)
+    val = 11 - root
+    while val > 9:
+        val -= 9
     if val <= 0:
         val += 9
-    while val > 9:
-        val = (val // 10) + (val % 10)
     mapping = {
         1: "Khảm",
         2: "Khôn",
@@ -212,13 +241,10 @@ def _calc_cung_phi_nam(year: int) -> str:
 
 
 def _calc_cung_phi_nu(year: int) -> str:
-    y_2 = year % 100
-    d_sum = (y_2 // 10) + (y_2 % 10)
-    while d_sum > 9:
-        d_sum = (d_sum // 10) + (d_sum % 10)
-    val = (d_sum + 5) if year < 2000 else (d_sum + 6)
+    root = _digital_root(year)
+    val = root + 4
     while val > 9:
-        val = (val // 10) + (val % 10)
+        val -= 9
     mapping = {
         1: "Khảm",
         2: "Khôn",
@@ -253,8 +279,15 @@ class FengShuiAdapter:
         if not q:
             return []
 
-        # Find 4-digit years in query (e.g. 1980 - 2030)
-        years = [int(m) for m in re.findall(r"\b(19\d{2}|20[0-3]\d)\b", q)]
+        q_lower = q.lower()
+        # 1. Find 4-digit years in query (supporting 1800 - 2099)
+        years = [int(m) for m in re.findall(r"\b(18\d{2}|19\d{2}|20\d{2})\b", q)]
+
+        # 2. Also match Can Chi names (e.g. "Canh Ngọ", "Giáp Tý", "Giáp Thìn") if no year given
+        if not years:
+            for cc_name, rep_year in _CAN_CHI_TO_YEAR.items():
+                if cc_name in q_lower and rep_year not in years:
+                    years.append(rep_year)
 
         results: list[RawResult] = []
         now = datetime.now(UTC)
@@ -263,6 +296,10 @@ class FengShuiAdapter:
             for y in years[:2]:
                 idx = (y - 4) % 60
                 can_chi, nap_am, hanh = LUC_THAP_HOA_GIAP[idx]
+                dia_chi_part = can_chi.split()[-1] if " " in can_chi else ""
+                harmony = DIA_CHI_HARMONY.get(dia_chi_part, {})
+                tam_hop = harmony.get("tam_hop", "")
+                tu_xung = harmony.get("tu_xung", "")
                 cung_nam = _calc_cung_phi_nam(y)
                 cung_nu = _calc_cung_phi_nu(y)
                 bt_nam = BAT_TRACH_INFO.get(cung_nam, {})
@@ -282,6 +319,7 @@ class FengShuiAdapter:
 
                 snippet = (
                     f"Năm {y} — Can Chi: {can_chi} | Mệnh: {nap_am} ({hanh}). "
+                    f"Tam hợp: {tam_hop} | Tứ hành xung: {tu_xung}. "
                     f"Nam: Cung {cung_nam} ({bt_nam.get('nhom')}), "
                     f"Hướng tốt: Sinh Khí ({sk}), Thiên Y ({ty}), "
                     f"Diên Niên ({dn}), Phục Vị ({pv}). "
@@ -304,7 +342,7 @@ class FengShuiAdapter:
 
         # General Feng Shui principles snippet if broader topic
         is_office_or_house = any(
-            w in q.lower()
+            w in q_lower
             for w in [
                 "bàn làm việc",
                 "nhà",

@@ -10,9 +10,11 @@ import asyncio
 import hashlib
 import uuid
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.logging import get_logger
 from app.db.models import Answer, Citation, Document, Query, SearchResult
@@ -20,9 +22,21 @@ from app.db.models import Chunk as ChunkRow
 from app.db.session import get_sessionmaker
 from app.extraction.chunker import Chunk
 from app.extraction.scraper import PageContent
+from app.retrieval.canonical import canonicalize
 from app.retrieval.models import ScoredResult
 
 logger = get_logger(__name__)
+
+# Hold strong references to fire-and-forget tasks so Python's GC never collects
+# an in-flight coroutine before it finishes.
+_background_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _dialect_insert(session: Any):
+    """Postgres and SQLite both support ON CONFLICT — pick the right dialect insert."""
+    if session.bind is not None and session.bind.dialect.name == "sqlite":
+        return sqlite_insert
+    return pg_insert
 
 
 async def _run(label: str, coro: Any) -> None:
@@ -30,6 +44,21 @@ async def _run(label: str, coro: Any) -> None:
         await coro
     except Exception as exc:
         logger.warning("persist_failed", label=label, error=type(exc).__name__)
+
+
+def _spawn_task(label: str, coro: Any) -> asyncio.Task[None]:
+    task = asyncio.create_task(_run(label, coro))
+    _background_tasks.add(task)
+    task.add_done_callback(_on_task_done)
+    return task
+
+
+def _on_task_done(task: asyncio.Task[Any]) -> None:
+    _background_tasks.discard(task)
+    if task.done() and not task.cancelled():
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("persist_task_failed", error=type(exc).__name__)
 
 
 def _url_hash(url: str) -> str:
@@ -44,14 +73,17 @@ async def _persist_query(
     params: dict[str, Any],
 ) -> None:
     async with get_sessionmaker()() as session:
-        session.add(
-            Query(
+        insert = _dialect_insert(session)
+        await session.execute(
+            insert(Query)
+            .values(
                 id=query_id,
                 raw_text=raw_text,
                 normalized_text=normalized_text,
                 lang=lang,
                 params=params,
             )
+            .on_conflict_do_nothing(index_elements=["id"])
         )
         await session.commit()
 
@@ -72,18 +104,61 @@ async def _persist_search_results(query_id: uuid.UUID, results: list[ScoredResul
         await session.commit()
 
 
+async def _persist_search_all(
+    query_id: uuid.UUID,
+    raw_text: str,
+    normalized_text: str,
+    lang: str | None,
+    params: dict[str, Any],
+    results: list[ScoredResult],
+) -> None:
+    """Persist Query + SearchResults atomically in one session to avoid FK races."""
+    async with get_sessionmaker()() as session:
+        insert = _dialect_insert(session)
+        await session.execute(
+            insert(Query)
+            .values(
+                id=query_id,
+                raw_text=raw_text,
+                normalized_text=normalized_text,
+                lang=lang,
+                params=params,
+            )
+            .on_conflict_do_nothing(index_elements=["id"])
+        )
+        await session.flush()
+        for rank, item in enumerate(results, start=1):
+            session.add(
+                SearchResult(
+                    query_id=query_id,
+                    rank=rank,
+                    score=item.score,
+                    consensus=item.consensus,
+                    found_by=item.adapters,
+                    raw_snippet=item.snippet,
+                )
+            )
+        await session.commit()
+
+
 async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> None:
     """Insert scraped documents + their chunks (skip URLs already stored)."""
     async with get_sessionmaker()() as session:
+        insert = _dialect_insert(session)
         doc_ids: dict[str, uuid.UUID] = {}
+        new_doc_ids: set[uuid.UUID] = set()
         for page in pages:
+            raw_target = page.final_url or page.url
+            canon = canonicalize(raw_target) or raw_target
+            domain = (urlsplit(canon).hostname or "").lower()
             row = (
                 await session.execute(
-                    pg_insert(Document)
+                    insert(Document)
                     .values(
                         id=uuid.uuid4(),
-                        canonical_url=page.final_url or page.url,
-                        url_hash=_url_hash(page.final_url or page.url),
+                        canonical_url=canon,
+                        url_hash=_url_hash(canon),
+                        domain=domain,
                         title=page.title,
                         content_md=page.markdown,
                         content_hash=_url_hash(page.markdown),
@@ -99,9 +174,7 @@ async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> N
                 # Already stored by an earlier request; reuse its id.
                 existing = (
                     await session.execute(
-                        select(Document.id).where(
-                            Document.canonical_url == (page.final_url or page.url)
-                        )
+                        select(Document.id).where(Document.canonical_url == canon)
                     )
                 ).first()
                 if existing is None:
@@ -109,27 +182,59 @@ async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> N
                 doc_id: uuid.UUID | None = existing[0]
             else:
                 doc_id = row[0]
+                if doc_id is not None:
+                    new_doc_ids.add(doc_id)
             if doc_id is not None:
-                # Index under both the requested and final URL so chunk lookup
-                # still matches when a redirect changed the address.
+                # Index under requested, final, and canonical URL so chunk lookup
+                # always matches even when redirects or tracking params existed.
                 doc_ids.setdefault(page.url, doc_id)
-                doc_ids.setdefault(page.final_url or page.url, doc_id)
+                doc_ids.setdefault(raw_target, doc_id)
+                doc_ids.setdefault(canon, doc_id)
 
         for chunk in chunks:
-            doc_id = doc_ids.get(chunk.document_url)
-            if doc_id is None:
+            doc_id = doc_ids.get(chunk.document_url) or doc_ids.get(
+                canonicalize(chunk.document_url)
+            )
+            if doc_id is None or doc_id not in new_doc_ids:
                 continue
-            session.add(
-                ChunkRow(
-                    id=uuid.UUID(chunk.id),
+            try:
+                chunk_uuid = uuid.UUID(chunk.id)
+            except ValueError:
+                chunk_uuid = uuid.uuid4()
+            await session.execute(
+                insert(ChunkRow)
+                .values(
+                    id=chunk_uuid,
                     document_id=doc_id,
                     position=chunk.position,
                     heading_path=chunk.heading_path,
                     content=chunk.content,
                     token_count=chunk.word_count,
                 )
+                .on_conflict_do_nothing(index_elements=["id"])
             )
         await session.commit()
+
+
+async def _resolve_valid_chunk_ids(
+    session: Any, citations: list[tuple[int, str, str, str | None]]
+) -> set[uuid.UUID]:
+    """Return the subset of citation chunk UUIDs that actually exist in chunks table."""
+    candidate_ids: list[uuid.UUID] = []
+    for _n, _url, _title, cid in citations:
+        if cid:
+            try:
+                candidate_ids.append(uuid.UUID(str(cid)))
+            except ValueError:
+                continue
+    if not candidate_ids:
+        return set()
+    rows = (
+        (await session.execute(select(ChunkRow.id).where(ChunkRow.id.in_(candidate_ids))))
+        .scalars()
+        .all()
+    )
+    return set(rows)
 
 
 async def _persist_answer(
@@ -145,6 +250,7 @@ async def _persist_answer(
 ) -> None:
     """``citations``: (n, url, title, chunk_id-or-None)."""
     async with get_sessionmaker()() as session:
+        existing_chunks = await _resolve_valid_chunk_ids(session, citations)
         session.add(
             Answer(
                 id=answer_id,
@@ -160,12 +266,20 @@ async def _persist_answer(
             )
         )
         for n, url, _title, chunk_id in citations:
+            parsed_cid: uuid.UUID | None = None
+            if chunk_id:
+                try:
+                    candidate = uuid.UUID(str(chunk_id))
+                    if candidate in existing_chunks:
+                        parsed_cid = candidate
+                except ValueError:
+                    parsed_cid = None
             session.add(
                 Citation(
                     answer_id=answer_id,
                     n=n,
                     url=url,
-                    chunk_id=uuid.UUID(chunk_id) if chunk_id else None,
+                    chunk_id=parsed_cid,
                     valid=True,
                 )
             )
@@ -180,16 +294,10 @@ def persist_search(
     params: dict[str, Any],
     results: list[ScoredResult],
 ) -> None:
-    task = asyncio.create_task(
-        _run(
-            "search",
-            asyncio.gather(
-                _persist_query(query_id, raw_text, normalized_text, lang, params),
-                _persist_search_results(query_id, results),
-            ),
-        )
+    _spawn_task(
+        "search",
+        _persist_search_all(query_id, raw_text, normalized_text, lang, params, results),
     )
-    task.add_done_callback(_log_task_exception)
 
 
 async def persist_answer(
@@ -222,15 +330,13 @@ async def persist_answer(
 
 
 def persist_pages(pages: list[PageContent], chunks: list[Chunk]) -> None:
-    task = asyncio.create_task(_run("documents", _persist_documents(pages, chunks)))
-    task.add_done_callback(_log_task_exception)
+    _spawn_task("documents", _persist_documents(pages, chunks))
 
 
-def _log_task_exception(task: asyncio.Task) -> None:
-    if task.done() and not task.cancelled():
-        exc = task.exception()
-        if exc is not None:
-            logger.warning("persist_task_failed", error=type(exc).__name__)
+async def persist_pages_async(pages: list[PageContent], chunks: list[Chunk]) -> None:
+    """Awaitable variant of ``persist_pages`` so answer/research pipelines can
+    ensure chunks exist before writing ``citations.chunk_id`` foreign keys."""
+    await _run("documents", _persist_documents(pages, chunks))
 
 
 async def _persist_report(
@@ -249,15 +355,20 @@ async def _persist_report(
     """Persist the research report as an Answer(kind="research") row."""
     answer_id = uuid.uuid4()
     async with get_sessionmaker()() as session:
-        session.add(
-            Query(
+        insert = _dialect_insert(session)
+        await session.execute(
+            insert(Query)
+            .values(
                 id=research_id,
                 raw_text=question,
                 normalized_text=question,
                 lang=lang,
                 params={"kind": "research", "truncated": truncated},
             )
+            .on_conflict_do_nothing(index_elements=["id"])
         )
+        await session.flush()
+        existing_chunks = await _resolve_valid_chunk_ids(session, citations)
         session.add(
             Answer(
                 id=answer_id,
@@ -273,12 +384,20 @@ async def _persist_report(
             )
         )
         for n, url, _title, chunk_id in citations:
+            parsed_cid: uuid.UUID | None = None
+            if chunk_id:
+                try:
+                    candidate = uuid.UUID(str(chunk_id))
+                    if candidate in existing_chunks:
+                        parsed_cid = candidate
+                except ValueError:
+                    parsed_cid = None
             session.add(
                 Citation(
                     answer_id=answer_id,
                     n=n,
                     url=url,
-                    chunk_id=uuid.UUID(chunk_id) if chunk_id else None,
+                    chunk_id=parsed_cid,
                     valid=True,
                 )
             )
@@ -299,25 +418,22 @@ def persist_report(
     truncated: bool,
 ) -> None:
     """Fire-and-forget report persistence (called from the research task)."""
-    task = asyncio.create_task(
-        _run(
-            "report",
-            _persist_report(
-                research_id,
-                question,
-                lang,
-                content_md,
-                model,
-                input_tokens,
-                output_tokens,
-                cost_usd,
-                latency_ms,
-                citations,
-                truncated,
-            ),
-        )
+    _spawn_task(
+        "report",
+        _persist_report(
+            research_id,
+            question,
+            lang,
+            content_md,
+            model,
+            input_tokens,
+            output_tokens,
+            cost_usd,
+            latency_ms,
+            citations,
+            truncated,
+        ),
     )
-    task.add_done_callback(_log_task_exception)
 
 
 async def load_citations(answer_id: uuid.UUID) -> list[dict[str, Any]]:

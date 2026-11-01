@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.mcp import client as mcp_client
 from app.mcp.client import (
     MCPClientError,
 )
@@ -42,7 +43,7 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
         Use when the agent needs a ranked list of links/snippets. For deep
         content prefer web_search_and_scrape; for reports use deep_research.
         """
-        return await web_search(
+        return await mcp_client.web_search(
             query,
             lang=lang,
             k=k,
@@ -55,7 +56,7 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
     async def web_scrape(urls: list[str], max_chars: int = 8000) -> str:
         """Fetch page content as clean markdown (SSRF-guarded, JS-rendered
         fallback). Use when the agent already has URLs to read."""
-        return await web_scrape(urls, max_chars=max_chars)
+        return await mcp_client.web_scrape(urls, max_chars=max_chars)
 
     @mcp.tool()
     async def web_search_and_scrape(
@@ -67,7 +68,7 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
     ) -> str:
         """Search then scrape the top results in one call — the primary tool
         for grounding an answer in real page content."""
-        return await web_search_and_scrape(
+        return await mcp_client.web_search_and_scrape(
             query,
             lang=lang,
             k=k,
@@ -81,7 +82,9 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
     ) -> dict[str, Any]:
         """Multi-iteration research report (30-180s). Returns a research_id to
         poll via GET /v1/research/{id} (or stream /events for progress)."""
-        raw = await deep_research(query, breadth=breadth, depth=depth, max_time_s=max_time_s)
+        raw = await mcp_client.deep_research(
+            query, breadth=breadth, depth=depth, max_time_s=max_time_s
+        )
         return _loads(raw)
 
     return mcp

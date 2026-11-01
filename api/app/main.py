@@ -43,12 +43,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        await dispose_engine()
-        await dispose_redis()
         if settings.scheduler_enabled and not settings.is_test:
             from app.api.deps import get_scanner
 
             get_scanner().stop_background_loop()
+        await dispose_engine()
+        await dispose_redis()
         await dispose_http_client()
         logger.info("service_stopped")
 
@@ -80,7 +80,12 @@ def create_app() -> FastAPI:
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["x-request-id"],
+        expose_headers=[
+            "x-request-id",
+            "x-ratelimit-limit",
+            "x-ratelimit-remaining",
+            "retry-after",
+        ],
     )
     register_exception_handlers(app)
     app.include_router(ops.router)

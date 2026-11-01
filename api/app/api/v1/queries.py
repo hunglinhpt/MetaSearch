@@ -88,39 +88,53 @@ async def get_query(query_id: str) -> dict[str, Any]:
     except ValueError as exc:
         raise MetaSearchError(ErrorCode.INVALID_REQUEST, "query_id must be a UUID") from exc
 
-    async with deps.get_session_factory()() as session:
-        query = (await session.execute(select(Query).where(Query.id == qid))).scalar_one_or_none()
-        if query is None:
-            raise MetaSearchError(ErrorCode.INVALID_REQUEST, "query not found", status_code=404)
-        results = (
-            (
-                await session.execute(
-                    select(SearchResult)
-                    .where(SearchResult.query_id == qid)
-                    .order_by(SearchResult.rank)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        answers = (
-            (await session.execute(select(Answer).where(Answer.query_id == qid))).scalars().all()
-        )
-        citations: dict[uuid.UUID, list[Citation]] = {}
-        if answers:
-            rows = (
+    try:
+        async with deps.get_session_factory()() as session:
+            query = (
+                await session.execute(select(Query).where(Query.id == qid))
+            ).scalar_one_or_none()
+            if query is None:
+                raise MetaSearchError(ErrorCode.INVALID_REQUEST, "query not found", status_code=404)
+            results = (
                 (
                     await session.execute(
-                        select(Citation)
-                        .where(Citation.answer_id.in_([a.id for a in answers]))
-                        .order_by(Citation.n)
+                        select(SearchResult)
+                        .where(SearchResult.query_id == qid)
+                        .order_by(SearchResult.rank)
                     )
                 )
                 .scalars()
                 .all()
             )
-            for row in rows:
-                citations.setdefault(row.answer_id, []).append(row)
+            answers = (
+                (await session.execute(select(Answer).where(Answer.query_id == qid)))
+                .scalars()
+                .all()
+            )
+            citations: dict[uuid.UUID, list[Citation]] = {}
+            if answers:
+                rows = (
+                    (
+                        await session.execute(
+                            select(Citation)
+                            .where(Citation.answer_id.in_([a.id for a in answers]))
+                            .order_by(Citation.n)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for row in rows:
+                    citations.setdefault(row.answer_id, []).append(row)
+    except MetaSearchError:
+        raise
+    except Exception as exc:
+        from app.core.logging import get_logger
+
+        get_logger(__name__).warning("query_get_db_unavailable", error=type(exc).__name__)
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST, "query not found (database unavailable)", status_code=404
+        ) from exc
 
     return {
         "query_id": str(query.id),

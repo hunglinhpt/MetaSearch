@@ -8,14 +8,15 @@ Design:
   enforcement is opt-in for exposed deployments; when enabled, every /v1
   request must carry ``Authorization: Bearer msk_...``.
 - Rate limit: sliding window per key over Redis (ZSET). Redis unavailable ->
-  limit skipped (log once) — availability beats strictness for the limit,
-  but authentication itself fails closed (a dead DB with auth on returns
-  401 rather than letting traffic through).
+  limit enforced via bounded in-process sliding window — availability beats
+  strictness for cross-worker sharing, while authentication itself fails closed
+  (a dead DB with auth on returns 401 rather than letting traffic through).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import secrets
 import time
@@ -78,6 +79,7 @@ async def create_key(name: str, *, role: str = "user", rate_limit_rpm: int = 60)
 _key_cache: dict[str, tuple[AuthContext | None, float]] = {}
 _key_cache_lock = asyncio.Lock()
 _CACHE_TTL_S = 60.0
+_KEY_CACHE_MAX = 2048
 
 
 async def authenticate(bearer: str | None) -> AuthContext:
@@ -122,8 +124,15 @@ async def authenticate(bearer: str | None) -> AuthContext:
 
 
 async def _cache_put(key_hash: str, ctx: AuthContext | None) -> None:
+    now = time.monotonic()
     async with _key_cache_lock:
-        _key_cache[key_hash] = (ctx, time.monotonic())
+        if len(_key_cache) >= _KEY_CACHE_MAX:
+            expired = [k for k, (_, ts) in _key_cache.items() if now - ts >= _CACHE_TTL_S]
+            for k in expired:
+                _key_cache.pop(k, None)
+            if len(_key_cache) >= _KEY_CACHE_MAX:
+                _key_cache.pop(next(iter(_key_cache)), None)
+        _key_cache[key_hash] = (ctx, now)
 
 
 def _unauthorized(message: str) -> MetaSearchError:
@@ -137,7 +146,7 @@ _local_windows: dict[str, deque[float]] = {}
 _LOCAL_WINDOW_MAX = 10_000
 
 
-def _local_rate_limit(ctx: AuthContext, *, limit: int, window_s: int) -> bool:
+def _local_rate_limit(ctx: AuthContext, *, limit: int, window_s: int) -> tuple[bool, int]:
     """In-process sliding window — Lite profile / Redis-down fallback.
 
     Per-worker only (multi-worker deployments should run Redis); bounded to
@@ -149,11 +158,12 @@ def _local_rate_limit(ctx: AuthContext, *, limit: int, window_s: int) -> bool:
     while hits and hits[0] < cutoff:
         hits.popleft()
     if len(hits) >= limit:
-        return False
+        return False, 0
     hits.append(now)
+    remaining = max(limit - len(hits), 0)
     if len(_local_windows) > _LOCAL_WINDOW_MAX:
         _local_windows.clear()
-    return True
+    return True, remaining
 
 
 async def check_rate_limit(ctx: AuthContext, *, window_s: int = 60) -> dict[str, Any]:
@@ -167,7 +177,9 @@ async def check_rate_limit(ctx: AuthContext, *, window_s: int = 60) -> dict[str,
     headers = {"X-RateLimit-Limit": str(limit)}
     client = get_redis()
     if client is None:
-        if not _local_rate_limit(ctx, limit=limit, window_s=window_s):
+        ok, remaining = _local_rate_limit(ctx, limit=limit, window_s=window_s)
+        headers["X-RateLimit-Remaining"] = str(remaining)
+        if not ok:
             headers["Retry-After"] = str(window_s)
             raise MetaSearchError(
                 ErrorCode.RATE_LIMITED,
@@ -185,7 +197,7 @@ async def check_rate_limit(ctx: AuthContext, *, window_s: int = 60) -> dict[str,
             pipe.zremrangebyscore(key, 0, now_ms - window_ms)
             pipe.zadd(key, {member: now_ms})
             pipe.zcard(key)
-            pipe.expire(key, window_s // 1000 + 1)
+            pipe.expire(key, window_s + 1)
             results = await pipe.execute()
         count = int(results[2] or 0)
         headers["X-RateLimit-Remaining"] = str(max(limit - count, 0))
@@ -205,7 +217,9 @@ async def check_rate_limit(ctx: AuthContext, *, window_s: int = 60) -> dict[str,
             logger.warning("rate_limit_redis_unavailable", error=type(exc).__name__)
             _window_warned = True
         # Redis broke mid-request: the local window keeps enforcement on.
-        if not _local_rate_limit(ctx, limit=limit, window_s=window_s):
+        ok, remaining = _local_rate_limit(ctx, limit=limit, window_s=window_s)
+        headers["X-RateLimit-Remaining"] = str(remaining)
+        if not ok:
             headers["Retry-After"] = str(window_s)
             raise MetaSearchError(
                 ErrorCode.RATE_LIMITED,
@@ -221,7 +235,24 @@ async def require_api_key(request: Request) -> AuthContext:
     settings = get_settings()
     if not settings.auth_enabled:
         return AuthContext(key_id="anonymous", name=None, role="admin", rate_limit_rpm=0)
-    bearer = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    raw_auth = request.headers.get("authorization", "").strip()
+    bearer = raw_auth[7:].strip() if raw_auth[:7].lower() == "bearer " else raw_auth
     ctx = await authenticate(bearer)
-    await check_rate_limit(ctx)
+    rl_headers = await check_rate_limit(ctx)
+    state = getattr(request, "state", None)
+    if state is not None:
+        with contextlib.suppress(Exception):
+            state.rate_limit_headers = rl_headers
+    return ctx
+
+
+async def require_admin(request: Request) -> AuthContext:
+    """FastAPI dependency: require an admin role when AUTH_ENABLED=true."""
+    ctx = await require_api_key(request)
+    if ctx.role != "admin":
+        raise MetaSearchError(
+            ErrorCode.UNAUTHORIZED,
+            "admin role required for this operation",
+            status_code=403,
+        )
     return ctx

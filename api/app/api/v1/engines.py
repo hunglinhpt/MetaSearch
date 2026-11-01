@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.api import deps
+from app.core.auth import require_admin
 from app.core.errors import ErrorCode, MetaSearchError
 
 router = APIRouter(tags=["engines"])
@@ -74,7 +75,7 @@ async def engines_health() -> list[dict[str, Any]]:
     return out
 
 
-@router.patch("/engines/{engine_id}")
+@router.patch("/engines/{engine_id}", dependencies=[Depends(require_admin)])
 async def patch_engine(engine_id: str, request: EnginePatchRequest) -> dict[str, Any]:
     store = deps.get_engine_store()
     snapshot = await store.snapshot()

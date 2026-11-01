@@ -109,35 +109,43 @@ class DuckDuckGoAdapter:
             region = f"{lang}-{lang}" if len(lang) == 2 else lang
             params["kl"] = region
         if freshness_days:
-            params["df"] = {1: "d", 7: "w", 30: "m"}.get(
-                min(freshness_days, 30),
-                freshness_days if freshness_days in ("d", "w", "m") else "y",
-            )
+            if isinstance(freshness_days, str) and freshness_days in ("d", "w", "m", "y"):
+                params["df"] = freshness_days
+            elif isinstance(freshness_days, int):
+                if freshness_days <= 1:
+                    params["df"] = "d"
+                elif freshness_days <= 7:
+                    params["df"] = "w"
+                elif freshness_days <= 31:
+                    params["df"] = "m"
+                else:
+                    params["df"] = "y"
 
         async with _lock:
-            wait = _min_interval_s - (time.monotonic() - _last_call)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            _last_call = time.monotonic()
-            try:
-                headers = {
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                    ),
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-                }
-                async with httpx.AsyncClient(
-                    follow_redirects=True,
-                    timeout=timeout_s,
-                    headers=headers,
-                ) as client:
-                    resp = await client.post(self.base_url, data=params)
-            except httpx.TimeoutException as exc:
-                raise AdapterError(f"ddg timeout after {timeout_s}s") from exc
-            except httpx.HTTPError as exc:
-                raise AdapterError(f"ddg transport error: {type(exc).__name__}") from exc
+            now_mono = time.monotonic()
+            wait = _min_interval_s - (now_mono - _last_call)
+            _last_call = now_mono + max(wait, 0.0)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        try:
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+            }
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=timeout_s,
+                headers=headers,
+            ) as client:
+                resp = await client.post(self.base_url, data=params)
+        except httpx.TimeoutException as exc:
+            raise AdapterError(f"ddg timeout after {timeout_s}s") from exc
+        except httpx.HTTPError as exc:
+            raise AdapterError(f"ddg transport error: {type(exc).__name__}") from exc
 
         if resp.status_code in (202, 403, 429):
             # 202 = DDG's soft anomaly throttle; treat like an explicit block.

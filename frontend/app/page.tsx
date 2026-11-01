@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   API_BASE_URL,
@@ -23,6 +23,17 @@ import {
 type Mode = "answer" | "raw";
 type AppTab = "search" | "blog";
 
+const CATEGORY_CHIPS = [
+  { id: "auto", label: "⚡ Tự động (Smart Routing)" },
+  { id: "financial", label: "📈 Tài chính & Chứng khoán" },
+  { id: "news", label: "📰 Tin tức & Thời sự" },
+  { id: "developer", label: "💻 Lập trình & AI" },
+  { id: "academic", label: "🔬 Học thuật & Y sinh" },
+  { id: "fengshui", label: "🧭 Phong thủy & Bát trạch" },
+  { id: "reference", label: "📚 Bách khoa" },
+  { id: "social", label: "💬 Thảo luận" },
+];
+
 const TOPIC_CHIPS = [
   { id: "all", label: "Tất cả" },
   { id: "ai_coding", label: "AI Coding & LLM", badge: "badge-ai" },
@@ -39,6 +50,7 @@ export default function HomePage() {
   // Search state
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<Mode>("answer");
+  const [selectedCategory, setSelectedCategory] = useState<string>("auto");
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
   const [engines, setEngines] = useState<EngineDone[]>([]);
@@ -64,8 +76,8 @@ export default function HomePage() {
   useEffect(() => {
     const controller = new AbortController();
     listEngines(controller.signal)
-      .then((engines) =>
-        setEngineOptions(engines.filter((e) => e.enabled && e.adapter_ready))
+      .then((items) =>
+        setEngineOptions(items.filter((e) => e.enabled && e.adapter_ready))
       )
       .catch(() => setEngineOptions([]));
     return () => controller.abort();
@@ -141,11 +153,14 @@ export default function HomePage() {
     abortRef.current = controller;
     reset();
     setBusy(true);
+    const categoriesParam =
+      selectedCategory === "auto" ? undefined : ["general", selectedCategory];
     try {
       if (mode === "raw") {
         const resp = await search(q, {
           signal: controller.signal,
           engines: selectedEngines.length ? selectedEngines : undefined,
+          categories: categoriesParam,
         });
         setHits(resp.results);
         setSearchInfo(
@@ -165,7 +180,8 @@ export default function HomePage() {
             onError: (code, message) => setError(`[${code}] ${message}`),
           },
           controller.signal,
-          selectedEngines.length ? selectedEngines : undefined
+          selectedEngines.length ? selectedEngines : undefined,
+          categoriesParam
         );
       }
     } catch (err: unknown) {
@@ -174,7 +190,7 @@ export default function HomePage() {
     } finally {
       setBusy(false);
     }
-  }, [busy, mode, query, reset, selectedEngines]);
+  }, [busy, mode, query, reset, selectedCategory, selectedEngines]);
 
   const citationByUrl = new Map(citations.map((c) => [c.n, c]));
 
@@ -183,7 +199,7 @@ export default function HomePage() {
       <header>
         <h1>MetaSearch</h1>
         <p className="tagline">
-          Hệ thống tìm kiếm tổng hợp đa tầng & Deep Research thông minh
+          Hệ thống tìm kiếm tổng hợp đa tầng, Thẩm định Pháp y BCTC & Deep Research thông minh
         </p>
 
         {/* Tab navigation */}
@@ -216,7 +232,7 @@ export default function HomePage() {
               <div className="search-row">
                 <input
                   type="text"
-                  placeholder="Nhập câu hỏi (ví dụ: $NVDA, cổ phiếu FPT, hướng nhà 1990, AI agent...)"
+                  placeholder="Nhập câu hỏi (VD: pháp y BCTC VCB, kỹ thuật FPT RSI 9, $NVDA, hướng nhà 1990...)"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   disabled={busy}
@@ -251,9 +267,28 @@ export default function HomePage() {
                 </label>
               </div>
 
+              <div className="category-bar">
+                <span className="engine-filter-label" style={{ marginRight: "0.4rem" }}>
+                  Chuyên ngành:
+                </span>
+                {CATEGORY_CHIPS.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    className={`chip chip-toggle ${selectedCategory === cat.id ? "on" : ""}`}
+                    onClick={() => setSelectedCategory(cat.id)}
+                    disabled={busy}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+
               {engineOptions.length > 0 && (
                 <div className="engine-filter">
-                  <span className="engine-filter-label">Engines (17 tổng):</span>
+                  <span className="engine-filter-label">
+                    Engines ({engineOptions.length} sẵn sàng):
+                  </span>
                   <div className="engine-chips">
                     {engineOptions.map((e) => {
                       const on = selectedEngines.includes(e.id);
@@ -264,7 +299,7 @@ export default function HomePage() {
                           className={`chip chip-toggle ${on ? "on" : ""}`}
                           onClick={() => toggleEngine(e.id)}
                           disabled={busy}
-                          title={e.name || e.id}
+                          title={`${e.name || e.id} (${e.category || "general"})`}
                         >
                           {e.id}
                         </button>
@@ -275,6 +310,16 @@ export default function HomePage() {
               )}
             </form>
           </section>
+
+          {engines.length > 0 && (
+            <div className="engines">
+              {engines.map((eng, idx) => (
+                <span key={`${eng.engine}-${idx}`} className="chip">
+                  ✓ {eng.engine}: {eng.results} hits ({eng.ms} ms)
+                </span>
+              ))}
+            </div>
+          )}
 
           {busy && (
             <div className="card status">
@@ -463,15 +508,17 @@ export default function HomePage() {
               </span>
             </div>
 
-            <div
-              style={{
-                lineHeight: 1.7,
-                whiteSpace: "pre-wrap",
-                fontSize: "0.95rem",
-              }}
-            >
-              {selectedPost.content_md}
-            </div>
+            <AnswerMarkdown
+              text={selectedPost.content_md}
+              citationByUrl={
+                new Map(
+                  (selectedPost.sources ?? []).map((s) => [
+                    s.n,
+                    { n: s.n, url: s.url, title: s.title },
+                  ])
+                )
+              }
+            />
 
             {selectedPost.sources && selectedPost.sources.length > 0 && (
               <div style={{ marginTop: "2rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>
@@ -509,7 +556,38 @@ export default function HomePage() {
   );
 }
 
-/** Render streaming markdown-lite text with [n] citation markers as links. */
+/** Render inline text with **bold** and [n] citation markers as clickable links. */
+function renderInlineTokens(
+  line: string,
+  citationByUrl: Map<number, Citation>
+): ReactNode[] {
+  const segments = line.split(/(\*\*[^*]+\*\*|\[\d{1,3}\])/g);
+  return segments.map((seg, idx) => {
+    const citeMatch = seg.match(/^\[(\d{1,3})\]$/);
+    if (citeMatch) {
+      const n = Number(citeMatch[1]);
+      const citation = citationByUrl.get(n);
+      return (
+        <a
+          key={idx}
+          className="cite"
+          href={citation?.url ?? undefined}
+          target="_blank"
+          rel="noreferrer"
+          title={citation ? `${citation.title || citation.url}` : `nguồn [${n}]`}
+        >
+          [{n}]
+        </a>
+      );
+    }
+    if (seg.startsWith("**") && seg.endsWith("**") && seg.length > 4) {
+      return <strong key={idx}>{seg.slice(2, -2)}</strong>;
+    }
+    return <span key={idx}>{seg}</span>;
+  });
+}
+
+/** Render streaming markdown with headings, tables, lists, bold, and [n] citations. */
 function AnswerMarkdown({
   text,
   citationByUrl,
@@ -517,29 +595,81 @@ function AnswerMarkdown({
   text: string;
   citationByUrl: Map<number, Citation>;
 }) {
-  const parts = text.split(/(\[\d{1,3}\])/g);
-  return (
-    <div className="answer-body">
-      {parts.map((part, i) => {
-        const match = part.match(/^\[(\d{1,3})\]$/);
-        if (!match) {
-          return <span key={i}>{part}</span>;
-        }
-        const n = Number(match[1]);
-        const citation = citationByUrl.get(n);
-        return (
-          <a
-            key={i}
-            className="cite"
-            href={citation?.url ?? undefined}
-            target="_blank"
-            rel="noreferrer"
-            title={citation ? `${citation.title || citation.url}` : `nguồn [${n}]`}
-          >
-            [{n}]
-          </a>
+  const lines = text.split("\n");
+  const blocks: ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Table block detection
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        tableLines.push(lines[i].trim());
+        i++;
+      }
+      if (tableLines.length >= 2) {
+        const parseRow = (r: string) =>
+          r
+            .slice(1, -1)
+            .split("|")
+            .map((c) => c.trim());
+        const headers = parseRow(tableLines[0]);
+        const bodyRows = tableLines
+          .slice(1)
+          .filter((r) => !/^\|[\s\-:|]+\|$/.test(r))
+          .map(parseRow);
+        blocks.push(
+          <div key={`tbl-${i}`} className="md-table-wrap">
+            <table className="md-table">
+              <thead>
+                <tr>
+                  {headers.map((h, hIdx) => (
+                    <th key={hIdx}>{renderInlineTokens(h, citationByUrl)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bodyRows.map((row, rIdx) => (
+                  <tr key={rIdx}>
+                    {row.map((cell, cIdx) => (
+                      <td key={cIdx}>{renderInlineTokens(cell, citationByUrl)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         );
-      })}
-    </div>
-  );
+        continue;
+      }
+    }
+
+    if (trimmed.startsWith("#### ")) {
+      blocks.push(
+        <h4 key={i}>{renderInlineTokens(trimmed.slice(5), citationByUrl)}</h4>
+      );
+    } else if (trimmed.startsWith("### ")) {
+      blocks.push(
+        <h3 key={i}>{renderInlineTokens(trimmed.slice(4), citationByUrl)}</h3>
+      );
+    } else if (trimmed.startsWith("## ")) {
+      blocks.push(
+        <h2 key={i}>{renderInlineTokens(trimmed.slice(3), citationByUrl)}</h2>
+      );
+    } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+      blocks.push(
+        <div key={i} style={{ paddingLeft: "0.8rem", margin: "0.2rem 0" }}>
+          • {renderInlineTokens(trimmed.slice(2), citationByUrl)}
+        </div>
+      );
+    } else if (trimmed.length > 0) {
+      blocks.push(<p key={i}>{renderInlineTokens(line, citationByUrl)}</p>);
+    }
+    i++;
+  }
+
+  return <div className="answer-body">{blocks}</div>;
 }

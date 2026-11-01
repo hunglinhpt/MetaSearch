@@ -22,8 +22,11 @@ import httpx
 from app.config import Settings
 from app.core.logging import get_logger
 from app.core.metrics import LLM_COST, LLM_TOKENS
+from app.http import get_http_client
 
 logger = get_logger(__name__)
+
+_trace_tasks: set[asyncio.Task[None]] = set()
 
 # USD per 1M tokens (input, output). Unknown models cost-estimate at 0.
 _PRICE_TABLE: dict[str, tuple[float, float]] = {
@@ -179,7 +182,7 @@ class LLMGateway:
                         usage.input_tokens += delta.usage.input_tokens
                         usage.output_tokens += delta.usage.output_tokens
                 output = "".join(text_parts)
-                await self._trace_complete(task, messages, model, output, usage)
+                self._schedule_trace_complete(task, messages, model, output, usage)
                 return output, usage
             except LLMError as exc:
                 last_error = exc
@@ -189,6 +192,17 @@ class LLMGateway:
                 await asyncio.sleep(delay)
                 delay *= 2
         raise last_error or LLMError("LLM call failed")
+
+    def _schedule_trace_complete(
+        self, task: str, messages: list[dict[str, str]], model: str, output: str, usage: Usage
+    ) -> None:
+        from app.core.llm_tracing import langfuse_enabled
+
+        if not langfuse_enabled(self._settings):
+            return
+        t = asyncio.create_task(self._trace_complete(task, messages, model, output, usage))
+        _trace_tasks.add(t)
+        t.add_done_callback(_trace_tasks.discard)
 
     async def _trace_complete(
         self, task: str, messages: list[dict[str, str]], model: str, output: str, usage: Usage
@@ -212,14 +226,14 @@ class LLMGateway:
         self, body: dict[str, Any], headers: dict[str, str]
     ) -> AsyncIterator[httpx.Response]:
         url = self._url()
-        if self._client is not None:
-            async with self._client.stream("POST", url, json=body, headers=headers) as resp:
-                yield resp
-            return
-        async with (
-            httpx.AsyncClient(timeout=self._settings.request_timeout_s) as client,
-            client.stream("POST", url, json=body, headers=headers) as resp,
-        ):
+        client = self._client or get_http_client()
+        async with client.stream(
+            "POST",
+            url,
+            json=body,
+            headers=headers,
+            timeout=self._settings.request_timeout_s,
+        ) as resp:
             yield resp
 
 

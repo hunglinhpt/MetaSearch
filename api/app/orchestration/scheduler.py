@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -360,6 +361,19 @@ class AutomatedScanner:
         self.notifier = notifier or NotificationDispatcher()
         self._background_task: asyncio.Task[None] | None = None
         self._running = False
+        self._memory_posts: deque[BlogPost] = deque(maxlen=200)
+
+    def list_memory_posts(
+        self, *, topic: str | None = None, limit: int = 10, offset: int = 0
+    ) -> list[BlogPost]:
+        items = [p for p in self._memory_posts if topic is None or p.topic == topic]
+        return items[offset : offset + limit]
+
+    def get_memory_post(self, slug_or_id: str) -> BlogPost | None:
+        for p in self._memory_posts:
+            if p.slug == slug_or_id or str(p.id) == slug_or_id:
+                return p
+        return None
 
     async def scan_topic(self, topic_id: str) -> BlogPost:
         topic = self.topics.get(topic_id)
@@ -383,6 +397,8 @@ class AutomatedScanner:
                 previous_post = res.scalars().first()
         except Exception as exc:
             logger.warning("scanner_fetch_prev_post_failed", topic=topic_id, error=str(exc))
+            mem = self.list_memory_posts(topic=topic_id, limit=1)
+            previous_post = mem[0] if mem else None
 
         # Retrieve real search results using the engine registry
         enabled_engines = await self.registry.enabled()
@@ -421,22 +437,28 @@ class AutomatedScanner:
             topic, collected_results, now, previous_post=previous_post
         )
 
-        # Persist into BlogPost table
         post_id = uuid.uuid4()
-        async with get_sessionmaker()() as session:
-            post = BlogPost(
-                id=post_id,
-                slug=slug,
-                topic=topic.id,
-                title=title,
-                summary=summary,
-                content_md=content_md,
-                tags=topic.tags,
-                sources=citations_list,
-                published_at=now,
-            )
-            session.add(post)
-            await session.commit()
+        post = BlogPost(
+            id=post_id,
+            slug=slug,
+            topic=topic.id,
+            title=title,
+            summary=summary,
+            content_md=content_md,
+            tags=topic.tags,
+            sources=citations_list,
+            published_at=now,
+            created_at=now,
+        )
+        self._memory_posts.appendleft(post)
+
+        # Best-effort persist into BlogPost table
+        try:
+            async with get_sessionmaker()() as session:
+                session.add(post)
+                await session.commit()
+        except Exception as exc:
+            logger.warning("scanner_persist_db_failed", topic=topic_id, error=type(exc).__name__)
 
         # Fire multi-channel notifications (Telegram / Webhook / Discord)
         try:

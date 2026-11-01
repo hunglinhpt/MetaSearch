@@ -11,6 +11,7 @@ stage and cached-answer replay.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import unicodedata
 import uuid
@@ -31,7 +32,7 @@ from app.cache import (
 from app.config import Settings
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
-from app.core.metrics import ENGINE_CALLS, ENGINE_LATENCY
+from app.core.metrics import CACHE_EVENTS, ENGINE_CALLS, ENGINE_LATENCY
 from app.db.base import EMBEDDING_DIM
 from app.db.models import Answer, SemanticCache
 from app.db.session import get_sessionmaker
@@ -44,6 +45,7 @@ from app.llm.prompts import build_context, build_messages
 from app.llm.tokens import make_counter
 from app.orchestration import persist
 from app.retrieval.adapters.base import SearchAdapter
+from app.retrieval.canonical import canonicalize
 from app.retrieval.merger import diversity_cap, merge
 from app.retrieval.models import EngineConfig, EngineStatus, RawResult, ScoredResult
 from app.retrieval.reranker import Reranker, RerankerUnavailable, heuristic_order
@@ -53,6 +55,121 @@ logger = get_logger(__name__)
 
 Event = tuple[str, dict]
 OnEvent = Callable[[Event], None] | None
+
+_background_tasks: set[asyncio.Task[None]] = set()
+
+_QUANT_ADAPTERS = frozenset({"viet_stock", "stooq", "yahoo_finance", "sec_edgar", "fengshui"})
+
+_VN_TICKER_RE = re.compile(
+    r"\b(fpt|hpg|vcb|vnm|ssi|mwg|vic|idc|tcb|mbb|acb|vhm|msn|gas|pnj|vnd|kbc|bid|ctg|vci)\b",
+    re.IGNORECASE,
+)
+_DOLLAR_TICKER_RE = re.compile(r"\$[a-zA-Z]{1,6}\b")
+
+
+def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
+    """Automatically infer vertical categories from unambiguous domain signals in ``query``."""
+    inferred: set[str] = set()
+    if news:
+        inferred.add("news")
+    q = query.lower()
+    if len(q) < 3:
+        return inferred
+
+    fin_terms = (
+        "cổ phiếu",
+        "chứng khoán",
+        "bctc",
+        "báo cáo tài chính",
+        "cổ tức",
+        "thị giá",
+        "vốn hóa",
+        "p/e",
+        "p/b",
+        "eps",
+        "roe",
+        "roa",
+        "ebitda",
+        "fibonacci",
+        "ichimoku",
+        "altman",
+        "piotroski",
+        "beneish",
+        "camels",
+        "nim",
+        "casa",
+        "vn-index",
+        "vnindex",
+        "hsx",
+        "hnx",
+        "hose",
+        "upcom",
+        "trao tay",
+        "cổ đông",
+        "10-k",
+        "10-q",
+        "sec edgar",
+        "yahoo finance",
+        "giá vàng",
+        "lợi suất",
+        "treasury yield",
+        "kế hoạch kinh doanh",
+        "kết quả kinh doanh",
+        "pháp y tài chính",
+    )
+    if any(t in q for t in fin_terms) or _DOLLAR_TICKER_RE.search(q) or _VN_TICKER_RE.search(q):
+        inferred.add("financial")
+
+    fengshui_terms = (
+        "phong thủy",
+        "bát trạch",
+        "cung mệnh",
+        "can chi",
+        "ngũ hành",
+        "sinh khí",
+        "tử vi",
+        "hướng nhà",
+        "tuổi làm ăn",
+        "tam hợp",
+        "tứ hành xung",
+        "mệnh kim",
+        "mệnh mộc",
+        "mệnh thủy",
+        "mệnh hỏa",
+        "mệnh thổ",
+    )
+    if any(t in q for t in fengshui_terms):
+        inferred.add("fengshui")
+
+    news_terms = ("tin tức", "thời sự", "mới nhất", "breaking news", "bản tin hôm nay")
+    if any(t in q for t in news_terms):
+        inferred.add("news")
+
+    acad_terms = (
+        "arxiv",
+        "pubmed",
+        "semanticscholar",
+        "clinical trial",
+        "nghiên cứu lâm sàng",
+        "peer-reviewed",
+    )
+    if any(t in q for t in acad_terms):
+        inferred.add("academic")
+
+    dev_terms = (
+        "stackoverflow",
+        "github repo",
+        "huggingface",
+        "traceback",
+        "stacktrace",
+        "syntaxerror",
+        "typeerror",
+        "nullpointerexception",
+    )
+    if any(t in q for t in dev_terms):
+        inferred.add("developer")
+
+    return inferred
 
 
 @dataclass(slots=True)
@@ -97,6 +214,7 @@ class SearchPipeline:
 
         cached_payload = await self._cache_lookup(query, params)
         if cached_payload is not None:
+            CACHE_EVENTS.labels(layer="l1_search", outcome="hit").inc()
             return SearchOutcome(
                 query_id=uuid.UUID(cached_payload["query_id"]),
                 results=deserialize_results(cached_payload["results"]),
@@ -109,6 +227,7 @@ class SearchPipeline:
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 cached=True,
             )
+        CACHE_EVENTS.labels(layer="l1_search", outcome="miss").inc()
 
         raws, statuses = await self._fanout(query, params, on_event)
         configs = await self.registry.configs()
@@ -174,10 +293,12 @@ class SearchPipeline:
             wanted = set(params.engines)
             candidates = [(cfg, ad) for cfg, ad in candidates if cfg.id in wanted]
         else:
-            # Vertical engines (arXiv, Wikipedia, ...) join only when the
-            # request asks for their category; general engines always run
-            # (docs/01 FR-3).
+            # Vertical engines (arXiv, Wikipedia, VietStock, Stooq, ...) join when
+            # the request asks for their category OR when the query unambiguously
+            # targets their domain while categories is left at default ["general"].
             categories = set(params.categories or [])
+            if categories == {"general"} or params.news:
+                categories |= infer_categories_from_query(query, news=params.news)
             candidates = [
                 (cfg, ad)
                 for cfg, ad in candidates
@@ -350,17 +471,17 @@ class AnswerPipeline:
             },
         )
 
-        persist.persist_pages(ok_pages, chunks)
         if self.cache is not None:
             await self._cache_store(
                 params, model, answer_id, check.text, citations_payload, sources
             )
-        # DB persist + semantic-cache write run in one background task, in this
-        # order: the semantic row references the answers row (FK), and the
-        # client must not wait on a slow/unreachable Postgres (done event is
-        # already delivered above).
+        # DB persist (pages -> answer -> semantic cache) runs in one ordered
+        # background task so FK constraints (chunks -> citations, answers -> semantic_cache)
+        # never race and the client never waits on DB latency.
         finalize = asyncio.create_task(
             self._finalize_answer(
+                pages=ok_pages,
+                chunks=chunks,
                 answer_id=answer_id,
                 query_id=outcome.query_id,
                 content_md=check.text,
@@ -371,11 +492,14 @@ class AnswerPipeline:
                 query=normalize_query(params.query),
             )
         )
+        _background_tasks.add(finalize)
         finalize.add_done_callback(_log_background)
 
     async def _finalize_answer(
         self,
         *,
+        pages: list[PageContent],
+        chunks: list[Chunk],
         answer_id: uuid.UUID,
         query_id: uuid.UUID,
         content_md: str,
@@ -385,6 +509,8 @@ class AnswerPipeline:
         citations: list[tuple[int, str, str, str | None]],
         query: str,
     ) -> None:
+        if pages:
+            await persist.persist_pages_async(pages, chunks)
         await persist.persist_answer(
             answer_id=answer_id,
             query_id=query_id,
@@ -412,15 +538,48 @@ class AnswerPipeline:
         self, query: str, results: list[ScoredResult], pages: list[PageContent]
     ) -> list[tuple[float, Chunk]]:
         scored_chunks: list[tuple[float, Chunk]] = []
-        score_of = {r.url: r.score for r in results}
+        res_by_url: dict[str, ScoredResult] = {}
+        for r in results:
+            res_by_url[r.url] = r
+            res_by_url.setdefault(r.canonical_url, r)
+
+        scraped_urls: set[str] = set()
         for page in pages:
-            result_score = score_of.get(page.url, 0.0)
-            page_chunks = chunk_markdown(
-                page.markdown, document_url=page.url, source_title=page.title
-            )
+            scraped_urls.add(page.url)
+            scraped_urls.add(page.final_url)
+            scraped_urls.add(canonicalize(page.url))
+            matched_res = res_by_url.get(page.url) or res_by_url.get(canonicalize(page.url))
+            result_score = matched_res.score if matched_res else 0.0
+            md_body = page.markdown
+            # Preserve quantitative synthesis snippets from vertical adapters even when scraped
+            if (
+                matched_res is not None
+                and matched_res.snippet
+                and any(a in _QUANT_ADAPTERS for a in matched_res.adapters)
+                and matched_res.snippet[:80] not in md_body
+            ):
+                md_body = f"{matched_res.snippet}\n\n{md_body}"
+            page_chunks = chunk_markdown(md_body, document_url=page.url, source_title=page.title)
             for chunk in page_chunks:
                 score = heuristic_chunk_score(query, chunk.content, result_score, chunk.position)
                 scored_chunks.append((score, chunk))
+
+        # Fallback: for any search result whose URL could not be scraped (or was blocked),
+        # ground the synthesizer using its search snippet so quantitative data is never lost.
+        for r in results:
+            if r.url in scraped_urls or r.canonical_url in scraped_urls:
+                continue
+            snippet_text = (r.snippet or "").strip()
+            if not snippet_text:
+                continue
+            fallback_md = f"# {r.title}\n\n{snippet_text}" if r.title else snippet_text
+            fallback_chunks = chunk_markdown(
+                fallback_md, document_url=r.url, source_title=r.title or r.url
+            )
+            for chunk in fallback_chunks:
+                score = heuristic_chunk_score(query, chunk.content, r.score, chunk.position)
+                scored_chunks.append((score, chunk))
+
         scored_chunks.sort(key=lambda pair: -pair[0])
         return scored_chunks
 
@@ -441,9 +600,12 @@ class AnswerPipeline:
                 )
             )
             if payload and payload.get("answer_md"):
+                CACHE_EVENTS.labels(layer="l1_answer", outcome="hit").inc()
                 return self._replay(payload)
+            CACHE_EVENTS.labels(layer="l1_answer", outcome="miss").inc()
         payload = await self._semantic_lookup(query)
         if payload is not None:
+            CACHE_EVENTS.labels(layer="l2_semantic", outcome="hit").inc()
             return self._replay(payload)
         return None
 
@@ -502,7 +664,11 @@ class AnswerPipeline:
 
     async def _semantic_lookup(self, query: str) -> dict | None:
         """L2: pgvector cosine > threshold on the semantic_cache table."""
-        if self.embedder is None or not self.embedder.enabled:
+        if (
+            self.embedder is None
+            or not self.embedder.enabled
+            or self.settings.database_url.startswith("sqlite")
+        ):
             return None
         try:
             vector = await self.embedder.embed(query)
@@ -525,6 +691,7 @@ class AnswerPipeline:
                     )
                 ).first()
             if row is None or not row[1]:
+                CACHE_EVENTS.labels(layer="l2_semantic", outcome="miss").inc()
                 return None
         except Exception as exc:
             logger.warning("semantic_lookup_failed", error=type(exc).__name__)
@@ -551,7 +718,11 @@ class AnswerPipeline:
         }
 
     async def _semantic_cache_store(self, query: str, answer_id: uuid.UUID, model: str) -> None:
-        if self.embedder is None or not self.embedder.enabled:
+        if (
+            self.embedder is None
+            or not self.embedder.enabled
+            or self.settings.database_url.startswith("sqlite")
+        ):
             return
         try:
             vector = await self.embedder.embed(query)
@@ -573,6 +744,7 @@ class AnswerPipeline:
 
 
 def _log_background(task: asyncio.Task) -> None:
+    _background_tasks.discard(task)
     if task.done() and not task.cancelled():
         exc = task.exception()
         if exc is not None:
