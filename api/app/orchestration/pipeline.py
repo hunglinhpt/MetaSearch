@@ -41,7 +41,8 @@ from app.extraction.scraper import PageContent, Scraper
 from app.llm.citations import validate_citations
 from app.llm.embeddings import EmbeddingClient, EmbeddingError
 from app.llm.gateway import LLMError, LLMGateway, Usage, record_usage
-from app.llm.prompts import build_context, build_messages
+from app.llm.prompts import SYSTEM_PROMPT, build_context, build_messages, render_context
+from app.llm.providers import LLMOverride
 from app.llm.tokens import make_counter
 from app.orchestration import persist
 from app.retrieval.adapters.base import SearchAdapter
@@ -388,12 +389,24 @@ class AnswerPipeline:
         self.embedder = embedder
 
     async def run(
-        self, params: SearchParams, *, model: str | None = None, on_event: OnEvent = None
+        self,
+        params: SearchParams,
+        *,
+        model: str | None = None,
+        llm_override: LLMOverride | None = None,
+        on_event: OnEvent = None,
     ) -> AsyncIterator[Event]:
         started = time.perf_counter()
-        model = model or self.settings.llm_quick_model
+        gateway = (
+            self.gateway.with_override(llm_override)
+            if llm_override is not None and hasattr(self.gateway, "with_override")
+            else self.gateway
+        )
+        default_model = getattr(gateway, "default_quick_model", self.settings.llm_quick_model)
+        override_model = llm_override.model if llm_override and llm_override.model else None
+        model = override_model or model or default_model
 
-        replay = await self._cache_hit(params, model)
+        replay = await self._cache_hit(params, model) if llm_override is None else None
         if replay is not None:
             async for event in replay:
                 yield event
@@ -436,7 +449,7 @@ class AnswerPipeline:
         text_parts: list[str] = []
         usage = Usage()
         try:
-            async for delta in self.gateway.stream(messages, model=model):
+            async for delta in gateway.stream(messages, model=model):
                 if delta.text:
                     text_parts.append(delta.text)
                     yield ("token", {"t": delta.text})
@@ -471,7 +484,7 @@ class AnswerPipeline:
             },
         )
 
-        if self.cache is not None:
+        if self.cache is not None and llm_override is None:
             await self._cache_store(
                 params, model, answer_id, check.text, citations_payload, sources
             )
@@ -494,6 +507,87 @@ class AnswerPipeline:
         )
         _background_tasks.add(finalize)
         finalize.add_done_callback(_log_background)
+
+    async def prepare_context(
+        self,
+        params: SearchParams,
+        *,
+        budget: int | None = None,
+    ) -> dict[str, object]:
+        """Run stages 3-10 (Search -> Scrape -> Chunk -> Rerank -> Context Pack)
+        without calling an internal LLM.
+
+        Designed for external systems that already have their own LLM and want
+        MetaSearch to act as their institutional RAG & financial/technical context engine.
+        """
+        started = time.perf_counter()
+        normalized = normalize_query(params.query)
+        inferred_cats = sorted(
+            set(params.categories or ["general"])
+            | infer_categories_from_query(normalized, news=params.news)
+        )
+        outcome = await self.search.run(params)
+        if not outcome.results:
+            raise _no_results(outcome.statuses)
+
+        sources = [
+            {"url": r.url, "title": r.title, "domain": r.domain, "score": round(r.score, 4)}
+            for r in outcome.results
+        ]
+        pages = await self.scraper.scrape_many([r.url for r in outcome.results])
+        ok_pages = [p for p in pages if isinstance(p, PageContent)]
+
+        scored_chunks = self._score_chunks(normalized, outcome.results, ok_pages)
+        if not scored_chunks:
+            raise MetaSearchError(
+                ErrorCode.NO_RESULTS,
+                "Search returned results but none could be scraped for context preparation",
+                details={"engines_status": _status_map(outcome.statuses)},
+            )
+
+        chunks = await self._rerank(normalized, scored_chunks)
+        eff_budget = budget or self.settings.answer_context_budget
+        included = build_context(
+            chunks,
+            budget=eff_budget,
+            count=make_counter(self.settings),
+        )
+        context_md = render_context(included)
+        messages = build_messages(normalized, included)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+
+        return {
+            "query_id": str(outcome.query_id),
+            "normalized_query": normalized,
+            "inferred_categories": inferred_cats,
+            "context_md": context_md,
+            "system_prompt": SYSTEM_PROMPT,
+            "messages": messages,
+            "chunks": [
+                {
+                    "n": n,
+                    "chunk_id": chunk.id,
+                    "url": chunk.document_url,
+                    "title": chunk.source_title,
+                    "heading_path": chunk.heading_path,
+                    "content": chunk.content,
+                    "word_count": chunk.word_count,
+                }
+                for n, chunk in included
+            ],
+            "sources": sources,
+            "engines_status": [
+                {
+                    "engine": s.engine,
+                    "status": s.status,
+                    "results": s.results,
+                    "ms": s.ms,
+                    "error": s.error,
+                }
+                for s in outcome.statuses
+            ],
+            "latency_ms": latency_ms,
+        }
 
     async def _finalize_answer(
         self,

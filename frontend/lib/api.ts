@@ -1,5 +1,5 @@
 /**
- * API client for MetaSearch: raw search + SSE answer streaming.
+ * API client for MetaSearch: raw search + SSE answer streaming + LLM configuration.
  *
  * POST /v1/answer with stream:true emits `event:`/`data:` SSE frames; browsers
  * cannot use EventSource for POST, so we parse the fetch stream by hand.
@@ -37,6 +37,72 @@ export type AnswerMeta = {
   status: string;
   model: string;
   cached?: boolean;
+};
+
+export type LLMOverridePayload = {
+  provider?: string;
+  protocol?: "openai" | "anthropic";
+  base_url?: string;
+  api_key?: string;
+  model?: string;
+  quick_model?: string;
+  report_model?: string;
+  fallback_provider?: string;
+  extra_headers?: Record<string, string>;
+};
+
+export type LLMProviderPresetInfo = {
+  id: string;
+  name: string;
+  protocol: "openai" | "anthropic" | "none";
+  base_url: string;
+  default_quick_model: string;
+  default_report_model: string;
+  is_free: boolean;
+  requires_api_key: boolean;
+  env_key_name: string;
+  signup_url: string;
+  docs_url: string;
+  description: string;
+  recommended_models: string[];
+  configured: boolean;
+};
+
+export type ActiveLLMConfig = {
+  provider: string;
+  provider_name: string;
+  protocol: string;
+  base_url: string;
+  quick_model: string;
+  report_model: string;
+  is_free: boolean;
+  requires_api_key: boolean;
+  has_api_key: boolean;
+  masked_api_key: string;
+  fallback_provider: string;
+  fallback_models: string[];
+  extra_headers_keys: string[];
+  has_runtime_override: boolean;
+};
+
+export type LLMProvidersResponse = {
+  active: ActiveLLMConfig;
+  providers: LLMProviderPresetInfo[];
+  external_integration: {
+    byo_llm_description: string;
+    context_only_endpoint: string;
+    citation_validation_endpoint: string;
+  };
+};
+
+export type LLMTestResult = {
+  ok: boolean;
+  provider: string;
+  model: string;
+  base_url: string;
+  reply?: string;
+  error?: string;
+  latency_ms: number;
 };
 
 /**
@@ -112,12 +178,61 @@ export async function listEngines(signal?: AbortSignal): Promise<EngineInfo[]> {
   return resp.json();
 }
 
+export async function getLLMProviders(
+  signal?: AbortSignal
+): Promise<LLMProvidersResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/llm/providers`, { signal });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function updateLLMConfig(
+  patch: LLMOverridePayload
+): Promise<ActiveLLMConfig> {
+  const resp = await fetch(`${API_BASE_URL}/v1/llm/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function resetLLMConfig(): Promise<ActiveLLMConfig> {
+  const resp = await fetch(`${API_BASE_URL}/v1/llm/config/reset`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function testLLMConnection(
+  llm?: LLMOverridePayload
+): Promise<LLMTestResult> {
+  const resp = await fetch(`${API_BASE_URL}/v1/llm/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(llm ? { llm } : {}),
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
 export async function streamAnswer(
   query: string,
   handlers: AnswerHandlers,
   signal?: AbortSignal,
   engines?: string[],
-  categories?: string[]
+  categories?: string[],
+  llm?: LLMOverridePayload
 ): Promise<void> {
   const resp = await fetch(`${API_BASE_URL}/v1/answer`, {
     method: "POST",
@@ -127,6 +242,7 @@ export async function streamAnswer(
       stream: true,
       engines: engines ?? undefined,
       categories: categories ?? undefined,
+      llm: llm ?? undefined,
     }),
     signal,
   });

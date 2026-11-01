@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.llm.providers import LLMOverride
+
 
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
@@ -28,7 +30,8 @@ class CitationItem(BaseModel):
 
 class AnswerRequest(SearchRequest):
     stream: bool = False
-    model: str | None = Field(default=None, max_length=100)
+    model: str | None = Field(default=None, max_length=150)
+    llm: LLMOverride | None = None
 
 
 class ScrapeRequest(BaseModel):

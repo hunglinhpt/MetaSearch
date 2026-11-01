@@ -55,11 +55,58 @@ class Settings(BaseSettings):
     db_pool_timeout_s: float = 5.0
 
     # --- LLM gateway -----------------------------------------------------
-    llm_provider: Literal["openai", "anthropic", "none"] = "none"
+    llm_provider: Literal[
+        "openai",
+        "anthropic",
+        "openrouter",
+        "pollinations",
+        "gemini",
+        "groq",
+        "cerebras",
+        "mistral",
+        "github_models",
+        "huggingface",
+        "ollama",
+        "custom",
+        "none",
+    ] = "none"
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     anthropic_base_url: str = "https://api.anthropic.com/v1"
+    # OpenRouter Free Router (https://openrouter.ai/openrouter/free) & multi-provider support
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_site_url: str = "https://github.com/hunglinhpt/MetaSearch"
+    openrouter_app_name: str = "MetaSearch AI"
+    openrouter_fallback_models: str = (
+        "openrouter/free,"
+        "meta-llama/llama-3.3-70b-instruct:free,"
+        "deepseek/deepseek-chat-v3-0324:free,"
+        "google/gemini-2.0-flash-exp:free,"
+        "qwen/qwen-2.5-72b-instruct:free"
+    )
+    # Reputable Free LLM Endpoints
+    pollinations_base_url: str = "https://text.pollinations.ai/openai"
+    gemini_api_key: str = ""
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    groq_api_key: str = ""
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    cerebras_api_key: str = ""
+    cerebras_base_url: str = "https://api.cerebras.ai/v1"
+    mistral_api_key: str = ""
+    mistral_base_url: str = "https://api.mistral.ai/v1"
+    github_models_base_url: str = "https://models.inference.ai.azure.com"
+    hf_token: str = ""
+    hf_base_url: str = "https://router.huggingface.co/v1"
+    ollama_base_url: str = "http://127.0.0.1:11434/v1"
+    # Custom / External System LLM Integration (LiteLLM, vLLM, Kong, Azure, internal proxy)
+    custom_llm_protocol: Literal["openai", "anthropic"] = "openai"
+    custom_llm_base_url: str = ""
+    custom_llm_api_key: str = ""
+    custom_llm_headers: str = ""
+    # Automatic failover provider (e.g. "pollinations" or "openrouter") when primary hits 429/5xx
+    llm_fallback_provider: str = ""
     llm_quick_model: str = "gpt-4o-mini"
     llm_report_model: str = "gpt-4o"
     llm_temperature: float = 0.2

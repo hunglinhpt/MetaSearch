@@ -4,24 +4,32 @@ import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import {
   API_BASE_URL,
+  ActiveLLMConfig,
   AnswerMeta,
   BlogPostDetail,
   BlogPostSummary,
   Citation,
   EngineDone,
   EngineInfo,
+  LLMOverridePayload,
+  LLMProviderPresetInfo,
+  LLMTestResult,
   SearchHit,
   SourceItem,
   getDigest,
+  getLLMProviders,
   listDigests,
   listEngines,
+  resetLLMConfig,
   search,
   streamAnswer,
+  testLLMConnection,
   triggerScan,
+  updateLLMConfig,
 } from "../lib/api";
 
 type Mode = "answer" | "raw";
-type AppTab = "search" | "blog";
+type AppTab = "search" | "blog" | "llm";
 
 const CATEGORY_CHIPS = [
   { id: "auto", label: "⚡ Tự động (Smart Routing)" },
@@ -73,6 +81,40 @@ export default function HomePage() {
   const [selectedPost, setSelectedPost] = useState<BlogPostDetail | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
 
+  // LLM Configuration & External Integration state
+  const [llmPresets, setLlmPresets] = useState<LLMProviderPresetInfo[]>([]);
+  const [activeLlm, setActiveLlm] = useState<ActiveLLMConfig | null>(null);
+  const [llmProvider, setLlmProvider] = useState<string>("openrouter");
+  const [llmProtocol, setLlmProtocol] = useState<"openai" | "anthropic">("openai");
+  const [llmBaseUrl, setLlmBaseUrl] = useState<string>("https://openrouter.ai/api/v1");
+  const [llmApiKey, setLlmApiKey] = useState<string>("");
+  const [llmQuickModel, setLlmQuickModel] = useState<string>("openrouter/free");
+  const [llmReportModel, setLlmReportModel] = useState<string>("openrouter/free");
+  const [llmFallbackProvider, setLlmFallbackProvider] = useState<string>("pollinations");
+  const [llmHeadersJson, setLlmHeadersJson] = useState<string>("");
+  const [llmSaving, setLlmSaving] = useState<boolean>(false);
+  const [llmTesting, setLlmTesting] = useState<boolean>(false);
+  const [llmStatusMsg, setLlmStatusMsg] = useState<string>("");
+  const [llmTestResult, setLlmTestResult] = useState<LLMTestResult | null>(null);
+
+  const loadLLMState = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const data = await getLLMProviders(signal);
+      setLlmPresets(data.providers);
+      setActiveLlm(data.active);
+      setLlmProvider(data.active.provider);
+      setLlmProtocol(
+        data.active.protocol === "anthropic" ? "anthropic" : "openai"
+      );
+      setLlmBaseUrl(data.active.base_url);
+      setLlmQuickModel(data.active.quick_model);
+      setLlmReportModel(data.active.report_model);
+      setLlmFallbackProvider(data.active.fallback_provider || "");
+    } catch {
+      // Ignore on offline boot
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     listEngines(controller.signal)
@@ -80,8 +122,106 @@ export default function HomePage() {
         setEngineOptions(items.filter((e) => e.enabled && e.adapter_ready))
       )
       .catch(() => setEngineOptions([]));
+    loadLLMState(controller.signal);
     return () => controller.abort();
-  }, []);
+  }, [loadLLMState]);
+
+  const handleSelectPreset = (presetId: string) => {
+    setLlmProvider(presetId);
+    setLlmTestResult(null);
+    setLlmStatusMsg("");
+    const p = llmPresets.find((item) => item.id === presetId);
+    if (p) {
+      setLlmProtocol(p.protocol === "anthropic" ? "anthropic" : "openai");
+      setLlmBaseUrl(p.base_url);
+      setLlmQuickModel(p.default_quick_model);
+      setLlmReportModel(p.default_report_model);
+    }
+  };
+
+  const buildOverridePayload = (): LLMOverridePayload => {
+    let parsedHeaders: Record<string, string> | undefined;
+    if (llmHeadersJson.trim()) {
+      try {
+        parsedHeaders = JSON.parse(llmHeadersJson.trim());
+      } catch {
+        throw new Error("Custom Headers phải là chuỗi JSON hợp lệ (VD: {\"X-Org\":\"abc\"})");
+      }
+    }
+    const payload: LLMOverridePayload = {
+      provider: llmProvider,
+      protocol: llmProtocol,
+      base_url: llmBaseUrl.trim() || undefined,
+      quick_model: llmQuickModel.trim() || undefined,
+      report_model: llmReportModel.trim() || undefined,
+      fallback_provider: llmFallbackProvider,
+      extra_headers: parsedHeaders,
+    };
+    if (llmApiKey.trim()) {
+      payload.api_key = llmApiKey.trim();
+    }
+    return payload;
+  };
+
+  const handleSaveLLMConfig = async () => {
+    setLlmSaving(true);
+    setLlmStatusMsg("");
+    setLlmTestResult(null);
+    try {
+      const payload = buildOverridePayload();
+      const updated = await updateLLMConfig(payload);
+      setActiveLlm(updated);
+      setLlmApiKey("");
+      setLlmStatusMsg(
+        `✅ Đã lưu cấu hình nóng: ${updated.provider_name} (Model: ${updated.quick_model})`
+      );
+    } catch (err: unknown) {
+      setLlmStatusMsg(
+        `❌ Lỗi lưu cấu hình: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setLlmSaving(false);
+    }
+  };
+
+  const handleResetLLMConfig = async () => {
+    setLlmSaving(true);
+    setLlmStatusMsg("");
+    setLlmTestResult(null);
+    try {
+      const updated = await resetLLMConfig();
+      setActiveLlm(updated);
+      await loadLLMState();
+      setLlmStatusMsg("🔄 Đã khôi phục cấu hình LLM mặc định từ biến môi trường (.env)");
+    } catch (err: unknown) {
+      setLlmStatusMsg(
+        `❌ Lỗi khôi phục: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setLlmSaving(false);
+    }
+  };
+
+  const handleTestLLM = async () => {
+    setLlmTesting(true);
+    setLlmTestResult(null);
+    try {
+      const payload = buildOverridePayload();
+      const res = await testLLMConnection(payload);
+      setLlmTestResult(res);
+    } catch (err: unknown) {
+      setLlmTestResult({
+        ok: false,
+        provider: llmProvider,
+        model: llmQuickModel,
+        base_url: llmBaseUrl,
+        error: err instanceof Error ? err.message : String(err),
+        latency_ms: 0,
+      });
+    } finally {
+      setLlmTesting(false);
+    }
+  };
 
   const loadBlogPosts = useCallback(async (topicId?: string) => {
     setBlogLoading(true);
@@ -193,6 +333,7 @@ export default function HomePage() {
   }, [busy, mode, query, reset, selectedCategory, selectedEngines]);
 
   const citationByUrl = new Map(citations.map((c) => [c.n, c]));
+  const selectedPresetObj = llmPresets.find((p) => p.id === llmProvider);
 
   return (
     <main className="shell">
@@ -215,6 +356,12 @@ export default function HomePage() {
             onClick={() => setActiveTab("blog")}
           >
             📰 Bản Tin & Blog Chuyên Sâu
+          </button>
+          <button
+            className={`nav-tab ${activeTab === "llm" ? "active" : ""}`}
+            onClick={() => setActiveTab("llm")}
+          >
+            🤖 Cấu Hình LLM (OpenRouter Free / BYO-LLM)
           </button>
         </nav>
       </header>
@@ -242,29 +389,43 @@ export default function HomePage() {
                 </button>
               </div>
 
-              <div className="mode-toggle">
-                <label>
-                  <input
-                    type="radio"
-                    name="mode"
-                    value="answer"
-                    checked={mode === "answer"}
-                    onChange={() => setMode("answer")}
-                    disabled={busy}
-                  />
-                  Câu trả lời tổng hợp (Answer + Citations)
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="mode"
-                    value="raw"
-                    checked={mode === "raw"}
-                    onChange={() => setMode("raw")}
-                    disabled={busy}
-                  />
-                  Kết quả thô (Multi-Engine Hits)
-                </label>
+              <div className="mode-toggle" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+                  <label>
+                    <input
+                      type="radio"
+                      name="mode"
+                      value="answer"
+                      checked={mode === "answer"}
+                      onChange={() => setMode("answer")}
+                      disabled={busy}
+                    />
+                    Câu trả lời tổng hợp (Answer + Citations)
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="mode"
+                      value="raw"
+                      checked={mode === "raw"}
+                      onChange={() => setMode("raw")}
+                      disabled={busy}
+                    />
+                    Kết quả thô (Multi-Engine Hits)
+                  </label>
+                </div>
+
+                {activeLlm && (
+                  <button
+                    type="button"
+                    className="chip chip-toggle on"
+                    onClick={() => setActiveTab("llm")}
+                    title="Bấm để đổi LLM Provider (OpenRouter Free, Pollinations, Gemini, Groq, Ollama, Custom...)"
+                  >
+                    🤖 LLM: {activeLlm.provider} ({activeLlm.quick_model})
+                    {activeLlm.is_free ? " · FREE" : ""}
+                  </button>
+                )}
               </div>
 
               <div className="category-bar">
@@ -490,6 +651,308 @@ export default function HomePage() {
         </section>
       )}
 
+      {/* --- TAB 3: LLM CONFIGURATION & EXTERNAL SYSTEM INTEGRATION --- */}
+      {activeTab === "llm" && (
+        <section style={{ display: "grid", gap: "1.2rem" }}>
+          {activeLlm && (
+            <div className="card">
+              <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.1rem" }}>
+                ⚡ Trạng Thái LLM Đang Kích Hoạt
+              </h2>
+              <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.9rem" }}>
+                Provider: <strong>{activeLlm.provider_name}</strong> · Quick Model:{" "}
+                <code>{activeLlm.quick_model}</code> · Report Model:{" "}
+                <code>{activeLlm.report_model}</code> · Endpoint:{" "}
+                <code>{activeLlm.base_url || "N/A"}</code> · API Key:{" "}
+                <strong>
+                  {activeLlm.has_api_key
+                    ? `Đã cấu hình (${activeLlm.masked_api_key})`
+                    : activeLlm.requires_api_key
+                    ? "Chưa nhập API Key"
+                    : "Keyless (Không cần key)"}
+                </strong>
+                {activeLlm.fallback_provider
+                  ? ` · Dự phòng: ${activeLlm.fallback_provider}`
+                  : ""}
+              </p>
+            </div>
+          )}
+
+          <div className="card">
+            <h2 style={{ margin: "0 0 0.6rem", fontSize: "1.15rem" }}>
+              1. Chọn Nhà Cung Cấp LLM (OpenRouter Free, Các Nguồn Free Uy Tín & BYO-LLM)
+            </h2>
+            <p style={{ margin: "0 0 1rem", color: "var(--muted)", fontSize: "0.88rem" }}>
+              Hỗ trợ sẵn{" "}
+              <a
+                href="https://openrouter.ai/openrouter/free"
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "var(--accent)" }}
+              >
+                OpenRouter Free Models Router (openrouter/free)
+              </a>{" "}
+              cùng các LLM miễn phí uy tín (Pollinations Keyless, Google Gemini Free, Groq LPU Free,
+              Cerebras Free, Mistral Free, GitHub Models, HuggingFace, Ollama Local) hoặc kết nối
+              trực tiếp vào LLM có sẵn trong hệ thống của bạn.
+            </p>
+
+            <div className="engine-chips" style={{ marginBottom: "1rem" }}>
+              {llmPresets.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`chip chip-toggle ${llmProvider === p.id ? "on" : ""}`}
+                  onClick={() => handleSelectPreset(p.id)}
+                >
+                  {p.is_free ? "🟢 " : "🔵 "}
+                  {p.id === "openrouter" ? "openrouter (openrouter/free)" : p.id}
+                </button>
+              ))}
+            </div>
+
+            {selectedPresetObj && (
+              <div
+                style={{
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "8px",
+                  padding: "0.9rem",
+                  marginBottom: "1rem",
+                  fontSize: "0.88rem",
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: "0.3rem" }}>
+                  {selectedPresetObj.name}
+                  {selectedPresetObj.is_free && (
+                    <span className="badge badge-finance" style={{ marginLeft: "0.6rem" }}>
+                      FREE ($0/M)
+                    </span>
+                  )}
+                </div>
+                <p style={{ margin: "0 0 0.5rem", color: "var(--muted)" }}>
+                  {selectedPresetObj.description}
+                </p>
+                {selectedPresetObj.signup_url && (
+                  <div>
+                    🔗 Lấy API Key / Tài liệu:{" "}
+                    <a
+                      href={selectedPresetObj.signup_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: "var(--accent)" }}
+                    >
+                      {selectedPresetObj.signup_url}
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gap: "0.8rem", gridTemplateColumns: "1fr 1fr" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.82rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                  Base URL Endpoint
+                </label>
+                <input
+                  type="text"
+                  style={{ width: "100%", padding: "0.55rem", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)", color: "var(--fg)" }}
+                  value={llmBaseUrl}
+                  onChange={(e) => setLlmBaseUrl(e.target.value)}
+                  placeholder="https://openrouter.ai/api/v1"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.82rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                  API Key ({selectedPresetObj?.env_key_name || "Tuỳ chọn cho Pollinations/Ollama"})
+                </label>
+                <input
+                  type="password"
+                  style={{ width: "100%", padding: "0.55rem", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)", color: "var(--fg)" }}
+                  value={llmApiKey}
+                  onChange={(e) => setLlmApiKey(e.target.value)}
+                  placeholder="Để trống nếu giữ nguyên key hiện tại hoặc dùng Keyless..."
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.82rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                  Quick Model (Dùng cho /v1/answer & Planner)
+                </label>
+                <input
+                  type="text"
+                  style={{ width: "100%", padding: "0.55rem", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)", color: "var(--fg)" }}
+                  value={llmQuickModel}
+                  onChange={(e) => setLlmQuickModel(e.target.value)}
+                  placeholder="openrouter/free"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.82rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                  Report Model (Dùng cho Deep Research /v1/research)
+                </label>
+                <input
+                  type="text"
+                  style={{ width: "100%", padding: "0.55rem", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)", color: "var(--fg)" }}
+                  value={llmReportModel}
+                  onChange={(e) => setLlmReportModel(e.target.value)}
+                  placeholder="openrouter/free"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.82rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                  Giao thức Wire Protocol (Dành cho Custom Enterprise LLM)
+                </label>
+                <select
+                  style={{ width: "100%", padding: "0.55rem", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)", color: "var(--fg)" }}
+                  value={llmProtocol}
+                  onChange={(e) =>
+                    setLlmProtocol(e.target.value === "anthropic" ? "anthropic" : "openai")
+                  }
+                >
+                  <option value="openai">OpenAI-Compatible (/chat/completions)</option>
+                  <option value="anthropic">Anthropic Messages (/v1/messages)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.82rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                  Fallback Provider (Tự động chuyển khi hết hạn mức / chưa có key)
+                </label>
+                <select
+                  style={{ width: "100%", padding: "0.55rem", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)", color: "var(--fg)" }}
+                  value={llmFallbackProvider}
+                  onChange={(e) => setLlmFallbackProvider(e.target.value)}
+                >
+                  <option value="pollinations">pollinations (Keyless Free - Khuyến nghị)</option>
+                  <option value="openrouter">openrouter (openrouter/free)</option>
+                  <option value="ollama">ollama (Local 127.0.0.1:11434)</option>
+                  <option value="">Tắt Fallback</option>
+                </select>
+              </div>
+            </div>
+
+            {selectedPresetObj && selectedPresetObj.recommended_models.length > 0 && (
+              <div style={{ marginTop: "0.8rem" }}>
+                <span className="engine-filter-label" style={{ marginRight: "0.5rem" }}>
+                  Model gợi ý (Bấm để chọn):
+                </span>
+                <div className="engine-chips" style={{ marginTop: "0.35rem" }}>
+                  {selectedPresetObj.recommended_models.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={`chip chip-toggle ${llmQuickModel === m ? "on" : ""}`}
+                      onClick={() => {
+                        setLlmQuickModel(m);
+                        setLlmReportModel(m);
+                      }}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginTop: "0.8rem" }}>
+              <label style={{ display: "block", fontSize: "0.82rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                Custom Headers JSON (Tuỳ chọn khi tích hợp vào LLM Gateway nội bộ của doanh nghiệp)
+              </label>
+              <input
+                type="text"
+                style={{ width: "100%", padding: "0.55rem", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)", color: "var(--fg)" }}
+                value={llmHeadersJson}
+                onChange={(e) => setLlmHeadersJson(e.target.value)}
+                placeholder='{"X-Internal-Auth": "token", "X-Department": "quant-research"}'
+              />
+            </div>
+
+            <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem", flexWrap: "wrap" }}>
+              <button type="button" className="scan-btn" onClick={handleSaveLLMConfig} disabled={llmSaving}>
+                {llmSaving ? "Đang lưu..." : "💾 Lưu & Áp Dụng Ngay (Hot-Config)"}
+              </button>
+              <button type="button" className="chip chip-toggle on" onClick={handleTestLLM} disabled={llmTesting}>
+                {llmTesting ? "Đang kiểm tra..." : "⚡ Test Kết Nối LLM"}
+              </button>
+              <button type="button" className="chip chip-toggle" onClick={handleResetLLMConfig} disabled={llmSaving}>
+                🔄 Khôi Phục Mặc Định (.env)
+              </button>
+            </div>
+
+            {llmStatusMsg && (
+              <p style={{ marginTop: "0.8rem", fontSize: "0.9rem" }}>{llmStatusMsg}</p>
+            )}
+
+            {llmTestResult && (
+              <div
+                style={{
+                  marginTop: "0.8rem",
+                  padding: "0.8rem",
+                  borderRadius: "6px",
+                  border: "1px solid var(--border)",
+                  fontSize: "0.88rem",
+                }}
+              >
+                {llmTestResult.ok ? (
+                  <div>
+                    ✅ <strong>Kết nối thành công!</strong> ({llmTestResult.provider} ·{" "}
+                    <code>{llmTestResult.model}</code> · {llmTestResult.latency_ms} ms) — Phản hồi:{" "}
+                    <code>{llmTestResult.reply}</code>
+                  </div>
+                ) : (
+                  <div style={{ color: "#f87171" }}>
+                    ❌ <strong>Kết nối thất bại:</strong> {llmTestResult.error}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <h2 style={{ margin: "0 0 0.6rem", fontSize: "1.15rem" }}>
+              2. Tích Hợp MetaSearch Với Hệ Thống Khác Đã Có Sẵn LLM
+            </h2>
+            <p style={{ margin: "0 0 0.8rem", color: "var(--muted)", fontSize: "0.88rem" }}>
+              Nếu hệ thống của bạn đã có sẵn LLM (Internal LLM Cluster, LangChain/LlamaIndex Agent,
+              Dify, n8n, hoặc Chatbot doanh nghiệp), bạn có thể tích hợp theo 2 chiều:
+            </p>
+            <div style={{ display: "grid", gap: "0.8rem", fontSize: "0.85rem" }}>
+              <div style={{ padding: "0.8rem", border: "1px solid var(--border)", borderRadius: "6px" }}>
+                <strong>Chiều A — Context-Only RAG & Citation Validator (Hệ thống ngoài tự gọi LLM của họ):</strong>
+                <pre style={{ overflowX: "auto", margin: "0.5rem 0 0" }}>
+{`# Bước 1: Lấy ngữ cảnh đã Search 19 engines + Pháp y BCTC + Rerank + Đánh số [1]..[n]
+POST ${API_BASE_URL}/v1/context
+{"query": "pháp y BCTC VCB và kỹ thuật FPT", "k": 8, "budget": 6000}
+# -> Trả về: { context_md, system_prompt, messages, chunks, sources }
+
+# Bước 2: Đưa 'messages' vào LLM sẵn có của hệ thống bạn để sinh answer_md, sau đó hậu kiểm trích dẫn:
+POST ${API_BASE_URL}/v1/citations/validate
+{"answer_md": "Kết quả từ LLM nội bộ của bạn [1][2]...", "chunks": [...]}`}
+                </pre>
+              </div>
+              <div style={{ padding: "0.8rem", border: "1px solid var(--border)", borderRadius: "6px" }}>
+                <strong>Chiều B — Truyền BYO-LLM Endpoint theo từng Request:</strong>
+                <pre style={{ overflowX: "auto", margin: "0.5rem 0 0" }}>
+{`POST ${API_BASE_URL}/v1/answer
+{
+  "query": "Phân tích cổ phiếu FPT",
+  "llm": {
+    "provider": "openrouter",
+    "model": "openrouter/free",
+    "base_url": "https://openrouter.ai/api/v1"
+  }
+}`}
+                </pre>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Reader Modal */}
       {selectedPost && (
         <div className="modal-overlay" onClick={() => setSelectedPost(null)}>
@@ -550,7 +1013,7 @@ export default function HomePage() {
       )}
 
       <footer className="footer">
-        API: <code>{API_BASE_URL}/docs</code> · Scan Scheduler & Daily Digest Engine
+        API: <code>{API_BASE_URL}/docs</code> · OpenRouter Free (<code>openrouter/free</code>) & BYO-LLM Ready
       </footer>
     </main>
   );

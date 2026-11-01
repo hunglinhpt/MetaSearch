@@ -12,6 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.api import deps
 from app.api.v1.schemas import AnswerRequest, AnswerResponse, CitationItem
 from app.core.errors import ErrorCode, MetaSearchError
+from app.llm.providers import LLMOverride
 from app.orchestration.pipeline import Event, SearchParams
 
 router = APIRouter(tags=["answer"])
@@ -33,18 +34,26 @@ def _params(request: AnswerRequest) -> SearchParams:
 @router.post("/answer", response_model=AnswerResponse, response_model_exclude_none=True)
 async def answer(request: AnswerRequest):
     if request.stream:
-        return EventSourceResponse(_sse(_params(request), request.model))
-    return await _json(_params(request), request.model)
+        return EventSourceResponse(_sse(_params(request), request.model, request.llm))
+    return await _json(_params(request), request.model, request.llm)
 
 
-async def _json(params: SearchParams, model: str | None) -> AnswerResponse:
+async def _json(
+    params: SearchParams,
+    model: str | None,
+    llm_override: LLMOverride | None = None,
+) -> AnswerResponse:
     answer_md_parts: list[str] = []
     citations: list[CitationItem] = []
     sources: list[dict] = []
     meta: dict = {}
     error: dict | None = None
 
-    async for event, data in deps.get_answer_pipeline().run(params, model=model):
+    run_kwargs: dict[str, object] = {"model": model}
+    if llm_override is not None:
+        run_kwargs["llm_override"] = llm_override
+
+    async for event, data in deps.get_answer_pipeline().run(params, **run_kwargs):  # type: ignore[arg-type]
         if event == "token":
             answer_md_parts.append(data["t"])
         elif event == "citations":
@@ -79,7 +88,11 @@ async def _json(params: SearchParams, model: str | None) -> AnswerResponse:
     )
 
 
-async def _sse(params: SearchParams, model: str | None) -> AsyncIterator[dict]:
+async def _sse(
+    params: SearchParams,
+    model: str | None,
+    llm_override: LLMOverride | None = None,
+) -> AsyncIterator[dict]:
     """Bridge pipeline events + mid-flight engine_done callbacks into SSE.
 
     A queue interleaves the pipeline's own events with ``engine_done`` events
@@ -92,9 +105,10 @@ async def _sse(params: SearchParams, model: str | None) -> AsyncIterator[dict]:
 
     async def producer() -> None:
         try:
-            async for event in deps.get_answer_pipeline().run(
-                params, model=model, on_event=on_event
-            ):
+            run_kwargs: dict[str, object] = {"model": model, "on_event": on_event}
+            if llm_override is not None:
+                run_kwargs["llm_override"] = llm_override
+            async for event in deps.get_answer_pipeline().run(params, **run_kwargs):  # type: ignore[arg-type]
                 await queue.put(event)
         except MetaSearchError as exc:
             await queue.put(("error", {"code": exc.code.value, "message": exc.message}))

@@ -4,6 +4,38 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [1.1.0] — 2026-11-02 — OpenRouter Free Router (`openrouter/free`), Reputable Free LLM Presets & External System LLM Integration
+
+### Added
+- **OpenRouter Free Router (`openrouter/free`) & Multi-Provider Free LLM Registry (`app.llm.providers`, `app.llm.gateway`)**:
+  - Tích hợp và cấu hình sẵn **OpenRouter Free Models Router** (`openrouter/free` — `https://openrouter.ai/openrouter/free`, endpoint `https://openrouter.ai/api/v1`) với chi phí `$0/M` input & output, tự động định tuyến tới các model miễn phí tốt nhất đang online (`Llama 3.3 70B`, `DeepSeek V3/R1`, `Gemini 2.0 Flash`, `Qwen 2.5 72B`, `Gemma 3 27B`) kèm chuỗi model dự phòng tự động (`OPENROUTER_FALLBACK_MODELS`).
+  - Bổ sung danh mục 13 preset LLM (`LLM_PROVIDER_PRESETS`) bao gồm các nguồn miễn phí uy tín:
+    - `openrouter` (`openrouter/free`)
+    - `pollinations` (Pollinations AI — Keyless 100% miễn phí, không cần API key)
+    - `gemini` (Google Gemini AI Studio Free Tier — `gemini-2.0-flash`, `gemini-2.5-flash`)
+    - `groq` (Groq Cloud LPU Free Tier — `llama-3.3-70b-versatile`, `deepseek-r1-distill-llama-70b`)
+    - `cerebras` (Cerebras Wafer-Scale Free Tier — `llama-3.3-70b`)
+    - `mistral` (Mistral La Plateforme Free Experiment Tier — `mistral-small-latest`)
+    - `github_models` (GitHub Models Azure Inference Free — `gpt-4o-mini`, `Llama-3.3-70B-Instruct`)
+    - `huggingface` (HuggingFace Serverless Inference Router — `Qwen/Qwen2.5-72B-Instruct`)
+    - `ollama` (Local Self-Hosted Ollama / vLLM / LM Studio / llama.cpp — `http://127.0.0.1:11434/v1`)
+    - `custom` (BYO-LLM / Internal Enterprise LLM Proxy — LiteLLM, Kong, Azure, vLLM Cluster kèm `CUSTOM_LLM_HEADERS`)
+    - `openai`, `anthropic`, `none`.
+  - Hỗ trợ cơ chế **Cross-Provider Automatic Fallback (`LLM_FALLBACK_PROVIDER`)**: tự động chuyển sang provider dự phòng (ví dụ `pollinations` keyless free) khi provider chính thiếu API key hoặc gặp lỗi 429/5xx.
+- **Hot-Configuration API & Connectivity Probe (`/v1/llm/*`)**:
+  - `GET /v1/llm/providers`: Liệt kê toàn bộ 13 provider presets kèm trạng thái cấu hình và danh sách model khuyến nghị.
+  - `GET /v1/llm/config` & `PATCH /v1/llm/config`: Xem (đã che mặt nạ API key) và cập nhật nóng `provider`, `protocol`, `base_url`, `api_key`, `quick_model`, `report_model`, `fallback_provider`, `extra_headers` ngay trong lúc chạy mà không cần khởi động lại server.
+  - `POST /v1/llm/config/reset`: Khôi phục cấu hình LLM về mặc định `.env`.
+  - `POST /v1/llm/test`: Kiểm tra kết nối và đo độ trễ (`latency_ms`) tới bất kỳ endpoint LLM nào.
+- **Tích Hợp 2 Chiều Với Hệ Thống Khác Đã Có Sẵn LLM (`app.api.v1.llm`, `app.orchestration.pipeline`)**:
+  - **Chiều 1 — External LLM Orchestrator Mode (Context-Only RAG + Citation Validator)**:
+    - `POST /v1/context`: Chạy toàn bộ pipeline 19 Search Engines + Smart Category Routing + Pháp y BCTC + Kỹ thuật định lượng + Scrape + Chunk & Rerank để trả về `context_md` (đánh số `[1]..[n]`), `system_prompt`, `messages`, `chunks`, `sources` cho hệ thống ngoài tự gọi LLM nội bộ của họ.
+    - `POST /v1/citations/validate`: Nhận `answer_md` do LLM của hệ thống ngoài sinh ra cùng `chunks` để hậu kiểm, lọc bỏ citation giả mạo và trả về `validated_answer_md` + `citations` chuẩn xác.
+  - **Chiều 2 — Per-Request & Server-Wide BYO-LLM Override**:
+    - Cho phép truyền trực tiếp đối tượng `llm` (`LLMOverride`) trong body của `POST /v1/answer` và `POST /v1/research`, hỗ trợ cả các internal proxy trả về `application/json` lẫn `text/event-stream` kèm bộ chặn SSRF (`validate_llm_base_url`).
+- **Giao Diện Cấu Hình LLM & Tích Hợp Hệ Thống Ngoài trên Web UI (`frontend/app/page.tsx`)**:
+  - Bổ sung Tab `🤖 Cấu Hình LLM (OpenRouter Free / BYO-LLM)` trên Web UI cho phép chọn nhanh preset, đổi model bằng 1 click, nhập API key / Custom Base URL / Custom Headers, bấm Test kết nối trực tiếp, và xem mẫu code tích hợp `/v1/context`.
+
 ## [1.0.0] — 2026-11-01 — Institutional Financial Forensics, Quantitative Technicals & 5-Wave Deep Architectural Audit
 
 ### Added

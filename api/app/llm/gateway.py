@@ -1,8 +1,13 @@
 """Provider-agnostic LLM gateway (docs/02-system-architecture.md, LLM Gateway).
 
-Phase 1 implements the two streaming providers MetaSearch needs:
-- OpenAI-compatible ``/chat/completions`` (api.openai.com, vLLM, Ollama)
-- Anthropic ``/v1/messages``
+Supports:
+- **OpenRouter Free Router** (``openrouter/free`` — https://openrouter.ai/openrouter/free)
+- **Pollinations AI** (keyless zero-config free OpenAI-compatible endpoint)
+- **Google Gemini AI Studio**, **Groq Cloud LPU**, **Cerebras**, **Mistral**,
+  **GitHub Models**, **HuggingFace Router** (reputable free tiers)
+- **Local Self-Hosted** (Ollama, vLLM, LM Studio, llama.cpp)
+- **Custom Enterprise / External System LLM** (LiteLLM, Kong, Azure, custom URL + headers)
+- **OpenAI** ``/chat/completions`` & **Anthropic** ``/v1/messages``
 
 Streaming yields ``StreamDelta`` so SSE can forward tokens as they arrive and
 still record token usage + estimated cost afterwards.
@@ -13,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,23 +27,32 @@ from app.config import Settings
 from app.core.logging import get_logger
 from app.core.metrics import LLM_COST, LLM_TOKENS
 from app.http import get_http_client
+from app.llm.providers import (
+    LLMOverride,
+    ResolvedLLMTarget,
+    get_runtime_llm_store,
+    resolve_llm_target,
+)
 
 logger = get_logger(__name__)
 
 _trace_tasks: set[asyncio.Task[None]] = set()
 
-# USD per 1M tokens (input, output). Unknown models cost-estimate at 0.
+# USD per 1M tokens (input, output). Unknown or free models cost-estimate at 0.
 _PRICE_TABLE: dict[str, tuple[float, float]] = {
+    "openrouter/free": (0.0, 0.0),
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-4o": (2.50, 10.00),
     "gpt-4.1-mini": (0.40, 1.60),
     "claude-3-5-haiku-latest": (0.80, 4.00),
+    "claude-3-5-haiku": (0.80, 4.00),
+    "claude-3-5-sonnet": (3.00, 15.00),
     "claude-sonnet-4-5": (3.00, 15.00),
 }
 
 
 class LLMError(Exception):
-    pass
+    """Raised when the upstream LLM fails or is not configured."""
 
 
 @dataclass(slots=True)
@@ -48,6 +61,9 @@ class Usage:
     output_tokens: int = 0
 
     def cost_usd(self, model: str) -> float:
+        m = (model or "").strip().lower()
+        if not m or m == "openrouter/free" or m.endswith(":free"):
+            return 0.0
         prices = _PRICE_TABLE.get(model)
         if prices is None:
             # Prefix match so dated snapshots ("-2024-07-18") still price.
@@ -80,36 +96,104 @@ async def _sse_payloads(lines: AsyncIterator[str]) -> AsyncIterator[dict[str, An
 
 
 class LLMGateway:
-    """Single entrypoint used by the synthesizer; provider chosen from settings."""
+    """Single entrypoint used by the synthesizer; provider chosen from settings or overrides."""
 
-    def __init__(self, settings: Settings, *, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        client: httpx.AsyncClient | None = None,
+        *,
+        request_override: LLMOverride | None = None,
+        use_runtime_store: bool = True,
+    ) -> None:
         self._settings = settings
+        self.settings = settings
         self._client = client
+        self._request_override = request_override
+        self._use_runtime_store = use_runtime_store
+
+    def with_override(self, override: LLMOverride | None) -> LLMGateway:
+        """Return a gateway view isolated to ``override`` for a single request."""
+        if override is None:
+            return self
+        merged = override
+        if self._request_override is not None:
+            data = self._request_override.model_dump(exclude_none=True)
+            data.update(override.model_dump(exclude_none=True))
+            merged = LLMOverride(**data)
+        return LLMGateway(
+            self._settings,
+            client=self._client,
+            request_override=merged,
+            use_runtime_store=self._use_runtime_store,
+        )
+
+    def resolve_target(self) -> ResolvedLLMTarget:
+        runtime_ov = get_runtime_llm_store().get_override() if self._use_runtime_store else None
+        return resolve_llm_target(
+            self._settings,
+            runtime_override=runtime_ov,
+            request_override=self._request_override,
+        )
 
     @property
     def provider(self) -> str:
-        return self._settings.llm_provider
+        return self.resolve_target().provider
 
-    def _require_provider(self) -> None:
-        if self._settings.llm_provider == "none":
-            raise LLMError(
-                "LLM provider is 'none': set LLM_PROVIDER plus an API key to use /v1/answer"
-            )
+    @property
+    def default_quick_model(self) -> str:
+        return self.resolve_target().quick_model
 
-    def _headers(self, model: str) -> dict[str, str]:
-        if self._settings.llm_provider == "anthropic":
-            return {
-                "x-api-key": self._settings.anthropic_api_key,
+    @property
+    def default_report_model(self) -> str:
+        return self.resolve_target().report_model
+
+    def _effective_model(
+        self,
+        requested_model: str | None,
+        target: ResolvedLLMTarget,
+        *,
+        task: str = "answer",
+    ) -> str:
+        if self._request_override and self._request_override.model:
+            return self._request_override.model
+        runtime_ov = get_runtime_llm_store().get_override() if self._use_runtime_store else None
+        if runtime_ov and runtime_ov.model:
+            return runtime_ov.model
+        if not requested_model:
+            return target.report_model if task == "report" else target.quick_model
+        if target.provider != "openai":
+            if requested_model == "gpt-4o-mini":
+                return target.quick_model
+            if requested_model == "gpt-4o":
+                return target.report_model
+        return requested_model
+
+    def _headers_for(self, target: ResolvedLLMTarget) -> dict[str, str]:
+        if target.protocol == "anthropic":
+            headers: dict[str, str] = {
+                "x-api-key": target.api_key,
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
             }
-        return {"Authorization": f"Bearer {self._settings.openai_api_key}"}
+            headers.update(target.extra_headers)
+            return headers
+        headers = {"content-type": "application/json"}
+        if target.api_key:
+            headers["Authorization"] = f"Bearer {target.api_key}"
+        headers.update(target.extra_headers)
+        return headers
 
-    def _body(
-        self, messages: list[dict[str, str]], model: str, *, max_tokens: int
+    def _body_for(
+        self,
+        target: ResolvedLLMTarget,
+        messages: list[dict[str, str]],
+        model: str,
+        *,
+        max_tokens: int,
+        temperature: float,
     ) -> dict[str, Any]:
-        temperature = self._settings.llm_temperature
-        if self._settings.llm_provider == "anthropic":
+        if target.protocol == "anthropic":
             system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
             return {
                 "model": model,
@@ -119,45 +203,174 @@ class LLMGateway:
                 "stream": True,
                 "messages": [m for m in messages if m["role"] != "system"],
             }
-        return {
+        payload: dict[str, Any] = {
             "model": model,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
-            "stream_options": {"include_usage": True},
             "messages": messages,
         }
+        if target.provider not in ("pollinations",):
+            payload["stream_options"] = {"include_usage": True}
+        return payload
 
-    def _url(self) -> str:
-        if self._settings.llm_provider == "anthropic":
-            return f"{self._settings.anthropic_base_url.rstrip('/')}/messages"
-        return f"{self._settings.openai_base_url.rstrip('/')}/chat/completions"
+    def _url_for(self, target: ResolvedLLMTarget) -> str:
+        base = target.base_url.rstrip("/")
+        if target.protocol == "anthropic":
+            return f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
+        return f"{base}/chat/completions"
 
     async def stream(
         self,
         messages: list[dict[str, str]],
         *,
-        model: str,
+        model: str | None = None,
         max_tokens: int | None = None,
+        temperature: float | None = None,
+        task: str = "answer",
     ) -> AsyncIterator[StreamDelta]:
-        """Stream answer deltas; the last delta carries usage for metering."""
-        self._require_provider()
-        settings = self._settings
-        body = self._body(messages, model, max_tokens=max_tokens or settings.llm_answer_max_tokens)
-        async with self._stream_response(body, self._headers(model)) as resp:
-            if resp.status_code >= 400:
-                detail = (await resp.aread()).decode(errors="replace")[:500]
-                raise LLMError(f"LLM HTTP {resp.status_code}: {detail}")
-            async for payload in _sse_payloads(resp.aiter_lines()):
-                delta, usage = _parse_delta(payload, settings.llm_provider)
-                if delta is not None or usage is not None:
-                    yield StreamDelta(text=delta, usage=usage)
+        """Stream answer deltas; supports OpenRouter free model failover & fallback provider."""
+        target = self.resolve_target()
+        if target.provider == "none" or target.protocol == "none":
+            if target.fallback_provider and target.fallback_provider != "none":
+                target = resolve_llm_target(
+                    self._settings,
+                    request_override=LLMOverride(provider=target.fallback_provider),  # type: ignore[arg-type]
+                )
+            else:
+                raise LLMError(
+                    "LLM provider is 'none': set LLM_PROVIDER plus an API key to use /v1/answer"
+                )
+
+        eff_model = self._effective_model(model, target, task=task)
+        max_tok = max_tokens or self._settings.llm_answer_max_tokens
+        temp = self._settings.llm_temperature if temperature is None else temperature
+        emitted_any = False
+
+        try:
+            async for delta in self._stream_once(
+                target, messages, eff_model, max_tokens=max_tok, temperature=temp
+            ):
+                if delta.text:
+                    emitted_any = True
+                yield delta
+            return
+        except LLMError as primary_exc:
+            if emitted_any:
+                raise
+            # 1) OpenRouter free model failover chain when primary free model is rate-limited
+            if target.provider == "openrouter" and target.api_key and target.fallback_models:
+                for alt_model in target.fallback_models:
+                    if alt_model == eff_model:
+                        continue
+                    try:
+                        logger.info(
+                            "openrouter_free_model_fallback",
+                            failed_model=eff_model,
+                            fallback_model=alt_model,
+                        )
+                        async for delta in self._stream_once(
+                            target, messages, alt_model, max_tokens=max_tok, temperature=temp
+                        ):
+                            yield delta
+                        return
+                    except LLMError:
+                        continue
+
+            # 2) Cross-provider fallback (e.g. Pollinations keyless free or secondary provider)
+            if (
+                target.fallback_provider
+                and target.fallback_provider != "none"
+                and target.fallback_provider != target.provider
+            ):
+                try:
+                    fb_target = resolve_llm_target(
+                        self._settings,
+                        request_override=LLMOverride(provider=target.fallback_provider),  # type: ignore[arg-type]
+                    )
+                    fb_model = self._effective_model(None, fb_target, task=task)
+                    logger.info(
+                        "llm_provider_fallback",
+                        primary_provider=target.provider,
+                        fallback_provider=fb_target.provider,
+                        fallback_model=fb_model,
+                        reason=str(primary_exc)[:120],
+                    )
+                    async for delta in self._stream_once(
+                        fb_target, messages, fb_model, max_tokens=max_tok, temperature=temp
+                    ):
+                        yield delta
+                    return
+                except LLMError:
+                    pass
+            raise primary_exc
+
+    async def _stream_once(
+        self,
+        target: ResolvedLLMTarget,
+        messages: list[dict[str, str]],
+        model: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> AsyncIterator[StreamDelta]:
+        if not target.base_url:
+            raise LLMError(f"Base URL is not configured for LLM provider '{target.provider}'")
+        if not target.api_key and target.provider not in ("pollinations", "ollama", "custom"):
+            raise LLMError(
+                f"API key for provider '{target.provider}' is not set "
+                f"(configure via .env or PATCH /v1/llm/config)"
+            )
+        url = self._url_for(target)
+        headers = self._headers_for(target)
+        body = self._body_for(
+            target, messages, model, max_tokens=max_tokens, temperature=temperature
+        )
+        client = self._client or get_http_client()
+        try:
+            async with client.stream(
+                "POST",
+                url,
+                json=body,
+                headers=headers,
+                timeout=self._settings.request_timeout_s,
+            ) as resp:
+                if resp.status_code >= 400:
+                    detail = (await resp.aread()).decode(errors="replace")[:500]
+                    raise LLMError(f"LLM HTTP {resp.status_code}: {detail}")
+                content_type = resp.headers.get("content-type", "").lower()
+                # Support non-streaming JSON responses from lightweight OpenAI-compatible proxies
+                if "application/json" in content_type and "event-stream" not in content_type:
+                    raw_bytes = await resp.aread()
+                    payload = json.loads(raw_bytes.decode("utf-8", errors="replace"))
+                    choices = payload.get("choices") or []
+                    if choices:
+                        msg = choices[0].get("message") or choices[0].get("delta") or {}
+                        content = msg.get("content")
+                        if content:
+                            yield StreamDelta(text=str(content))
+                    if payload.get("usage"):
+                        u = payload["usage"]
+                        yield StreamDelta(
+                            usage=Usage(
+                                input_tokens=int(u.get("prompt_tokens") or 0),
+                                output_tokens=int(u.get("completion_tokens") or 0),
+                            )
+                        )
+                    return
+
+                async for payload in _sse_payloads(resp.aiter_lines()):
+                    delta, usage = _parse_delta(payload, target.protocol)
+                    if delta is not None or usage is not None:
+                        yield StreamDelta(text=delta, usage=usage)
+        except httpx.HTTPError as exc:
+            raise LLMError(f"{target.provider} transport error: {type(exc).__name__}") from exc
 
     async def complete(
         self,
         messages: list[dict[str, str]],
         *,
-        model: str,
+        model: str | None = None,
         max_tokens: int | None = None,
         task: str = "intent",
     ) -> tuple[str, Usage]:
@@ -167,6 +380,8 @@ class LLMGateway:
         (docs/04 §4); usage is metered per ``task`` so a research job can
         total its spend.
         """
+        target = self.resolve_target()
+        eff_model = self._effective_model(model, target, task=task)
         text_parts: list[str] = []
         usage = Usage()
         delay = 0.5
@@ -175,14 +390,16 @@ class LLMGateway:
             text_parts.clear()
             usage = Usage()
             try:
-                async for delta in self.stream(messages, model=model, max_tokens=max_tokens):
+                async for delta in self.stream(
+                    messages, model=eff_model, max_tokens=max_tokens, task=task
+                ):
                     if delta.text:
                         text_parts.append(delta.text)
                     if delta.usage:
                         usage.input_tokens += delta.usage.input_tokens
                         usage.output_tokens += delta.usage.output_tokens
                 output = "".join(text_parts)
-                self._schedule_trace_complete(task, messages, model, output, usage)
+                self._schedule_trace_complete(task, messages, eff_model, output, usage)
                 return output, usage
             except LLMError as exc:
                 last_error = exc
@@ -221,25 +438,10 @@ class LLMGateway:
             },
         )
 
-    @asynccontextmanager
-    async def _stream_response(
-        self, body: dict[str, Any], headers: dict[str, str]
-    ) -> AsyncIterator[httpx.Response]:
-        url = self._url()
-        client = self._client or get_http_client()
-        async with client.stream(
-            "POST",
-            url,
-            json=body,
-            headers=headers,
-            timeout=self._settings.request_timeout_s,
-        ) as resp:
-            yield resp
 
-
-def _parse_delta(payload: dict[str, Any], provider: str) -> tuple[str | None, Usage | None]:
+def _parse_delta(payload: dict[str, Any], protocol: str) -> tuple[str | None, Usage | None]:
     """Extract (text, usage) from one SSE payload; either side may be absent."""
-    if provider == "anthropic":
+    if protocol == "anthropic":
         return _parse_anthropic(payload)
     return _parse_openai(payload)
 

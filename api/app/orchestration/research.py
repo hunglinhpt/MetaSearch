@@ -31,6 +31,7 @@ from app.extraction.scraper import PageContent, Scraper
 from app.llm.citations import validate_citations
 from app.llm.gateway import LLMError, LLMGateway, Usage
 from app.llm.prompts import SYSTEM_PROMPT
+from app.llm.providers import LLMOverride
 from app.orchestration import persist
 from app.orchestration.pipeline import (
     Event,
@@ -579,6 +580,7 @@ class ResearchParams:
     k: int = 6  # results per sub-query
     profile: str = "auto"  # auto | general | developer | academic | comparative | financial | ...
     research_id: uuid.UUID | None = None
+    llm_override: LLMOverride | None = None
 
 
 class ResearchPipeline:
@@ -605,6 +607,17 @@ class ResearchPipeline:
         depth = max(1, min(params.depth, self.settings.research_max_iterations))
         usage_total = Usage()
 
+        gateway = (
+            self.gateway.with_override(params.llm_override)
+            if params.llm_override is not None and hasattr(self.gateway, "with_override")
+            else self.gateway
+        )
+        quick_model = getattr(gateway, "default_quick_model", self.settings.llm_quick_model)
+        report_model = getattr(gateway, "default_report_model", self.settings.llm_report_model)
+        if params.llm_override and params.llm_override.model:
+            quick_model = params.llm_override.model
+            report_model = params.llm_override.model
+
         profile_name = detect_profile(question, params.profile)
         harness = HARNESS_PROFILES.get(profile_name, HARNESS_PROFILES["general"])
 
@@ -613,7 +626,7 @@ class ResearchPipeline:
             {"stage": "planning", "detail": f"{question} [profile: {harness.profile}]"},
         )
         sub_queries, categories, plan_usage = await self._plan(
-            question, breadth, params.lang, harness
+            question, breadth, params.lang, harness, gateway=gateway, model=quick_model
         )
         usage_total.input_tokens += plan_usage.input_tokens
         usage_total.output_tokens += plan_usage.output_tokens
@@ -688,7 +701,11 @@ class ResearchPipeline:
                 persist.persist_pages(ok_pages, accepted)
 
             learnings, gaps, usage = await self._extract(
-                question, _render_pack(accepted, start=chunk_start + 1), harness
+                question,
+                _render_pack(accepted, start=chunk_start + 1),
+                harness,
+                gateway=gateway,
+                model=quick_model,
             )
             usage_total.input_tokens += usage.input_tokens
             usage_total.output_tokens += usage.output_tokens
@@ -714,7 +731,7 @@ class ResearchPipeline:
             messages = _report_messages(
                 question, pack.learnings, _render_pack(included), harness=harness
             )
-            async for delta in self.gateway.stream(messages, model=self.settings.llm_report_model):
+            async for delta in gateway.stream(messages, model=report_model):
                 if delta.text:
                     answer_parts.append(delta.text)
                     yield ("report_token", {"t": delta.text})
@@ -725,7 +742,7 @@ class ResearchPipeline:
             logger.warning("research_report_llm_failed", error=str(exc)[:200])
             yield ("error", {"code": "internal", "message": str(exc)[:200]})
             return
-        record_usage_safe(self.settings.llm_report_model, usage_total)
+        record_usage_safe(report_model, usage_total)
 
         check = validate_citations("".join(answer_parts), list(enumerate(included, start=1)))
         citations_payload = [
@@ -745,12 +762,12 @@ class ResearchPipeline:
                 "status": "complete",
                 "truncated": truncated,
                 "iterations": depth if truncated else None,
-                "model": self.settings.llm_report_model,
+                "model": report_model,
                 "profile": harness.profile,
                 "usage": {
                     "input_tokens": usage_total.input_tokens,
                     "output_tokens": usage_total.output_tokens,
-                    "cost_usd": round(usage_total.cost_usd(self.settings.llm_report_model), 6),
+                    "cost_usd": round(usage_total.cost_usd(report_model), 6),
                 },
             },
         )
@@ -760,10 +777,10 @@ class ResearchPipeline:
             question=params.query,
             lang=params.lang,
             content_md=check.text,
-            model=self.settings.llm_report_model,
+            model=report_model,
             input_tokens=usage_total.input_tokens,
             output_tokens=usage_total.output_tokens,
-            cost_usd=usage_total.cost_usd(self.settings.llm_report_model),
+            cost_usd=usage_total.cost_usd(report_model),
             latency_ms=latency_ms,
             citations=[(c.n, c.url, c.title, c.chunk_id) for c in check.citations],
             truncated=truncated,
@@ -777,13 +794,18 @@ class ResearchPipeline:
         breadth: int,
         lang: str | None,
         harness: ResearchHarness | None = None,
+        *,
+        gateway: LLMGateway | None = None,
+        model: str | None = None,
     ) -> tuple[list[tuple[str, str]], list[str], Usage]:
         """Planner LLM call with domain-adaptive harness; heuristic fallback."""
         h = harness or HARNESS_PROFILES["general"]
+        gw = gateway or self.gateway
+        eff_model = model or self.settings.llm_quick_model
         try:
-            text, usage = await self.gateway.complete(
+            text, usage = await gw.complete(
                 _planner_messages(question, breadth, lang, harness=h),
-                model=self.settings.llm_quick_model,
+                model=eff_model,
                 task="planner",
             )
             parsed = _extract_json(text)
@@ -826,12 +848,17 @@ class ResearchPipeline:
         question: str,
         chunk_text: str,
         harness: ResearchHarness | None = None,
+        *,
+        gateway: LLMGateway | None = None,
+        model: str | None = None,
     ) -> tuple[list[Learning], list[str], Usage]:
         capped = chunk_text[:_EXTRACTOR_MAX_CHARS]
+        gw = gateway or self.gateway
+        eff_model = model or self.settings.llm_quick_model
         try:
-            text, usage = await self.gateway.complete(
+            text, usage = await gw.complete(
                 _extractor_messages(question, capped, harness=harness),
-                model=self.settings.llm_quick_model,
+                model=eff_model,
                 task="extractor",
             )
             parsed = _extract_json(text)

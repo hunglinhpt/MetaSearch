@@ -17,6 +17,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from app.llm.providers import LLMOverride
 from app.orchestration.research import ResearchParams
 from app.orchestration.research_jobs import get_job_store, run_job
 
@@ -35,6 +36,7 @@ class ResearchRequest(BaseModel):
     max_time_s: int | None = Field(default=None, ge=10, le=600)
     k: int = Field(default=6, ge=1, le=20)
     profile: str = Field(default="auto", pattern=_PROFILE_PATTERN)
+    llm: LLMOverride | None = None
 
 
 @router.post("/research", status_code=202)
@@ -50,6 +52,7 @@ async def create_research(request: ResearchRequest) -> dict[str, Any]:
         k=request.k,
         profile=request.profile,
         research_id=job.id,
+        llm_override=request.llm,
     )
     task = asyncio.create_task(run_job(job, params))
     _active_research_tasks.add(task)

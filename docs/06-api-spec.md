@@ -106,14 +106,28 @@ Response: mỗi URL 1 object `{url, status, markdown, title, extractor_used, err
 | PATCH | `/v1/engines/{id}` | `admin` | Đổi `enabled`, `weight`, `timeout_ms`, `max_results` — hiệu lực ngay, không restart |
 | GET | `/v1/engines/health` | `user`/`admin` | Success rate, p50/p95 latency, consecutive_failures, disabled_reason |
 
-## 7. Operations & Debug
+## 7. LLM Configuration & External System LLM Integration (`/v1/llm/*`, `/v1/context`, `/v1/citations/validate`)
+
+| Method | Path | Quyền | Mô tả |
+|---|---|---|---|
+| GET | `/v1/llm/providers` | `user`/`admin` | Danh mục 13 provider presets (`openrouter` với `openrouter/free`, `pollinations` keyless free, `gemini`, `groq`, `cerebras`, `mistral`, `github_models`, `huggingface`, `ollama`, `custom`, `openai`, `anthropic`, `none`) + cấu hình đang kích hoạt |
+| GET | `/v1/llm/config` | `user`/`admin` | Xem cấu hình LLM hiện tại (API key đã được che mặt nạ `sk-o...xxxx`) |
+| PATCH | `/v1/llm/config` | `admin` | Cập nhật nóng `provider`, `protocol`, `base_url`, `api_key`, `quick_model`, `report_model`, `fallback_provider`, `extra_headers` ngay lập tức không cần restart |
+| POST | `/v1/llm/config/reset` | `admin` | Khôi phục cấu hình LLM về mặc định từ biến môi trường `.env` |
+| POST | `/v1/llm/test` | `user`/`admin` | Gửi gói tin kiểm tra kết nối và đo độ trễ `latency_ms` tới LLM endpoint |
+| POST | `/v1/context` | `user`/`admin` | **Context-Only RAG cho hệ thống ngoài đã có sẵn LLM**: chạy 19 search engines + BCTC Forensics/Technicals + Scrape + Chunk + Rerank → trả về `{query_id, normalized_query, inferred_categories, context_md, system_prompt, messages, chunks, sources, latency_ms}` |
+| POST | `/v1/citations/validate` | `user`/`admin` | **Hậu kiểm trích dẫn cho LLM ngoài**: nhận `{answer_md, chunks}` từ LLM của hệ thống đối tác, loại bỏ citation giả mạo và trả về `{validated_answer_md, citations, invalid_markers}` |
+
+Ngoài ra, `POST /v1/answer` và `POST /v1/research` hỗ trợ trường tùy chọn `llm` (`LLMOverride`) để ghi đè `provider`, `base_url`, `api_key`, `model`, `extra_headers` theo từng request.
+
+## 8. Operations & Debug
 
 - `GET /healthz` → liveness; `GET /readyz` → check DB/Redis/SearXNG (tự động thích ứng Lite profile).
 - `GET /metrics` → Prometheus metrics (`metasearch_http_requests_total`, `metasearch_http_request_duration_seconds`, `metasearch_cache_events_total`, ...).
 - `GET /v1/ops/status` → tổng hợp trạng thái giants, 19 engines, DB/Redis.
 - `GET /v1/queries` & `GET /v1/queries/{id}` → lịch sử và chi tiết query (graceful fallback khi DB offline).
 
-## 8. Error model (chuẩn RFC 7807-ish)
+## 9. Error model (chuẩn RFC 7807-ish)
 
 ```json
 {

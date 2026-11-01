@@ -98,6 +98,9 @@ def get_scanner():
 
 def reset_pipelines() -> None:
     """Drop cached providers (used by tests and by settings changes)."""
+    from app.llm.providers import get_runtime_llm_store
+
+    get_runtime_llm_store().reset()
     for provider in (
         get_scanner,
         get_answer_pipeline,

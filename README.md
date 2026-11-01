@@ -2,12 +2,13 @@
 
 > Hệ thống tìm kiếm đa nguồn & phân tích định lượng phục vụ AI: **Meta-Search (SearXNG 70+ engines + 14 Vertical Engines) → Crawl & Extract → Dedup/Consensus/Rerank → Synthesize có trích dẫn `[n]`**, đóng gói thành REST API + SSE Streaming + MCP Server + Automated Daily Briefings Blog + Web UI.
 
-Trạng thái: **v1.0.0 — Institutional Release (Phase 0–5 Hoàn Tất)**:
+Trạng thái: **v1.1.0 — Institutional Release + OpenRouter Free & External LLM Integration (Phase 0–5 Hoàn Tất)**:
 - **19 Search Engines** (5 General/Keyed: `searxng`, `ddg`, `tavily`, `serper`, `brave` + **14 Vertical Engines**: `viet_stock`, `stooq`, `yahoo_finance`, `sec_edgar`, `fengshui`, `google_news`, `arxiv`, `pubmed`, `semanticscholar`, `github`, `huggingface`, `stackoverflow`, `reddit`, `wikipedia`) kèm cơ chế **Smart Category Routing** tự động kích hoạt chuyên ngành.
+- **OpenRouter Free (`openrouter/free`) & 13 LLM Presets + Tích Hợp Hệ Thống Ngoài (`v1.1.0`)**: Cấu hình sẵn [OpenRouter Free Models Router (`openrouter/free`)](https://openrouter.ai/openrouter/free) ($0/M input & output), Pollinations AI (Keyless 100% Free), Google Gemini Free, Groq LPU Free, Cerebras Free, Mistral Free, GitHub Models, HuggingFace Router, Ollama/vLLM Local, và Custom Enterprise BYO-LLM. Hỗ trợ **Hot-Config qua UI/API (`PATCH /v1/llm/config`)** và **Tích hợp 2 chiều với hệ thống đã có sẵn LLM (`POST /v1/context` & `POST /v1/citations/validate`)**.
 - **Thẩm Định Pháp Y BCTC Chuyên Sâu (`financial_forensics.py`)**: Phân nhánh theo đặc thù ngành — **Ngân hàng (CAMELS / Basel II-III: CAR, NPL, Nợ nhóm 2, LLR, NIM, CASA, LDR, CIR)**, **Chứng khoán (Margin/VCSH so với trần 200%, FVTPL/HTM/AFS, Tỷ lệ an toàn tài chính)**, **Bất động sản & KCN (Người mua trả tiền trước / Của để dành, Tồn kho/Tài sản)**, **Sản xuất (Cấu trúc nợ, DSO, CFO/Net Income)** kèm **Altman Z-Score**, **Beneish M-Score**, **Piotroski F-Score (9 tiêu chí)**.
 - **Phân Tích Kỹ Thuật Định Lượng (`technical_analysis.py`)**: **Fibonacci Retracement & Golden Pocket (`61.8%–65.0%`) + Extensions (`127.2%`, `261.8%`)**, **Ichimoku Kinko Hyo (Tenkan/Kijun/Senkou A-B/Chikou Span)**, **True EMA-based MACD**, **Wilder's RSI & 2x ATR Trailing Stop**, **Stochastic (`%K`, `%D`)**, **Multi-EMA Ribbon (`20/50/200`)**, **Kênh hồi quy tuyến tính $\pm 2\sigma$ ($R^2$)**, **8 mẫu hình giá/nến**, và **Custom Indicator Query Parser** (`RSI 9`, `MACD 8 21 5`, `Bollinger 15 2.5`...).
 - **Deep Research (`Harness²` 8 Profiles) + MCP Server (4 Tools) + Automated Scanner & Daily Briefings Blog (`/v1/digests`)**.
-- **Chất lượng kiểm định**: **333 unit tests PASS**, `ruff` 0 lỗi, `bandit` 0 lỗi bảo mật, Next.js 15 build sạch, 40 Golden Evals (`--judge-faithfulness`). Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
+- **Chất lượng kiểm định**: **352 unit tests PASS**, `ruff` 0 lỗi, `bandit` 0 lỗi bảo mật, Next.js 15 build sạch, 40 Golden Evals (`--judge-faithfulness`). Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
 
 ---
 
