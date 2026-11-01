@@ -30,6 +30,68 @@ def _strip_html(text: str) -> str:
     return _WS.sub(" ", _TAG.sub("", text or "")).strip()
 
 
+def _calc_sma(prices: list[float], period: int) -> float | None:
+    if len(prices) < period or period <= 0:
+        return None
+    return sum(prices[-period:]) / period
+
+
+def _calc_rsi(prices: list[float], period: int = 14) -> float | None:
+    if len(prices) < period + 1 or period <= 0:
+        return None
+    deltas = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
+    window_deltas = deltas[-period:]
+    gains = [d for d in window_deltas if d > 0]
+    losses = [-d for d in window_deltas if d < 0]
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    if avg_loss == 0.0:
+        return 100.0 if avg_gain > 0 else 50.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _calc_technical_summary(
+    closes: list[float], volumes: list[float], current_price: float | None
+) -> str:
+    valid_closes = [float(c) for c in closes if c is not None and isinstance(c, (int, float))]
+    valid_vols = [float(v) for v in volumes if v is not None and isinstance(v, (int, float))]
+    if not valid_closes:
+        return ""
+
+    parts: list[str] = []
+    rsi = _calc_rsi(valid_closes, 14)
+    if rsi is not None:
+        state = "Overbought" if rsi >= 70 else ("Oversold" if rsi <= 30 else "Neutral")
+        parts.append(f"RSI(14)={rsi:.1f} ({state})")
+
+    sma20 = _calc_sma(valid_closes, 20)
+    if sma20 is not None:
+        parts.append(f"SMA20={sma20:,.2f}")
+
+    sma50 = _calc_sma(valid_closes, 50)
+    if sma50 is not None:
+        parts.append(f"SMA50={sma50:,.2f}")
+
+    if current_price is not None and sma20 is not None and sma50 is not None:
+        if current_price >= sma20 >= sma50:
+            parts.append("Trend: Bullish ↑")
+        elif current_price <= sma20 <= sma50:
+            parts.append("Trend: Bearish ↓")
+        else:
+            parts.append("Trend: Neutral/Consolidating")
+
+    if len(valid_vols) >= 20 and valid_vols[-1] > 0:
+        avg_vol20 = sum(valid_vols[-20:]) / 20
+        if avg_vol20 > 0:
+            ratio = valid_vols[-1] / avg_vol20
+            parts.append(f"Vol={ratio:.1f}x 20D")
+
+    if not parts:
+        return ""
+    return " · Techs: " + " · ".join(parts)
+
+
 class YahooFinanceAdapter:
     id = "yahoo_finance"
 
@@ -96,8 +158,9 @@ class YahooFinanceAdapter:
             if sym:
                 primary_symbols.append(sym)
 
-        # Attempt to fetch price info for the top symbol if available
+        # Attempt to fetch price & technical chart info for primary symbols
         price_meta: dict[str, dict] = {}
+        price_tech: dict[str, str] = {}
         if primary_symbols:
             top_sym = primary_symbols[0]
             try:
@@ -106,7 +169,7 @@ class YahooFinanceAdapter:
                 ) as client:
                     c_resp = await client.get(
                         f"{self.chart_url}/{top_sym}",
-                        params={"interval": "1d", "range": "5d"},
+                        params={"interval": "1d", "range": "3mo"},
                         headers=headers,
                     )
                     if c_resp.status_code == 200:
@@ -115,6 +178,15 @@ class YahooFinanceAdapter:
                         if chart_res:
                             meta = chart_res[0].get("meta") or {}
                             price_meta[top_sym] = meta
+                            indicators = chart_res[0].get("indicators") or {}
+                            quote_list = indicators.get("quote") or [{}]
+                            q_item = quote_list[0] if quote_list else {}
+                            closes = q_item.get("close") or []
+                            vols = q_item.get("volume") or []
+                            cur_price = meta.get("regularMarketPrice")
+                            tech_str = _calc_technical_summary(closes, vols, cur_price)
+                            if tech_str:
+                                price_tech[top_sym] = tech_str
             except Exception as exc:
                 logger.debug("Yahoo Finance chart enrichment skipped: %s", exc)
 
@@ -155,10 +227,11 @@ class YahooFinanceAdapter:
                     if lo_52 is not None and hi_52 is not None
                     else ""
                 )
+                tech_str = price_tech.get(symbol, "")
 
                 snippet = (
-                    f"[{symbol} · {quote_type}] Price: {price_str}{change_str}{range_str} · "
-                    f"Exch: {exchange} · Sector: {sector or industry or 'General'}"
+                    f"[{symbol} · {quote_type}] Price: {price_str}{change_str}{range_str}"
+                    f"{tech_str} · Exch: {exchange} · Sector: {sector or industry or 'General'}"
                 )
             else:
                 extra_sec = f" · Sector: {sector}" if sector else ""

@@ -8,7 +8,12 @@ import pytest
 from app.orchestration.research import detect_profile
 from app.retrieval.adapters.base import AdapterError
 from app.retrieval.adapters.sec_edgar import SecEdgarAdapter
-from app.retrieval.adapters.yahoo_finance import YahooFinanceAdapter
+from app.retrieval.adapters.yahoo_finance import (
+    YahooFinanceAdapter,
+    _calc_rsi,
+    _calc_sma,
+    _calc_technical_summary,
+)
 
 
 @pytest.fixture
@@ -75,7 +80,77 @@ class TestYahooFinance:
                                         "fiftyTwoWeekHigh": 144.00,
                                         "fiftyTwoWeekLow": 45.00,
                                         "currency": "USD",
-                                    }
+                                    },
+                                    "indicators": {
+                                        "quote": [
+                                            {
+                                                "close": [
+                                                    100.0,
+                                                    101.5,
+                                                    103.0,
+                                                    104.5,
+                                                    106.0,
+                                                    107.5,
+                                                    109.0,
+                                                    110.5,
+                                                    112.0,
+                                                    113.5,
+                                                    115.0,
+                                                    116.5,
+                                                    118.0,
+                                                    119.5,
+                                                    121.0,
+                                                    122.5,
+                                                    124.0,
+                                                    125.5,
+                                                    127.0,
+                                                    128.5,
+                                                    130.0,
+                                                    131.5,
+                                                    133.0,
+                                                    134.5,
+                                                    136.0,
+                                                    137.5,
+                                                    139.0,
+                                                    140.5,
+                                                    142.0,
+                                                    143.5,
+                                                ],
+                                                "volume": [
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                    10000000,
+                                                ],
+                                            }
+                                        ]
+                                    },
                                 }
                             ]
                         }
@@ -94,6 +169,9 @@ class TestYahooFinance:
         assert "140.50 USD" in q_res.snippet
         assert "+4.07%" in q_res.snippet
         assert "52w Range: 45.00 - 144.00" in q_res.snippet
+        assert "Techs: " in q_res.snippet
+        assert "RSI(14)=" in q_res.snippet
+        assert "SMA20=" in q_res.snippet
         assert q_res.url == "https://finance.yahoo.com/quote/NVDA/"
         assert q_res.source_engines == ["yahoo_finance"]
 
@@ -130,6 +208,29 @@ class TestYahooFinance:
         assert len(results) == 1
         assert "FPT.VN - FPT Corp" in results[0].title
         assert "Exchange: HOSE" in results[0].snippet
+
+    def test_technical_indicators_math(self):
+        # SMA test
+        prices = [10.0, 20.0, 30.0, 40.0, 50.0]
+        assert _calc_sma(prices, 3) == 40.0
+        assert _calc_sma(prices, 10) is None
+        assert _calc_sma([], 3) is None
+
+        # RSI test: Strictly increasing sequence should yield high RSI
+        up_prices = [10.0 + i for i in range(25)]
+        rsi_up = _calc_rsi(up_prices, 14)
+        assert rsi_up is not None and rsi_up > 90.0
+
+        # Strictly decreasing sequence should yield low RSI
+        down_prices = [100.0 - i for i in range(25)]
+        rsi_down = _calc_rsi(down_prices, 14)
+        assert rsi_down is not None and rsi_down < 10.0
+
+        # Technical summary string
+        summary = _calc_technical_summary(up_prices, [1000] * 25, 35.0)
+        assert "RSI(14)=" in summary
+        assert "SMA20=" in summary
+        assert "Vol=" in summary
 
 
 class TestSecEdgar:

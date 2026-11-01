@@ -36,7 +36,7 @@ orchestration không đổi.
 |---|---|---|
 | FR-1 | Search SearXNG 1 request | ✅ |
 | FR-2 | Tavily/Serper/Brave adapters | ✅ (cả 3) |
-| FR-3 | Vertical engines & Daily Digest (arXiv, SO, Reddit, Wiki, GitHub, PubMed, HF, S2, Yahoo Fin, SEC, Google News, FengShui) | ✅ (12 vertical engines - 17 total) |
+| FR-3 | Vertical engines & Daily Digest (arXiv, SO, Reddit, Wiki, GitHub, PubMed, HF, S2, Yahoo Fin, SEC, Google News, FengShui) | ✅ (13 vertical engines - 18 total: viet_stock HSX/HNX, Yahoo Fin, SEC, Google News, FengShui,...) |
 | FR-4 | Dedup canonical + SimHash + consensus | ✅ |
 | FR-5 | Diversity cap | ✅ |
 | FR-6 | Extract chain (trafilatura→crawl4ai→jina) | ✅ |

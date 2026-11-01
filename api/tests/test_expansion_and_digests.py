@@ -6,12 +6,20 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import Settings
+from app.db.models import BlogPost
 from app.main import create_app
+from app.orchestration.notifier import NotificationDispatcher
 from app.orchestration.research import detect_profile
-from app.orchestration.scheduler import DEFAULT_TOPICS, synthesize_blog_content
+from app.orchestration.scheduler import (
+    DEFAULT_TOPICS,
+    _build_delta_section,
+    synthesize_blog_content,
+)
 from app.retrieval.adapters.base import AdapterError
 from app.retrieval.adapters.fengshui import FengShuiAdapter, _calc_cung_phi_nam, _calc_cung_phi_nu
 from app.retrieval.adapters.google_news import GoogleNewsAdapter
+from app.retrieval.models import RawResult
 
 
 @pytest.fixture
@@ -207,3 +215,134 @@ class TestDigestsAndScanner:
         id_resp = client.get(f"/v1/digests/{post_id}")
         assert id_resp.status_code == 200
         assert id_resp.json()["id"] == post_id
+
+
+class TestNotificationDispatcher:
+    async def test_empty_config_skips_silently(self):
+        settings = Settings(
+            telegram_bot_token="",
+            telegram_chat_id="",
+            webhook_url="",
+            discord_webhook_url="",
+        )
+        dispatcher = NotificationDispatcher(settings)
+        post = BlogPost(title="Test", summary="Summary", slug="test", topic="ai_coding")
+        res = await dispatcher.send_briefing_notification(post)
+        assert res == {"telegram": False, "webhook": False, "discord": False}
+
+    async def test_dispatches_to_all_channels_successfully(self, patched_httpx):
+        settings = Settings(
+            telegram_bot_token="bot_12345",
+            telegram_chat_id="chat_67890",
+            webhook_url="https://api.example.com/webhook",
+            discord_webhook_url="https://discord.com/api/webhooks/123/abc",
+        )
+
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            calls.append(url_str)
+            if "api.telegram.org" in url_str:
+                return httpx.Response(200, json={"ok": True})
+            elif "discord.com" in url_str:
+                return httpx.Response(204)
+            elif "api.example.com" in url_str:
+                return httpx.Response(200, json={"status": "received"})
+            return httpx.Response(404)
+
+        patched_httpx("app.orchestration.notifier", handler)
+
+        dispatcher = NotificationDispatcher(settings)
+        post = BlogPost(
+            title="Đột phá AI Coding",
+            summary="Cursor và Sonnet tối ưu hóa quy trình",
+            slug="ai-coding-2026",
+            topic="ai_coding",
+            tags=["ai-coding"],
+            sources=[{"title": "MetaSearch", "url": "https://metasearch.ai"}],
+        )
+
+        res = await dispatcher.send_briefing_notification(post)
+        assert res.get("telegram") is True
+        assert res.get("webhook") is True
+        assert res.get("discord") is True
+        assert len(calls) == 3
+
+    async def test_dispatcher_handles_network_failure_gracefully(self, patched_httpx):
+        settings = Settings(
+            telegram_bot_token="bot_fail",
+            telegram_chat_id="chat_fail",
+            webhook_url="https://api.example.com/failing-webhook",
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, text="Internal Server Error")
+
+        patched_httpx("app.orchestration.notifier", handler)
+
+        dispatcher = NotificationDispatcher(settings)
+        post = BlogPost(title="Test", summary="Summary", slug="test", topic="ai_coding")
+        # Must not raise an exception
+        res = await dispatcher.send_briefing_notification(post)
+        assert res.get("telegram") is False
+        assert res.get("webhook") is False
+
+
+class TestDeltaHighlighting:
+    def test_build_delta_section_without_previous_post(self):
+        section = _build_delta_section(None, [])
+        assert "Bối Cảnh Khởi Điểm" in section
+
+    def test_build_delta_section_with_fresh_items(self):
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        prev_post = BlogPost(
+            title="Kỳ trước",
+            slug="ky-truoc",
+            topic="ai_coding",
+            sources=[{"title": "Cũ 1", "url": "https://example.com/old1"}],
+            published_at=now,
+        )
+
+        current_results = [
+            RawResult(
+                url="https://example.com/fresh-agent",
+                title="Ra mắt mô hình Coding Agent mới",
+                snippet="Hiệu năng tăng 40% trên HumanEval",
+                adapter="test",
+                rank=1,
+            )
+        ]
+
+        section = _build_delta_section(prev_post, current_results)
+        assert "Điểm Mới Trong 24 Giờ Qua" in section
+        assert "Phát Hiện Mới" in section
+        assert "Ra mắt mô hình Coding Agent mới" in section
+
+    def test_build_delta_section_with_no_delta(self):
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        prev_post = BlogPost(
+            title="Kỳ trước",
+            slug="ky-truoc",
+            topic="ai_coding",
+            sources=[{"title": "Tin đã biết", "url": "https://example.com/known"}],
+            published_at=now,
+        )
+
+        current_results = [
+            RawResult(
+                url="https://example.com/known",
+                title="Tin đã biết",
+                snippet="Nội dung giữ nguyên",
+                adapter="test",
+                rank=1,
+            )
+        ]
+
+        section = _build_delta_section(prev_post, current_results)
+        assert "Nhịp Vận Động" in section
+        assert "tiếp tục nhất quán" in section

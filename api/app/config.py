@@ -154,6 +154,11 @@ class Settings(BaseSettings):
     # --- Automated Daily Briefings / Blog Scanner ---
     scheduler_enabled: bool = False
     scheduler_interval_hours: float = 24.0
+    # Notification dispatcher (Telegram, Webhook, Discord)
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    webhook_url: str = ""
+    discord_webhook_url: str = ""
 
     @property
     def is_prod(self) -> bool:

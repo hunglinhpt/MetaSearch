@@ -157,23 +157,26 @@ HARNESS_PROFILES: dict[str, ResearchHarness] = {
         profile="financial",
         default_categories=["financial", "general", "news"],
         planner_instructions=(
-            "Decompose into rigorous financial, equities & market sub-queries covering: "
-            "(1) core valuation & price metrics (P/E, P/B, EV/EBITDA, market cap, dividend yield), "
-            "(2) historical revenue, margins & cash flow growth (quarterly & annual filings), "
-            "(3) regulatory filings & audited disclosures (SEC 10-K/10-Q, debt maturities, risks), "
-            "(4) competitive moat & analyst consensus (price targets, market share, catalysts). "
-            "Categories must include 'financial' and 'general'."
+            "Decompose into rigorous financial, equities & corporate sub-queries covering: "
+            "(1) business plans & results (revenue, profit, plan completion %, YoY growth), "
+            "(2) valuation multiples & key ratios (P/E, P/B, EPS, ROE, ROA, Debt/Equity, BVPS), "
+            "(3) dividend history & policy (cash dividends, stock dividends, ex-dividend dates), "
+            "(4) shareholder structure, foreign room, insider & block trades (thỏa thuận), "
+            "(5) capital restructuring (rights issue, ESOP) and audited regulatory filings. "
+            "Categories must include 'financial', 'general' and 'news'."
         ),
         extractor_instructions=(
-            "Extract concrete financial figures, stock prices, revenue numbers, operating margins, "
-            "valuation multiples, debt levels, and audited disclosures with citations."
+            "Extract concrete financial numbers (revenue, net income, % plan achieved), "
+            "dividend details with ex-dates, major shareholder percentages, insider trade volumes, "
+            "and auditor opinions with full citations."
         ),
         report_structure=(
-            "Structure the report: Executive Summary & Valuation Snapshot -> "
-            "Business Overview & Competitive Moat -> "
-            "Financial Performance (Revenue, Margins & Cash Flow) -> "
-            "Audited Filings & Key Risk Factors (Debt, Regulatory, Macro) -> "
-            "Forward Outlook & Analyst Consensus -> References."
+            "Structure the report: Executive Summary & Corporate Profile -> "
+            "Business Plans vs Actual Financial Performance -> "
+            "Valuation Ratios & Financial Health (P/E, EPS, ROE, Debt) -> "
+            "Dividend History & Capital Restructuring (ESOP, Rights Issue) -> "
+            "Ownership Structure, Major Shareholders & Block Trades (Trao Tay) -> "
+            "Audited Filings, Catalysts & Strategic Outlook -> References."
         ),
     ),
     "news": ResearchHarness(
@@ -269,6 +272,21 @@ def detect_profile(query: str, requested: str = "auto") -> str:
         "báo cáo tài chính",
         "tài chính",
         "cổ tức",
+        "kế hoạch kinh doanh",
+        "kết quả kinh doanh",
+        "bctc",
+        "cổ phần",
+        "cơ cấu cổ đông",
+        "cổ đông lớn",
+        "trao tay",
+        "thỏa thuận",
+        "giao dịch nội bộ",
+        "tăng vốn",
+        "esop",
+        "tin fa",
+        "nghị quyết hđqt",
+        "đại hội cổ đông",
+        "giải trình",
         "thị giá",
         "doanh thu",
         "lợi nhuận",

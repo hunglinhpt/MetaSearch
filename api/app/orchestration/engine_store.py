@@ -52,6 +52,7 @@ ADAPTER_PATHS = {
     "sec_edgar": "app.retrieval.adapters.sec_edgar:SecEdgarAdapter",
     "google_news": "app.retrieval.adapters.google_news:GoogleNewsAdapter",
     "fengshui": "app.retrieval.adapters.fengshui:FengShuiAdapter",
+    "viet_stock": "app.retrieval.adapters.viet_stock:VietStockAdapter",
 }
 
 
@@ -254,6 +255,17 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             max_results=15,
             requires_key=False,
             adapter_path=ADAPTER_PATHS["google_news"],
+        ),
+        "viet_stock": EngineConfig(
+            id="viet_stock",
+            name="Vietnam Stocks HSX/HNX Deep Intelligence (financial)",
+            category="financial",
+            weight=1.5,
+            enabled=True,
+            timeout_ms=3500,
+            max_results=12,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["viet_stock"],
         ),
         "fengshui": EngineConfig(
             id="fengshui",

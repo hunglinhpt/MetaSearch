@@ -31,6 +31,7 @@ from app.retrieval.adapters.semanticscholar import SemanticScholarAdapter
 from app.retrieval.adapters.serper import SerperAdapter
 from app.retrieval.adapters.stackoverflow import StackOverflowAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
+from app.retrieval.adapters.viet_stock import VietStockAdapter
 from app.retrieval.adapters.wikipedia import WikipediaAdapter
 from app.retrieval.adapters.yahoo_finance import YahooFinanceAdapter
 from app.retrieval.models import EngineConfig
@@ -85,6 +86,7 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "sec_edgar": SecEdgarAdapter(user_agent=settings.sec_edgar_user_agent),
         "google_news": GoogleNewsAdapter(),
         "fengshui": FengShuiAdapter(),
+        "viet_stock": VietStockAdapter(),
     }
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)

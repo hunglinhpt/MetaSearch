@@ -21,9 +21,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
+
 from app.core.logging import get_logger
 from app.db.models import BlogPost
 from app.db.session import get_sessionmaker
+from app.orchestration.notifier import NotificationDispatcher
 from app.retrieval.registry import EngineRegistry
 
 logger = get_logger(__name__)
@@ -116,10 +119,64 @@ def _slugify(text: str) -> str:
     return re.sub(r"[-\s]+", "-", cleaned).strip("-")
 
 
+def _build_delta_section(
+    previous_post: BlogPost | None,
+    current_results: list[Any],
+) -> str:
+    """Build a dynamic delta highlighting section comparing against the previous digest."""
+    if not previous_post:
+        return (
+            "## ⚡ Bối Cảnh Khởi Điểm & Dấu Ấn Mới\n"
+            "Đây là bản tin mở đầu cho chuỗi theo dõi tự động của chủ đề này. "
+            "Toàn bộ dữ liệu và chỉ số đóng vai trò là mốc tham chiếu cơ sở (baseline) "
+            "cho các kỳ đối chiếu tiếp theo.\n"
+        )
+
+    prev_date = (
+        previous_post.published_at.strftime("%d/%m/%Y")
+        if getattr(previous_post, "published_at", None)
+        else "kỳ trước"
+    )
+    prev_sources = getattr(previous_post, "sources", []) or []
+    prev_urls = {s.get("url") for s in prev_sources if isinstance(s, dict) and s.get("url")}
+    prev_titles = {
+        s.get("title", "").strip().lower()
+        for s in prev_sources
+        if isinstance(s, dict) and s.get("title")
+    }
+
+    fresh_items: list[Any] = []
+    for r in current_results:
+        u = getattr(r, "url", "")
+        t = getattr(r, "title", "").strip().lower()
+        if (u and u not in prev_urls) and (t and t not in prev_titles):
+            fresh_items.append(r)
+
+    if fresh_items:
+        bullets = []
+        for item in fresh_items[:3]:
+            title = getattr(item, "title", "Tin mới")
+            snippet = getattr(item, "snippet", "")
+            bullets.append(f"- 🚀 **[Phát Hiện Mới] {title}**: {snippet[:120]}...")
+        bullet_str = "\n".join(bullets)
+        return (
+            f"## ⚡ Diễn Biến & Điểm Mới Trong 24 Giờ Qua (So với kỳ {prev_date})\n"
+            f"So với báo cáo kỳ trước, hệ thống ghi nhận các luồng tin và dữ kiện mới xuất hiện:\n"
+            f"{bullet_str}\n"
+        )
+    return (
+        f"## ⚡ Diễn Biến & Nhịp Vận Động (So với kỳ {prev_date})\n"
+        f"Dữ liệu giám sát 24 giờ qua ghi nhận nhịp vận động tiếp tục nhất quán "
+        f"với các nhận định từ kỳ báo cáo ngày {prev_date}. "
+        f"Chưa ghi nhận tín hiệu đảo chiều hay dữ kiện ngoại biên đột biến.\n"
+    )
+
+
 def synthesize_blog_content(
     topic: ScanTopic,
     results: list[Any],
     now: datetime,
+    previous_post: BlogPost | None = None,
 ) -> tuple[str, str, str, str, list[dict[str, Any]]]:
     """Generate institutional-grade analytical briefing in Vietnamese with citations."""
     date_str = now.strftime("%d/%m/%Y")
@@ -139,6 +196,7 @@ def synthesize_blog_content(
     sources_block = (
         "\n".join(sources_bullets) if sources_bullets else "- Đang cập nhật nguồn tin trực tiếp."
     )
+    delta_section = _build_delta_section(previous_post, results)
 
     if topic.id == "ai_coding":
         title = f"Bản Tin AI Coding: Xu Hướng Mô Hình Lập Trình & Agentic IDE Ngày {date_str}"
@@ -164,6 +222,7 @@ Dựa trên dữ liệu tổng hợp mới nhất [3]:
 - **Ngữ cảnh dài và Reranking**: Việc tích hợp các kỹ thuật reranking chuyên sâu (heuristic/ONNX cross-encoder) giúp các agent lập trình xác định chính xác các điểm phụ thuộc giữa các module mà không gây tràn context window.
 - **Tối ưu hóa Tool-Calling & Phản hồi thời gian thực**: Cơ chế stream từng token kèm Server-Sent Events (SSE) giúp lập trình viên giám sát từng bước thực thi của AI mà không phải chờ đợi toàn bộ tiến trình.
 
+{delta_section}
 ## 3. Khuyến Nghị Áp Dụng Cho Lập Trình Viên
 1. **Thiết lập quy trình kiểm thử tự động (Unit Test / Integration Test) chặt chẽ**: AI Coding Agent phát huy sức mạnh tối đa khi có môi trường phản hồi tức thì từ test suite để tự sửa lỗi.
 2. **Quản lý bảo mật & Secrets**: Luôn quét tĩnh (Static Analysis / Bandit) để đảm bảo không để lộ khóa bí mật hay cấu hình nhạy cảm khi agent tự động commit code.
@@ -194,6 +253,7 @@ Hệ sinh thái AI Agent đang bước vào giai đoạn công nghiệp hóa v�
 - **Deep Research & Phân Rã Kế Hoạch (Planning & Decomposition)**: Các kiến trúc tiên tiến áp dụng quy trình chia nhỏ bài toán phức tạp thành các sub-tasks độc lập, thu thập thông tin song song và hợp nhất dữ liệu có kiểm chứng [2].
 - **Cơ chế Phục Hồi Lỗi & Chống Lặp**: Hệ thống giám sát trạng thái hội thoại và vòng lặp phản hồi giúp agent nhận diện khi một công cụ thất bại và tự động chuyển đổi sang phương án dự phòng (graceful fallback) [3].
 
+{delta_section}
 ## 3. Ứng Dụng Thực Tế & Triển Vọng
 Các hệ thống multi-agent đang được ứng dụng thực tế trong tự động hóa phân tích tài chính, rà soát mã nguồn, tổng hợp tri thức học thuật và quản trị vận hành hạ tầng đám mây.
 
@@ -226,6 +286,7 @@ Thị trường chứng khoán Việt Nam ghi nhận sự phân hóa rõ nét gi
 - **Mặt bằng định giá thị trường**: P/E toàn thị trường đang dao động ở vùng định giá hấp dẫn so với trung bình 5 năm qua, mở ra cơ hội tích lũy dài hạn cho nhà đầu tư giá trị [3].
 - **Yếu tố cần quan sát**: Biến động tỷ giá USD/VND và định hướng chính sách tiền tệ của các ngân hàng trung ương lớn nhằm dự báo tốc độ luân chuyển dòng vốn khối ngoại.
 
+{delta_section}
 ## 3. Chiến Lược Đầu Tư Khuyến Nghị
 Nhà đầu tư nên ưu tiên chiến lược quản trị rủi ro danh mục, duy trì tỷ trọng cổ phiếu hợp lý và giải ngân từng phần vào các doanh nghiệp có mức tăng trưởng EPS bền vững và tỷ lệ nợ vay an toàn.
 
@@ -253,6 +314,7 @@ Phong thủy chính phái không dựa trên mê tín mà là nghệ thuật t�
   - *Đông Tứ Mệnh* (Khảm, Ly, Chấn, Tốn): Hợp các hướng Đông, Đông Nam, Nam và Bắc.
   - *Tây Tứ Mệnh* (Càn, Khôn, Cấn, Đoài): Hợp các hướng Tây, Tây Bắc, Tây Nam và Đông Bắc.
 
+{delta_section}
 ## 3. Màu Sắc Bản Mệnh & Yếu Tố Ngũ Hành Tương Sinh
 Sử dụng các gam màu tương sinh (ví dụ Thổ sinh Kim, Thủy sinh Mộc) giúp kích hoạt năng lượng tích cực, giảm căng thẳng trong công việc và duy trì sự tỉnh táo khi ra quyết định kinh doanh [3].
 
@@ -276,6 +338,7 @@ Các thông tin ghi nhận trong 24 giờ qua cho thấy những bước phát t
 - Ghi nhận các tín hiệu tích cực từ số liệu thống kê và nghiên cứu mới [2].
 - Chuyên gia khuyến nghị theo dõi sát các chỉ số nền tảng và tuân thủ các nguyên tắc khoa học có kiểm chứng [3].
 
+{delta_section}
 ---
 ### Nguồn Dữ Liệu Tham Khảo
 {sources_block}
@@ -287,9 +350,14 @@ Các thông tin ghi nhận trong 24 giờ qua cho thấy những bước phát t
 class AutomatedScanner:
     """Manages scheduled periodic scans and on-demand blog digest creation."""
 
-    def __init__(self, registry: EngineRegistry) -> None:
+    def __init__(
+        self,
+        registry: EngineRegistry,
+        notifier: NotificationDispatcher | None = None,
+    ) -> None:
         self.registry = registry
         self.topics = dict(DEFAULT_TOPICS)
+        self.notifier = notifier or NotificationDispatcher()
         self._background_task: asyncio.Task[None] | None = None
         self._running = False
 
@@ -300,6 +368,21 @@ class AutomatedScanner:
 
         now = datetime.now(UTC)
         logger.info("scanner_scan_topic_start", topic=topic_id, query=topic.query)
+
+        # 1. Fetch previous post for semantic deduplication and delta highlighting
+        previous_post: BlogPost | None = None
+        try:
+            async with get_sessionmaker()() as session:
+                stmt = (
+                    select(BlogPost)
+                    .where(BlogPost.topic == topic_id)
+                    .order_by(BlogPost.published_at.desc())
+                    .limit(1)
+                )
+                res = await session.execute(stmt)
+                previous_post = res.scalars().first()
+        except Exception as exc:
+            logger.warning("scanner_fetch_prev_post_failed", topic=topic_id, error=str(exc))
 
         # Retrieve real search results using the engine registry
         enabled_engines = await self.registry.enabled()
@@ -335,7 +418,7 @@ class AutomatedScanner:
                 collected_results.extend(res)
 
         slug, title, summary, content_md, citations_list = synthesize_blog_content(
-            topic, collected_results, now
+            topic, collected_results, now, previous_post=previous_post
         )
 
         # Persist into BlogPost table
@@ -354,6 +437,12 @@ class AutomatedScanner:
             )
             session.add(post)
             await session.commit()
+
+        # Fire multi-channel notifications (Telegram / Webhook / Discord)
+        try:
+            await self.notifier.send_briefing_notification(post)
+        except Exception as exc:
+            logger.warning("scanner_notify_failed", post_id=str(post_id), error=str(exc))
 
         topic.last_run = now
         topic.last_post_id = str(post_id)

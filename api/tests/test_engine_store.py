@@ -125,6 +125,7 @@ class TestDefaults:
             "sec_edgar",
             "google_news",
             "fengshui",
+            "viet_stock",
         }
         assert configs["arxiv"].category == "academic"
         assert configs["wikipedia"].category == "reference"
@@ -138,6 +139,7 @@ class TestDefaults:
         assert configs["sec_edgar"].category == "financial"
         assert configs["google_news"].category == "news"
         assert configs["fengshui"].category == "fengshui"
+        assert configs["viet_stock"].category == "financial"
         assert configs["searxng"].adapter_path.endswith("SearXNGAdapter")
         assert configs["tavily"].adapter_path.endswith("TavilyAdapter")
 
