@@ -1,21 +1,23 @@
-# 06 — API Specification
+# 06 — API Specification (v1.0.0)
 
-Base URL: `http://localhost:8000` · Auth: `Authorization: Bearer <api_key>` (Phase 3; Phase 1–2 open local).
+Base URL: `http://localhost:8000` · Auth: `Authorization: Bearer <api_key>` (khi `AUTH_ENABLED=true`; mặc định `false` cho local dev + Web UI).
 
 ## 1. POST /v1/search — Raw search
 
 Request:
 ```json
 {
-  "query": "so sánh RAG và fine-tuning",
+  "query": "phân tích BCTC pháp y và kỹ thuật Fibonacci cổ phiếu FPT RSI 9",
   "lang": "vi",
   "k": 10,
-  "engines": ["searxng", "tavily"],
-  "categories": ["general", "academic"],
+  "engines": ["viet_stock", "yahoo_finance", "searxng"],
+  "categories": ["general", "financial"],
   "freshness_days": 90,
-  "include_snippets": true
+  "include_snippets": true,
+  "news": false
 }
 ```
+> Khi `categories` được để mặc định là `["general"]`, hệ thống tự động kích hoạt **Smart Category Routing** (`infer_categories_from_query`) để bổ sung các chuyên ngành phù hợp (`financial`, `fengshui`, `news`, `academic`, `developer`) nếu câu hỏi chứa tín hiệu chuyên biệt.
 
 Response 200:
 ```json
@@ -24,19 +26,20 @@ Response 200:
   "results": [
     {
       "rank": 1,
-      "url": "https://…",
-      "title": "…",
+      "url": "https://finance.vietstock.vn/FPT/tai-chinh.htm?tab=forensics",
+      "title": "[FPT] Thẩm Định Pháp Y BCTC (Financial Forensics): Cấu Trúc Nợ, Phải Thu & Chất Lượng Lợi Nhuận",
       "snippet": "…",
-      "score": 0.87,
-      "consensus": 3,
-      "found_by": ["searxng", "tavily"],
-      "domain": "example.com",
-      "published_at": "2025-11-02T00:00:00Z"
+      "score": 0.92,
+      "consensus": 2,
+      "found_by": ["viet_stock"],
+      "domain": "finance.vietstock.vn",
+      "published_at": "2026-11-01T00:00:00Z"
     }
   ],
-  "engines_used": ["searxng", "tavily"],
+  "engines_used": ["viet_stock", "yahoo_finance"],
   "engines_failed": [],
-  "latency_ms": 1850,
+  "engines_status": [{"engine": "viet_stock", "status": "ok", "results": 4, "ms": 12}],
+  "latency_ms": 420,
   "cached": false
 }
 ```
@@ -49,15 +52,16 @@ Response JSON (`stream: false`):
 ```json
 {
   "answer_id": "uuid",
-  "answer_md": "RAG phù hợp khi … [1]. Fine-tuning phù hợp khi … [2].",
+  "answer_md": "FPT đạt Altman Z-Score 4.85 (Vùng An Toàn) [1] và hỗ trợ Fibonacci Golden Pocket tại 126,500 đ [2].",
   "citations": [
     {"n": 1, "url": "https://…", "title": "…", "chunk_id": "uuid"},
     {"n": 2, "url": "https://…", "title": "…", "chunk_id": "uuid"}
   ],
   "sources": [ {"url": "…", "title": "…", "domain": "…"} ],
   "model": "gpt-4o-mini",
-  "latency_ms": 5400,
-  "status": "complete"
+  "latency_ms": 4200,
+  "status": "complete",
+  "cached": false
 }
 ```
 
@@ -66,39 +70,50 @@ Response JSON (`stream: false`):
 | Event | Data | Ý nghĩa |
 |---|---|---|
 | `status` | `{"stage": "searching", "detail": "…"}` | Tiến trình pipeline |
-| `engine_done` | `{"engine": "searxng", "results": 12, "ms": 940}` | Mượn từ multi-search-aggregator: client thấy từng engine xong |
+| `engine_done` | `{"engine": "viet_stock", "results": 4, "ms": 15}` | Client thấy từng engine xong theo thời gian thực |
 | `sources` | `{"sources": [...]}` | Danh sách nguồn sau merge (trước khi viết answer) |
-| `token` | `{"t": "RAG phù hợp"}` | Token answer streaming |
+| `token` | `{"t": "FPT đạt"}` | Token answer streaming |
 | `citations` | `{"citations": [...]}` | Sau khi stream xong, đã validate |
-| `done` | `{"answer_id": "…", "latency_ms": 5400, "status": "complete"}` | Kết thúc |
+| `done` | `{"answer_id": "…", "latency_ms": 4200, "status": "complete"}` | Kết thúc |
 | `error` | `{"code": "…", "message": "…"}` | Lỗi giữa stream |
 
 ## 3. POST /v1/scrape
 
-Request: `{"urls": ["https://…"], "markdown": true, "timeout_s": 8}`
-Response: mỗi URL 1 object `{url, status, markdown, title, extractor_used, fetched_at}`; URL lỗi → `{status: "failed", error: "…"}` (không fail cả batch).
+Request: `{"urls": ["https://…"], "timeout_s": 8}`
+Response: mỗi URL 1 object `{url, status, markdown, title, extractor_used, error}`; URL lỗi → `{status: "failed", error: "…"}` (không fail cả batch).
 
-## 4. Deep Research
+## 4. Deep Research (`/v1/research`)
 
-- `POST /v1/research` → `202 Accepted` + `{"research_id": "uuid", "status": "queued"}` (body: query, breadth, depth, budget).
-- `GET /v1/research/{id}` → `{status: queued|running|done|failed, progress: {iteration, max_iterations}, report_md, citations, learnings, cost_usd}`.
-- `GET /v1/research/{id}/events` → SSE: `plan`, `iteration_start`, `engine_done`, `learnings`, `report_token`, `done`.
+- `POST /v1/research` → `202 Accepted` + `{"research_id": "uuid", "status": "queued"}`
+  - Body: `{query, lang, breadth (2..5), depth (1..5), max_time_s (10..600), k (1..20), profile ("auto" | "general" | "developer" | "academic" | "comparative" | "financial" | "news" | "fengshui" | "health")}`.
+- `GET /v1/research/{id}` → `{research_id, status: queued|running|done|failed, progress: {iteration, max_iterations}, report_md, citations, learnings, cost_usd, error}` (hỗ trợ tự động khôi phục từ DB sau khi server restart).
+- `GET /v1/research/{id}/events` → SSE: `status`, `plan`, `iteration_start`, `engine_done`, `learnings`, `report_token`, `citations`, `done`, `error`.
 
-## 5. Engine management (hot config, mượn từ multi-search-aggregator)
+## 5. Automated Daily Briefings & Blog Digests (`/v1/digests`)
 
-| Method | Path | Mô tả |
-|---|---|---|
-| GET | `/v1/engines` | Danh sách engine + config + health hiện tại |
-| PATCH | `/v1/engines/{id}` | Đổi `enabled`, `weight`, `timeout_ms`, `max_results` — hiệu lực ngay, không restart |
-| GET | `/v1/engines/health` | Success rate, p50/p95 latency, consecutive_failures, disabled_reason |
+| Method | Path | Quyền | Mô tả |
+|---|---|---|---|
+| GET | `/v1/digests/topics` | `user`/`admin` | Danh sách 6 chủ đề quét tự động (AI Coding, AI Agents, Chứng khoán VN, Kinh tế vĩ mô, Phong thủy, Y tế sức khỏe) |
+| GET | `/v1/digests` | `user`/`admin` | Danh sách bài phân tích blog mới nhất (lọc theo `topic`, `limit`; tự động fallback in-memory khi DB offline) |
+| GET | `/v1/digests/{slug_or_id}` | `user`/`admin` | Chi tiết toàn văn bài phân tích Markdown + citations |
+| POST | `/v1/digests/scan` | `admin` | Kích hoạt quét & tổng hợp bản tin mới ngay lập tức (body: `{"topic_key": "vn_finance_stocks" | null}`) |
 
-## 6. Khác
+## 6. Engine Management (`/v1/engines` — Hot Config)
 
-- `GET /healthz` → liveness; `GET /readyz` → check DB/Redis/SearXNG.
-- `GET /metrics` → Prometheus.
-- `GET /v1/queries/{id}` → chi tiết 1 query (debug/eval).
+| Method | Path | Quyền | Mô tả |
+|---|---|---|---|
+| GET | `/v1/engines` | `user`/`admin` | Danh sách 19 engines + config + health hiện tại |
+| PATCH | `/v1/engines/{id}` | `admin` | Đổi `enabled`, `weight`, `timeout_ms`, `max_results` — hiệu lực ngay, không restart |
+| GET | `/v1/engines/health` | `user`/`admin` | Success rate, p50/p95 latency, consecutive_failures, disabled_reason |
 
-## 7. Error model (chuẩn RFC 7807-ish)
+## 7. Operations & Debug
+
+- `GET /healthz` → liveness; `GET /readyz` → check DB/Redis/SearXNG (tự động thích ứng Lite profile).
+- `GET /metrics` → Prometheus metrics (`metasearch_http_requests_total`, `metasearch_http_request_duration_seconds`, `metasearch_cache_events_total`, ...).
+- `GET /v1/ops/status` → tổng hợp trạng thái giants, 19 engines, DB/Redis.
+- `GET /v1/queries` & `GET /v1/queries/{id}` → lịch sử và chi tiết query (graceful fallback khi DB offline).
+
+## 8. Error model (chuẩn RFC 7807-ish)
 
 ```json
 {
@@ -111,10 +126,10 @@ Response: mỗi URL 1 object `{url, status, markdown, title, extractor_used, fet
 }
 ```
 
-HTTP mapping: 400 invalid_request · 401 unauthorized · 429 rate_limited · 502 upstream_timeout · 503 no_results/all engines down · 500 internal.
+HTTP mapping: 400 `invalid_request` · 401/403 `unauthorized` · 404 `not_found` · 429 `rate_limited` · 502 `upstream_timeout` · 503 `no_results` · 500 `internal`.
 
-## 8. Rate limit & quotas
+## 9. Rate limit & quotas
 
-- Default: 60 req/phút/api_key (sliding window Redis).
-- Header phản hồi: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `Retry-After` khi 429.
-- Deep research: tối đa 5 job đồng thời/user.
+- Default: 60 req/phút/api_key (sliding window Redis ZSET, TTL `window_s + 1`, in-process fallback khi không có Redis).
+- Header phản hồi trên mọi request xác thực: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, và `Retry-After` khi 429.
+- Deep research: tối đa 5 job đồng thời.

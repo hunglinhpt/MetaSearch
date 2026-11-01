@@ -186,6 +186,7 @@ class ResearchJobStore:
                         "report_md": answer_row.content_md or "",
                         "citations": citations,
                         "learnings": [],
+                        "cost_usd": float(answer_row.cost_usd or 0.0),
                     },
                 )
                 job.events.append(
@@ -247,6 +248,7 @@ async def run_job(job: ResearchJob, params) -> None:
     report_parts: list[str] = []
     citations: list[dict] = []
     learnings_acc: list[str] = []
+    cost_usd: float = 0.0
     try:
         async for name, data in pipeline.run(params, on_event=lambda e: push_event(job, e)):
             if name == "report_token":
@@ -255,12 +257,22 @@ async def run_job(job: ResearchJob, params) -> None:
                 citations = data["citations"]
             elif name == "learnings":
                 learnings_acc.extend(data.get("learnings", []))
+            elif name == "done":
+                cost_usd = float(data.get("usage", {}).get("cost_usd", 0.0) or 0.0)
+                job.result = {
+                    "report_md": "".join(report_parts),
+                    "citations": citations,
+                    "learnings": learnings_acc,
+                    "cost_usd": cost_usd,
+                }
             push_event(job, (name, data))
-        job.result = {
-            "report_md": "".join(report_parts),
-            "citations": citations,
-            "learnings": learnings_acc,
-        }
+        if not job.result:
+            job.result = {
+                "report_md": "".join(report_parts),
+                "citations": citations,
+                "learnings": learnings_acc,
+                "cost_usd": cost_usd,
+            }
         logger.info("research_job_done", research_id=str(job.id), status=job.status)
     except asyncio.CancelledError:
         job.push(("error", {"code": "internal", "message": "research cancelled"}))

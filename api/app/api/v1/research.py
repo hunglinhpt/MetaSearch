@@ -67,6 +67,7 @@ async def get_research(research_id: str) -> dict[str, Any]:
         "report_md": job.result.get("report_md", ""),
         "citations": job.result.get("citations", []),
         "learnings": job.result.get("learnings", []),
+        "cost_usd": job.result.get("cost_usd", 0.0),
         "error": job.error,
     }
 
