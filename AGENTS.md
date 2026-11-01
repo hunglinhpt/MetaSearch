@@ -13,8 +13,12 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-02 — v1.2.0 Multi-Free-Endpoint Council, Dream-RSI & Universal Intelligence)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-02 — v1.2.1 Multi-Platform Matrix CI, Multi-Free-Endpoint Council, Dream-RSI & Universal Intelligence)
 
+- ✅ **Multi-Platform Matrix CI (Windows, macOS, Linux) & Pre-Commit Hardening (v1.2.1)**:
+  - Cấu hình GitHub Actions CI Matrix đa nền tảng (`ubuntu-latest`, `windows-latest`, `macos-latest`) thực thi song song trên **mọi commit** và PR (4 jobs: backend matrix, frontend matrix, release pipeline gate, docker smoke).
+  - Tự động hóa hook `.githooks/pre-commit` nhận diện runtime Python đa nền tảng (`.venv/Scripts/python.exe`, `.venv/bin/python3`, PATH `python3`), tự động cấp quyền `chmod +x` trên Unix, cưỡng chế 7 Quality Gates.
+  - Loại bỏ hoàn toàn cờ `shell=True` trong `scripts/release.py`, tuân thủ 100% bảo mật Bandit AST (B602).
 - ✅ **Multi-Free-Endpoint LLM Council, Dream-RSI Replay World & Universal Domain Intelligence (v1.2.0)**:
   - Tích hợp gọi song song đồng thời nhiều Free LLM endpoints (`openrouter/free`, `pollinations`, `groq`, `gemini`, `nvidia_nim`, `cerebras`, `sambanova`,...), ẩn danh thành `Candidate A, B, C...` để **Anonymous Cross-Review** lẫn nhau theo thang rubric chuyên ngành mà không bị thiên kiến.
   - Tự động cải tiến chính sách hội đồng qua **Dream-RSI Replay World** (`ReplayTrajectory`, UCB1 exploration score, offline simulation).

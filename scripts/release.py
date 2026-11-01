@@ -2,9 +2,9 @@
 """MetaSearch Automated Version Management, Quality Gate & Release Pipeline.
 
 Enforces:
-1. Workspace Hygiene: cleans temp files, test databases, ruff/pytest caches, next.js artifacts.
-2. Quality Gates: Ruff formatting/linting, Bandit AST security scan, Pytest test suite, Next.js typecheck & build.
-3. SemVer Synchronization: atomically bumps api/app/__init__.py, api/pyproject.toml, and frontend/package.json.
+1. Workspace Hygiene: cleans temp files, test databases, caches, next.js artifacts.
+2. Quality Gates: Ruff formatting/linting, Bandit AST scan, Pytest suite, Next.js build.
+3. SemVer Synchronization: atomically bumps api/__init__.py, pyproject.toml, package.json.
 4. Keep a Changelog Verification: validates entry for the target version in CHANGELOG.md.
 5. Git Packaging: stages clean files, creates release commit, and creates annotated Git tag.
 
@@ -113,7 +113,7 @@ def clean_workspace(root: Path, *, dry_run: bool = False) -> list[str]:
     # 2. File patterns to remove across api, frontend, scripts, deploy
     temp_extensions = {".db", ".db-shm", ".db-wal", ".sqlite3", ".tmp", ".bak", ".log"}
 
-    for dirpath, dirnames, filenames in os.walk(root):
+    for dirpath, _dirnames, filenames in os.walk(root):
         rel_parts = Path(dirpath).relative_to(root).parts
         if any(ign in rel_parts for ign in IGNORE_SCAN_DIRS):
             continue
@@ -151,10 +151,16 @@ def run_command(cmd: list[str], *, cwd: Path, desc: str) -> None:
 
 
 def ensure_git_pre_commit_hook(root: Path) -> bool:
-    """Ensure .githooks/pre-commit is registered as Git core.hooksPath."""
+    """Ensure .githooks/pre-commit is registered as Git core.hooksPath and executable."""
     hook_file = root / ".githooks" / "pre-commit"
     if not hook_file.exists():
         return False
+    if sys.platform != "win32":
+        try:
+            current_mode = hook_file.stat().st_mode
+            hook_file.chmod(current_mode | 0o755)
+        except OSError:
+            pass
     proc = subprocess.run(  # nosec B603, B607
         ["git", "config", "core.hooksPath", ".githooks"],
         check=False,
@@ -182,14 +188,35 @@ def run_pre_commit_gate(root: Path, python_bin: Path) -> None:
 
     # 1. Ruff Format Check
     run_command(
-        [str(python_bin), "-m", "ruff", "format", "--check", "app", "tests", "scripts"],
+        [
+            str(python_bin),
+            "-m",
+            "ruff",
+            "format",
+            "--check",
+            "--config",
+            "pyproject.toml",
+            "app",
+            "tests",
+            str(root / "scripts"),
+        ],
         cwd=root / "api",
         desc="Ruff Code Formatting Check",
     )
 
     # 2. Ruff Lint Check
     run_command(
-        [str(python_bin), "-m", "ruff", "check", "app", "tests", "scripts"],
+        [
+            str(python_bin),
+            "-m",
+            "ruff",
+            "check",
+            "--config",
+            "pyproject.toml",
+            "app",
+            "tests",
+            str(root / "scripts"),
+        ],
         cwd=root / "api",
         desc="Ruff Static Analysis & Linting",
     )
@@ -219,7 +246,7 @@ def run_pre_commit_gate(root: Path, python_bin: Path) -> None:
 
 
 def run_quality_gates(root: Path, python_bin: Path, npm_bin: str) -> None:
-    """Enforce strict code formatting, linting, security scans, E2E tests, unit tests, and frontend build."""
+    """Enforce formatting, linting, security scans, E2E tests, unit tests, and build."""
     log(
         "Enforcing 7 Mandatory Quality Gates (Ruff, Bandit, E2E, Pytest, Next.js Build)...",
         prefix=">>",
@@ -281,9 +308,7 @@ def calculate_bump(current_version: str, bump_type: str) -> str:
     """Calculate the next SemVer version according to bump type."""
     match = SEMVER_REGEX.match(current_version)
     if not match:
-        raise ValueError(
-            f"Current version '{current_version}' does not match SemVer format!"
-        )
+        raise ValueError(f"Current version '{current_version}' does not match SemVer format!")
 
     major = int(match.group("major"))
     minor = int(match.group("minor"))
@@ -299,9 +324,7 @@ def calculate_bump(current_version: str, bump_type: str) -> str:
     raise ValueError(f"Unknown bump type: {bump_type}")
 
 
-def update_version_files(
-    root: Path, new_version: str, *, dry_run: bool = False
-) -> None:
+def update_version_files(root: Path, new_version: str, *, dry_run: bool = False) -> None:
     """Atomically rewrite version in all three component configuration files."""
     log(f"Synchronizing version {new_version} across codebase...", prefix=">>")
 
@@ -330,9 +353,7 @@ def update_version_files(
     # 3. frontend/package.json
     pkg_file = root / "frontend" / "package.json"
     content = pkg_file.read_text(encoding="utf-8")
-    new_content = re.sub(
-        r'"version":\s*"[^"]+"', f'"version": "{new_version}"', content
-    )
+    new_content = re.sub(r'"version":\s*"[^"]+"', f'"version": "{new_version}"', content)
     if not dry_run:
         pkg_file.write_text(new_content, encoding="utf-8")
     log(f"Updated {pkg_file.relative_to(root)}")
@@ -361,9 +382,7 @@ def verify_changelog(root: Path, version: str) -> tuple[bool, str]:
     return True, section
 
 
-def git_release(
-    root: Path, version: str, *, push: bool = False, dry_run: bool = False
-) -> None:
+def git_release(root: Path, version: str, *, push: bool = False, dry_run: bool = False) -> None:
     """Stage version changes, create release commit, and tag."""
     log(f"Packaging Git Release v{version}...", prefix=">>")
     tag_name = f"v{version}"
@@ -435,9 +454,7 @@ def main() -> None:
         description="MetaSearch Automated Version Management, Quality Gate & Release Pipeline"
     )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--bump", choices=["patch", "minor", "major"], help="SemVer increment type"
-    )
+    group.add_argument("--bump", choices=["patch", "minor", "major"], help="SemVer increment type")
     group.add_argument("--version", help="Explicit target version string (e.g. 1.0.1)")
     group.add_argument(
         "--clean-only",
@@ -502,7 +519,9 @@ def main() -> None:
     versions = get_current_versions(root)
     cur_ver = versions.get("api_init", "1.0.0")
     log(
-        f"Current Versions: api_init={versions.get('api_init')}, pyproject={versions.get('pyproject')}, frontend={versions.get('frontend')}"
+        f"Current Versions: api={versions.get('api_init')}, "
+        f"pyproject={versions.get('pyproject')}, "
+        f"frontend={versions.get('frontend')}"
     )
 
     if len(set(versions.values())) > 1:
@@ -534,7 +553,7 @@ def main() -> None:
     if not ok:
         log(notes, level="ERROR")
         log(
-            f"Please add a release entry for '## [{target_version}]' in CHANGELOG.md before releasing!",
+            f"Please add a release entry for '## [{target_version}]' in CHANGELOG.md!",
             level="ERROR",
         )
         sys.exit(1)

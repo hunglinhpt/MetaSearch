@@ -118,11 +118,26 @@ python scripts/release.py --bump patch --push
 
 ---
 
-## 5. Tự Động Hóa CI/CD Trên GitHub Actions (`release.yml`)
+## 5. Tự Động Hóa CI/CD Đa Nền Tảng Trên GitHub Actions (`ci.yml` & `release.yml`)
 
+MetaSearch thực thi kiểm định liên tục **Multi-Platform Matrix** trên **mọi commit** và **mọi pull request** (bao gồm cả Linux, Windows và macOS):
+
+### A. CI Workflow Đa Nền Tảng (`.github/workflows/ci.yml`)
+- **Triggers**: Tự động chạy trên mọi commit được push lên bất kỳ nhánh nào (`branches: ["**"]`) và mọi pull request.
+- **Matrix Nền tảng**:
+  - `ubuntu-latest` (Linux x86_64)
+  - `windows-latest` (Windows Server)
+  - `macos-latest` (macOS Apple Silicon / ARM64 & Intel)
+- **Các Job kiểm định độc lập**:
+  1. `backend-matrix`: Kiểm tra Ruff format, Ruff lint, Bandit AST security scan, bộ kiểm thử toàn trình E2E (`test_e2e_full_system.py`), và toàn bộ unit test suite (`pytest tests -q`).
+  2. `frontend-matrix`: Kiểm tra nghiêm ngặt kiểu dữ liệu TypeScript (`npm run typecheck`) và biên dịch Next.js production build (`npm run build`).
+  3. `release-pipeline-gate`: Tích hợp cả Python 3.12 và Node.js 22 trên cả 3 hệ điều hành để chạy `python scripts/release.py --check` trong môi trường hoàn toàn độc lập và sạch sẽ.
+  4. `docker-build-smoke`: Kiểm tra tính toàn vẹn của Dockerfile API và Dockerfile Frontend trên môi trường Linux container.
+
+### B. Release Workflow (`.github/workflows/release.yml`)
 Khi một Git tag có dạng `v*.*.*` được push lên repository:
 1. Workflow `.github/workflows/release.yml` khởi chạy.
-2. Kiểm tra chéo lại toàn bộ Quality Gates trong môi trường sạch Ubuntu.
+2. Kiểm tra chéo lại toàn bộ Quality Gates trong môi trường sạch.
 3. Tự động trích xuất nội dung `Release Notes` của phiên bản đó từ `CHANGELOG.md`.
 4. Tạo bản phát hành **GitHub Release** chính thức kèm đính kèm mã nguồn và release notes định dạng Markdown sắc nét.
 

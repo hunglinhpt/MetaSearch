@@ -4,6 +4,22 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [1.2.1] — 2026-11-02 — Multi-Platform Matrix CI (Windows, macOS, Linux) for Every Commit & Pre-Commit Hook Hardening
+
+### Added
+- **Multi-Platform Matrix CI Trên Mọi Commit (`.github/workflows/ci.yml`)**:
+  - Mở rộng toàn bộ quy trình CI chạy ma trận tự động trên cả 3 hệ điều hành: **Ubuntu Linux (`ubuntu-latest`)**, **Windows Server (`windows-latest`)**, và **macOS (`macos-latest`)**.
+  - Kích hoạt trên **mọi commit** push lên bất kỳ nhánh nào (`branches: ["**"]`) và mọi pull request.
+  - Phân tách thành 4 job kiểm định độc lập và toàn diện:
+    1. `backend-matrix` (Linux, Windows, macOS): Cưỡng chế Ruff format, Ruff lint, Bandit AST security scan, Mandatory End-to-End full system verification suite (`test_e2e_full_system.py`), và Pytest full suite.
+    2. `frontend-matrix` (Linux, Windows, macOS): Cưỡng chế TypeScript strict typecheck (`npm run typecheck`) và Next.js production build (`npm run build`).
+    3. `release-pipeline-gate` (Linux, Windows, macOS): Chạy toàn bộ pipeline kiểm định phát hành `scripts/release.py --check` trong môi trường sạch.
+    4. `docker-build-smoke` (Linux): Kiểm thử đóng gói Docker container image độc lập cho cả API và Frontend.
+- **Cross-Platform Pre-Commit Hook Hardening (`.githooks/pre-commit`, `scripts/release.py`)**:
+  - Hỗ trợ phát hiện thông minh môi trường thực thi trên macOS/Linux (`api/.venv/bin/python`, `python3`, `python`) và Windows (`api/.venv/Scripts/python.exe`).
+  - Tự động cấp quyền thực thi `chmod +x` cho `.githooks/pre-commit` trên Unix/macOS và đồng bộ index mode 100755 trong Git.
+  - Loại bỏ hoàn toàn cờ `shell=True` trong `run_command` của `scripts/release.py` (0 cảnh báo Bandit B602).
+
 ## [1.2.0] — 2026-11-02 — Multi-Free-Endpoint LLM Council, Dream-RSI Replay World, Directory Integration (nejib1/Free-LLM & awesome-freellm-apis) & Universal Multi-Domain Intelligence
 
 ### Added
