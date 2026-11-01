@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -34,23 +35,37 @@ logger = logging.getLogger(__name__)
 DEFAULT_STOOQ_URL = "https://stooq.com/q/d/l/"
 
 _GLOBAL_SYMBOL_MAP: dict[str, str] = {
+    # Benchmark Indices
     "s&p 500": "^spx",
     "sp500": "^spx",
+    "^spx": "^spx",
     "dow jones": "^dji",
     "dji": "^dji",
+    "^dji": "^dji",
     "nasdaq": "^ndq",
+    "^ndq": "^ndq",
     "nikkei": "^nkx",
+    "^nkx": "^nkx",
     "dax": "^dax",
+    "^dax": "^dax",
+    # Commodities, Forex, Macro Yields
     "vàng": "xauusd",
     "gold": "xauusd",
     "xauusd": "xauusd",
     "dầu thô": "cl.f",
+    "dầu": "cl.f",
+    "crude oil": "cl.f",
     "oil": "cl.f",
     "wti": "cl.f",
+    "cl.f": "cl.f",
     "trái phiếu mỹ 10 năm": "10yus.b",
+    "trái phiếu mỹ": "10yus.b",
     "us10y": "10yus.b",
+    "10yus.b": "10yus.b",
     "usdvnd": "usdvnd",
     "tỷ giá usd/vnd": "usdvnd",
+    "usd/vnd": "usdvnd",
+    # Global Equities & Tech Megacaps
     "apple": "aapl.us",
     "aapl": "aapl.us",
     "nvidia": "nvda.us",
@@ -59,7 +74,106 @@ _GLOBAL_SYMBOL_MAP: dict[str, str] = {
     "msft": "msft.us",
     "tesla": "tsla.us",
     "tsla": "tsla.us",
+    "google": "googl.us",
+    "googl": "googl.us",
+    "goog": "goog.us",
+    "amazon": "amzn.us",
+    "amzn": "amzn.us",
+    "meta": "meta.us",
+    "facebook": "meta.us",
+    "amd": "amd.us",
+    "intel": "intc.us",
+    "intc": "intc.us",
+    "palantir": "pltr.us",
+    "pltr": "pltr.us",
+    "taiwan semi": "tsm.us",
+    "tsmc": "tsm.us",
+    "tsm": "tsm.us",
+    "broadcom": "avgo.us",
+    "avgo": "avgo.us",
+    "netflix": "nflx.us",
+    "nflx": "nflx.us",
+    "alibaba": "baba.us",
+    "baba": "baba.us",
+    "arm": "arm.us",
 }
+
+_STOP_WORDS_GLOBAL = {
+    "PHAN",
+    "TICH",
+    "KY",
+    "THUAT",
+    "GIA",
+    "CO",
+    "PHIEU",
+    "THI",
+    "TRUONG",
+    "FIBO",
+    "FIBONACCI",
+    "ICHIMOKU",
+    "MAY",
+    "BCTC",
+    "TAI",
+    "CHINH",
+    "DOANH",
+    "THU",
+    "LOI",
+    "NHUAN",
+    "HOM",
+    "NAY",
+    "STOCK",
+    "PRICE",
+    "CHART",
+    "ANALYSIS",
+    "TODAY",
+    "THE",
+    "FOR",
+    "AND",
+    "WITH",
+    "FROM",
+    "VND",
+    "USD",
+}
+
+_TICKER_REGEX = re.compile(r"\b([A-Z]{1,5})(?:\.US)?\b")
+
+
+def _extract_stooq_symbol(query: str) -> str | None:
+    """Extracts a valid Stooq ticker symbol from arbitrary query."""
+    clean_q = query.strip().lower()
+    if not clean_q:
+        return None
+
+    # 1. Match longest key from global symbol map
+    for kw in sorted(_GLOBAL_SYMBOL_MAP.keys(), key=len, reverse=True):
+        if re.search(rf"\b{re.escape(kw)}\b", clean_q) or kw in clean_q:
+            return _GLOBAL_SYMBOL_MAP[kw]
+
+    # 2. Look for cashtags like $AMD, $GOOGL
+    for tok in query.split():
+        if tok.startswith("$") and 2 <= len(tok) <= 6:
+            sym = tok[1:].lower()
+            if sym.isalnum():
+                return f"{sym}.us"
+
+    # 3. Look for explicit uppercase ticker tokens not in stop words
+    for m in _TICKER_REGEX.finditer(query):
+        candidate = m.group(1).upper()
+        if candidate not in _STOP_WORDS_GLOBAL and 1 <= len(candidate) <= 5:
+            return f"{candidate.lower()}.us"
+
+    # 4. Fallback for broad US / Global market queries
+    market_triggers = (
+        "chứng khoán mỹ",
+        "thị trường mỹ",
+        "global market",
+        "wall street",
+        "us stock",
+    )
+    if any(t in clean_q for t in market_triggers):
+        return "^spx"
+
+    return None
 
 
 class StooqFinanceAdapter:
@@ -79,24 +193,9 @@ class StooqFinanceAdapter:
         timeout_s: float = 4.0,
         **kwargs: Any,
     ) -> list[RawResult]:
-        clean_q = query.strip().lower()
-        if not clean_q:
-            return []
-
-        # Find mapped symbol or use query ticker directly
-        symbol = None
-        for kw, sym in _GLOBAL_SYMBOL_MAP.items():
-            if kw in clean_q:
-                symbol = sym
-                break
-
+        symbol = _extract_stooq_symbol(query)
         if not symbol:
-            tokens = clean_q.lstrip("$").split()
-            first_tok = tokens[0] if tokens else ""
-            if 1 <= len(first_tok) <= 6 and first_tok.isalnum():
-                symbol = f"{first_tok.lower()}.us"
-            else:
-                return []
+            return []
 
         headers = {
             "User-Agent": (

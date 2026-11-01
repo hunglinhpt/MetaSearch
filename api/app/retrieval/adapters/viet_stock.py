@@ -1186,7 +1186,7 @@ class VietStockAdapter:
                 rank += 1
 
             # 6. Deep Dive: Forensic Balance Sheet Inspection (Nợ & Phải Thu Thực Chất)
-            forensic = analyze_balance_sheet_forensics(stock.symbol)
+            forensic = analyze_balance_sheet_forensics(stock.symbol, stock)
             if forensic and (is_forensic or len(tickers) <= 2):
                 forensic_snippet = (
                     f"[{stock.symbol} THẨM ĐỊNH PHÁP Y BCTC - {forensic.forensic_rating}] "

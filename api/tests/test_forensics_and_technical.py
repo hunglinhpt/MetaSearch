@@ -41,6 +41,44 @@ class TestFinancialForensics:
         assert f.net_debt_to_ebitda < 3.0  # Safe leverage
         assert f.operating_cash_flow_vnd_bil > 15_000.0
 
+    def test_forensics_data_ssi_pvs_dgc(self):
+        # SSI
+        ssi = analyze_balance_sheet_forensics("SSI")
+        assert ssi is not None
+        assert ssi.symbol == "SSI"
+        assert ssi.piotroski_f_score == 8
+        assert ssi.net_debt_vnd_bil < 0
+
+        # PVS
+        pvs = analyze_balance_sheet_forensics("PVS")
+        assert pvs is not None
+        assert pvs.cash_and_equivalents_vnd_bil > 10_000.0
+        assert pvs.interest_coverage_ratio > 15.0
+
+        # DGC
+        dgc = analyze_balance_sheet_forensics("DGC")
+        assert dgc is not None
+        assert dgc.long_term_debt_vnd_bil == 0.0
+        assert dgc.piotroski_f_score == 9
+        assert dgc.altman_z_score > 6.0
+
+    def test_forensics_dynamic_synthesis(self):
+        class DummyCompany:
+            symbol = "VHM"
+            actual_revenue_vnd_bil = 100_000.0
+            actual_profit_vnd_bil = 30_000.0
+            debt_to_equity = 0.55
+            market_cap_vnd_bil = 180_000.0
+            roe_pct = 22.0
+            plan_year = 2024
+
+        f = analyze_balance_sheet_forensics("VHM", company=DummyCompany())
+        assert f is not None
+        assert f.symbol == "VHM"
+        assert f.piotroski_f_score == 7
+        assert f.interest_coverage_ratio > 3.0
+        assert f.cfo_to_net_income_ratio > 1.0
+
     def test_format_forensics_markdown(self):
         f = analyze_balance_sheet_forensics("VNM")
         assert f is not None
@@ -112,6 +150,39 @@ class TestTechnicalAnalysis:
         assert customs["bollinger_bands"]["upper"] > customs["bollinger_bands"]["lower"]
         assert "macd" in customs
 
+    def test_fibonacci_edge_prices(self):
+        highs = [100.0, 110.0, 120.0]
+        lows = [80.0, 85.0, 90.0]
+
+        # Case 1: Price far below swing low
+        fibo_low = calc_fibonacci_retracement(highs, lows, 60.0)
+        assert fibo_low.nearest_support <= 60.0
+
+        # Case 2: Price far above 161.8% extension
+        fibo_high = calc_fibonacci_retracement(highs, lows, 200.0)
+        assert fibo_high.nearest_resistance >= 200.0
+
+        # Case 3: Empty inputs fallback
+        fibo_empty = calc_fibonacci_retracement([], [], 100.0)
+        assert fibo_empty.swing_high == pytest.approx(115.0)
+        assert fibo_empty.swing_low == pytest.approx(85.0)
+
+    def test_detect_chart_patterns_mismatched_and_short(self):
+        # Mismatched lengths should not raise ValueError or IndexError
+        highs = [100.0] * 20
+        lows = [90.0] * 18
+        closes = [95.0] * 16
+        volumes = [5000.0] * 14  # Min length < 15
+
+        patterns = detect_chart_patterns(highs, lows, closes, volumes)
+        assert patterns == []
+
+    def test_calc_geometric_trendlines_short(self):
+        # Very short series (< 10 bars) returns safe fallback
+        t = calc_geometric_trendlines([100.0, 105.0], [95.0, 98.0], [99.0, 102.0])
+        assert t.channel_slope_deg == 0.0
+        assert t.vcp_contraction_ratio == 1.0
+
     def test_format_technical_analysis_markdown(self):
         highs = [100.0, 120.0, 140.0]
         lows = [80.0, 90.0, 100.0]
@@ -163,6 +234,29 @@ class TestStooqAdapter:
         assert "Fibo Retracement" in res.snippet
         assert "Ichimoku" in res.snippet
         assert res.adapter == "stooq"
+
+    async def test_stooq_vietnamese_query_extraction(self):
+        adapter = StooqFinanceAdapter()
+
+        # Query with Vietnamese words before ticker
+        res_googl = await adapter.search("phân tích kỹ thuật GOOGL hôm nay")
+        assert len(res_googl) >= 1
+        assert "GOOGL.US" in res_googl[0].title
+
+        # Query with AMD
+        res_amd = await adapter.search("cổ phiếu AMD")
+        assert len(res_amd) >= 1
+        assert "AMD.US" in res_amd[0].title
+
+        # Broad US stock query
+        res_us = await adapter.search("chứng khoán mỹ")
+        assert len(res_us) >= 1
+        assert "^SPX" in res_us[0].title
+
+    async def test_stooq_non_financial_query_ignored(self):
+        adapter = StooqFinanceAdapter()
+        res = await adapter.search("cách nấu phở bò hà nội")
+        assert res == []
 
 
 class TestVietStockDeepForensicsAndTechnicals:

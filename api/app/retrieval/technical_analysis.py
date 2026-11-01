@@ -74,8 +74,8 @@ def calc_fibonacci_retracement(
     valid_highs = [float(h) for h in highs if isinstance(h, (int, float))]
     valid_lows = [float(l_val) for l_val in lows if isinstance(l_val, (int, float))]
     if not valid_highs or not valid_lows:
-        swing_h = current_price * 1.15
-        swing_l = current_price * 0.85
+        swing_h = round(current_price * 1.15, 4)
+        swing_l = round(current_price * 0.85, 4)
     else:
         swing_h = max(valid_highs)
         swing_l = min(valid_lows)
@@ -109,8 +109,18 @@ def calc_fibonacci_retracement(
     supports = [lvl for lvl in all_levels if lvl <= current_price]
     resistances = [lvl for lvl in all_levels if lvl >= current_price]
 
-    nearest_sup = max(supports) if supports else fib_1000
-    nearest_res = min(resistances) if resistances else fib_1618
+    step = 0.618 * diff if diff > 0 else 1.0
+    if supports:
+        nearest_sup = max(supports)
+    else:
+        k_down = math.ceil((fib_1000 - current_price) / step)
+        nearest_sup = fib_1000 - max(k_down, 1) * step
+
+    if resistances:
+        nearest_res = min(resistances)
+    else:
+        k_up = math.ceil((current_price - fib_1618) / step) + 1
+        nearest_res = fib_1618 + max(k_up, 1) * step
 
     golden_pocket = f"{fib_618:,.2f} - {fib_500:,.2f}"
 
@@ -199,49 +209,62 @@ def detect_chart_patterns(
 ) -> list[ChartPattern]:
     """Detects geometric chart patterns (Double Bottom/Top, Cup & Handle, Triangles)."""
     patterns: list[ChartPattern] = []
-    if len(closes) < 15:
+    v_h = [float(h) for h in highs if isinstance(h, (int, float))]
+    v_l = [float(l_val) for l_val in lows if isinstance(l_val, (int, float))]
+    v_c = [float(c) for c in closes if isinstance(c, (int, float))]
+    v_v = [float(v) for v in volumes if isinstance(v, (int, float))]
+    min_len = min(len(v_h), len(v_l), len(v_c), len(v_v))
+    if min_len < 15:
         return patterns
 
-    curr = closes[-1]
-    n = len(closes)
+    v_h = v_h[-min_len:]
+    v_l = v_l[-min_len:]
+    v_c = v_c[-min_len:]
+    v_v = v_v[-min_len:]
+    curr = v_c[-1]
+    n = min_len
 
     # 1. Double Bottom (W Pattern) Detection
     # Look for 2 distinct swing lows with similar price level and a peak in between
-    recent_lows = lows[-30:] if n >= 30 else lows
+    sub_win = min(30, n)
+    recent_lows = v_l[-sub_win:]
+    recent_highs = v_h[-sub_win:]
     min_low = min(recent_lows)
     low_indices = [
-        i for i, l_val in enumerate(recent_lows) if abs(l_val - min_low) / min_low < 0.025
+        i for i, l_val in enumerate(recent_lows) if abs(l_val - min_low) / (min_low or 1.0) < 0.025
     ]
     if len(low_indices) >= 2 and (low_indices[-1] - low_indices[0]) >= 5:
         # Check if current price is breaking above the intermediate peak
-        inter_peak = max(highs[-30:][low_indices[0] : low_indices[-1] + 1])
-        if curr >= inter_peak * 0.98:
-            target = inter_peak + (inter_peak - min_low)
-            patterns.append(
-                ChartPattern(
-                    name="Double Bottom (Mô hình Hai Đáy chữ W)",
-                    pattern_type="Bullish Reversal (Đảo Chiều Tăng)",
-                    confidence=0.85,
-                    neckline_or_pivot=inter_peak,
-                    target_price=target,
-                    stop_loss=min_low * 0.98,
-                    description=(
-                        f"Hai đáy vững chắc tại vùng giá {min_low:,.2f}. Giá đang tiếp cận hoặc "
-                        f"vượt đường viền cổ (Neckline) {inter_peak:,.2f}, mục tiêu: {target:,.2f}."
-                    ),
+        sub_highs = recent_highs[low_indices[0] : low_indices[-1] + 1]
+        if sub_highs:
+            inter_peak = max(sub_highs)
+            if curr >= inter_peak * 0.98:
+                target = inter_peak + (inter_peak - min_low)
+                patterns.append(
+                    ChartPattern(
+                        name="Double Bottom (Mô hình Hai Đáy chữ W)",
+                        pattern_type="Bullish Reversal (Đảo Chiều Tăng)",
+                        confidence=0.85,
+                        neckline_or_pivot=inter_peak,
+                        target_price=target,
+                        stop_loss=min_low * 0.98,
+                        description=(
+                            f"Hai đáy tại vùng {min_low:,.2f}. Giá đang tiếp cận hoặc "
+                            f"vượt viền cổ {inter_peak:,.2f}, mục tiêu: {target:,.2f}."
+                        ),
+                    )
                 )
-            )
 
     # 2. Cup and Handle (Cốc Tay Cầm) / VCP Contraction
     if n >= 25:
         # Left cup rim, cup bottom, right cup rim, handle
-        cup_rim = max(highs[-25:-10])
-        cup_low = min(lows[-25:-5])
-        cup_depth_pct = (cup_rim - cup_low) / cup_rim * 100
+        cup_rim = max(v_h[-25:-10])
+        cup_low = min(v_l[-25:-5])
+        cup_depth_pct = (cup_rim - cup_low) / (cup_rim or 1.0) * 100
         if 8.0 <= cup_depth_pct <= 35.0:
             # Handle should be shallow (< 12% drop from rim)
-            handle_low = min(lows[-6:])
-            handle_drop_pct = (cup_rim - handle_low) / cup_rim * 100
+            handle_low = min(v_l[-6:])
+            handle_drop_pct = (cup_rim - handle_low) / (cup_rim or 1.0) * 100
             if handle_drop_pct < cup_depth_pct * 0.6:
                 target = cup_rim + (cup_rim - cup_low)
                 patterns.append(
@@ -260,10 +283,10 @@ def detect_chart_patterns(
                 )
 
     # 3. Candlestick Pattern Detection (Last 1-3 bars)
-    c_curr = closes[-1]
-    o_curr = closes[-2] if n >= 2 else closes[-1]
-    h_curr = highs[-1]
-    l_curr = lows[-1]
+    c_curr = v_c[-1]
+    o_curr = v_c[-2] if n >= 2 else v_c[-1]
+    h_curr = v_h[-1]
+    l_curr = v_l[-1]
 
     body = abs(c_curr - o_curr)
     total_range = h_curr - l_curr
@@ -289,8 +312,8 @@ def detect_chart_patterns(
 
         # Bullish Engulfing
         if n >= 3:
-            c_prev = closes[-2]
-            o_prev = closes[-3]
+            c_prev = v_c[-2]
+            o_prev = v_c[-3]
             if c_prev < o_prev and c_curr > o_curr and c_curr >= o_prev and o_curr <= c_prev:
                 patterns.append(
                     ChartPattern(
@@ -299,7 +322,7 @@ def detect_chart_patterns(
                         confidence=0.80,
                         neckline_or_pivot=h_curr,
                         target_price=c_curr + body * 2.0,
-                        stop_loss=min(l_curr, lows[-2]),
+                        stop_loss=min(l_curr, v_l[-2]),
                         description=(
                             "Nến xanh bao trùm nến giảm trước đó, xác nhận phe bò kiểm soát."
                         ),
@@ -313,10 +336,14 @@ def calc_geometric_trendlines(
     highs: list[float], lows: list[float], closes: list[float]
 ) -> GeometricTrendline:
     """Calculates trendline boundaries, slope angle and Volatility Contraction (VCP)."""
-    if len(closes) < 10:
-        curr = closes[-1] if closes else 100.0
+    valid_c = [float(c) for c in closes if isinstance(c, (int, float))]
+    valid_h = [float(h) for h in highs if isinstance(h, (int, float))]
+    valid_l = [float(l_val) for l_val in lows if isinstance(l_val, (int, float))]
+    min_len = min(len(valid_c), len(valid_h), len(valid_l))
+    if min_len < 10:
+        curr = valid_c[-1] if valid_c else 100.0
         return GeometricTrendline(
-            trend_type="Neutral Sideway",
+            trend_type="Kênh Đi Ngang Tích Lũy (Sideway Consolidation)",
             support_line_level=curr * 0.95,
             resistance_line_level=curr * 1.05,
             channel_slope_deg=0.0,
@@ -325,7 +352,7 @@ def calc_geometric_trendlines(
         )
 
     # Linear slope proxy
-    recent_c = closes[-20:] if len(closes) >= 20 else closes
+    recent_c = valid_c[-20:] if min_len >= 20 else valid_c[-min_len:]
     x = list(range(len(recent_c)))
     y = recent_c
     n = len(x)
@@ -338,16 +365,20 @@ def calc_geometric_trendlines(
     # Angle in degrees
     slope_deg = math.degrees(math.atan(slope / (mean_y * 0.01 if mean_y else 1.0)))
 
-    recent_h = highs[-20:] if len(highs) >= 20 else highs
-    recent_l = lows[-20:] if len(lows) >= 20 else lows
+    recent_h = valid_h[-20:] if min_len >= 20 else valid_h[-min_len:]
+    recent_l = valid_l[-20:] if min_len >= 20 else valid_l[-min_len:]
 
     res_line = max(recent_h)
     sup_line = min(recent_l)
 
     # Volatility Contraction Pattern (VCP) ratio: compare variance of first half vs second half
     half = n // 2
-    range_first = max(recent_h[:half]) - min(recent_l[:half])
-    range_second = max(recent_h[half:]) - min(recent_l[half:])
+    h_first = recent_h[:half]
+    l_first = recent_l[:half]
+    h_second = recent_h[half:]
+    l_second = recent_l[half:]
+    range_first = (max(h_first) - min(l_first)) if (h_first and l_first) else 1.0
+    range_second = (max(h_second) - min(l_second)) if (h_second and l_second) else 1.0
     vcp_ratio = (range_second / range_first) if range_first > 0 else 1.0
 
     if slope_deg > 15.0:
@@ -378,23 +409,24 @@ def compute_custom_indicators(
     bb_std: float = 2.0,
 ) -> dict[str, Any]:
     """Calculates user-defined custom indicators: Custom MACD, Bollinger Bands, ATR."""
-    if len(closes) < bb_period:
+    v_c = [float(c) for c in closes if isinstance(c, (int, float))]
+    if len(v_c) < bb_period:
         return {}
 
-    curr_close = closes[-1]
+    curr_close = v_c[-1]
 
     # Bollinger Bands
-    window = closes[-bb_period:]
+    window = v_c[-bb_period:]
     mean = sum(window) / bb_period
     variance = sum((c - mean) ** 2 for c in window) / bb_period
     stdev = math.sqrt(variance)
     bb_upper = mean + bb_std * stdev
     bb_lower = mean - bb_std * stdev
-    bb_bandwidth_pct = ((bb_upper - bb_lower) / mean) * 100
+    bb_bandwidth_pct = ((bb_upper - bb_lower) / mean * 100) if mean else 0.0
 
     # MACD Proxy
-    fast_ema = sum(closes[-macd_fast:]) / macd_fast if len(closes) >= macd_fast else curr_close
-    slow_ema = sum(closes[-macd_slow:]) / macd_slow if len(closes) >= macd_slow else curr_close
+    fast_ema = sum(v_c[-macd_fast:]) / macd_fast if len(v_c) >= macd_fast else curr_close
+    slow_ema = sum(v_c[-macd_slow:]) / macd_slow if len(v_c) >= macd_slow else curr_close
     macd_line = fast_ema - slow_ema
 
     return {
@@ -405,9 +437,9 @@ def compute_custom_indicators(
             "middle": round(mean, 2),
             "lower": round(bb_lower, 2),
             "bandwidth_pct": round(bb_bandwidth_pct, 2),
-            "state": "Co Thắt Nút Cổ Chai (Squeeze)"
-            if bb_bandwidth_pct < 6.0
-            else "Mở Rộng Biên Độ",
+            "state": (
+                "Co Thắt Nút Cổ Chai (Squeeze)" if bb_bandwidth_pct < 6.0 else "Mở Rộng Biên Độ"
+            ),
         },
         "macd": {
             "fast_period": macd_fast,
