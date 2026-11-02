@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import socket
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -83,10 +84,26 @@ _BLOCKED_METADATA_HOSTS = frozenset(
         "169.254.169.254",
         "metadata.google.internal",
         "metadata.goog",
+        "metadata",
         "100.100.100.200",
         "fd00:ec2::254",
+        "instance-data",
     }
 )
+_WILDCARD_DNS_DOMAINS = (".nip.io", ".sslip.io", ".xip.io", ".vcap.me", ".localtest.me")
+
+
+def _is_safe_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return (
+        ip.is_global
+        and not ip.is_multicast
+        and not ip.is_reserved
+        and not ip.is_link_local
+        and not ip.is_loopback
+        and not ip.is_private
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -590,8 +607,14 @@ class LLMOverride(BaseModel):
     extra_headers: dict[str, str] | None = None
 
 
-def validate_llm_base_url(url: str) -> str:
-    """Validate an LLM base URL, blocking cloud metadata endpoints (SSRF guard)."""
+def validate_llm_base_url(
+    url: str,
+    *,
+    allow_private: bool = False,
+    allowed_hosts: str = "",
+    private_hosts: str = "127.0.0.1,localhost,ollama",
+) -> str:
+    """Validate an LLM base URL against SSRF and private network access."""
     cleaned = url.strip().rstrip("/")
     if not cleaned:
         return ""
@@ -602,20 +625,71 @@ def validate_llm_base_url(url: str) -> str:
             "LLM base_url must be a valid http:// or https:// URL",
         )
     host = parsed.hostname.lower()
-    if host in _BLOCKED_METADATA_HOSTS:
+
+    # Allowed hosts check (if configured by server admin)
+    if allowed_hosts:
+        allowed_list = [h.strip().lower() for h in allowed_hosts.split(",") if h.strip()]
+        if allowed_list and not any(host == ah or host.endswith(f".{ah}") for ah in allowed_list):
+            raise MetaSearchError(
+                ErrorCode.INVALID_REQUEST,
+                f"LLM base_url host '{host}' is not in allowed hosts: {allowed_hosts}",
+            )
+
+    # If private host is explicitly allowed (e.g. server env / admin PATCH /v1/llm/config)
+    if allow_private:
+        allowed_priv = [h.strip().lower() for h in private_hosts.split(",") if h.strip()]
+        if host in allowed_priv:
+            return cleaned
+
+    # Check blocked metadata endpoints and wildcard DNS services
+    if host in _BLOCKED_METADATA_HOSTS or host.startswith("metadata."):
         raise MetaSearchError(
             ErrorCode.INVALID_REQUEST,
             f"LLM base_url host '{host}' is blocked for security reasons",
         )
+    if any(host.endswith(suffix) for suffix in _WILDCARD_DNS_DOMAINS):
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            f"LLM base_url host '{host}' uses a wildcard DNS service and is blocked",
+        )
+
+    # Disallow single-label hostnames without a dot (e.g. redis, postgres, searxng, crawl4ai)
+    if "." not in host:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            f"LLM base_url host '{host}' is an internal network name and is blocked",
+        )
+
+    # Check IP literal
     try:
         ip = ipaddress.ip_address(host)
-        if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        if not _is_safe_public_ip(ip):
             raise MetaSearchError(
                 ErrorCode.INVALID_REQUEST,
-                f"LLM base_url IP '{host}' is in a forbidden address range",
+                f"LLM base_url IP '{host}' is in a forbidden private/reserved address range",
             )
+        return cleaned
     except ValueError:
         pass
+
+    # Resolve DNS and verify all returned IPs are public and global
+    try:
+        resolved = socket.getaddrinfo(host, None)
+        for entry in resolved:
+            sockaddr = entry[4]
+            ip_str = sockaddr[0]
+            ip = ipaddress.ip_address(ip_str)
+            if not _is_safe_public_ip(ip):
+                raise MetaSearchError(
+                    ErrorCode.INVALID_REQUEST,
+                    f"LLM base_url host '{host}' resolves to forbidden private IP '{ip_str}'",
+                )
+    except socket.gaierror as exc:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            f"Failed to resolve LLM base_url host '{host}': {exc}",
+        ) from exc
+
     return cleaned
 
 
@@ -735,7 +809,7 @@ def _provider_env_api_key(settings: Settings, provider: str) -> str:
         "huggingface": settings.hf_token,
         "pollinations": "pollinations-free",
         "ollama": "ollama-local",
-        "custom": settings.custom_llm_api_key or settings.openai_api_key,
+        "custom": settings.custom_llm_api_key,
         "none": "",
     }
     return mapping.get(provider, "")
@@ -769,7 +843,7 @@ def _provider_env_base_url(settings: Settings, provider: str) -> str:
         "huggingface": settings.hf_base_url,
         "pollinations": settings.pollinations_base_url,
         "ollama": settings.ollama_base_url,
-        "custom": settings.custom_llm_base_url or settings.openai_base_url,
+        "custom": settings.custom_llm_base_url,
         "none": "",
     }
     return (mapping.get(provider) or default_url).rstrip("/")
@@ -784,7 +858,27 @@ def resolve_llm_target(
     """Resolve effective LLM provider, base_url, api_key, models, and headers.
 
     Precedence: ``request_override`` > ``runtime_override`` > ``settings``.
+    Security constraints:
+      * When ``settings.llm_byo_enabled`` is False, per-request custom ``base_url`` or
+        ``api_key`` is rejected (only preset provider/model switches are permitted).
+      * Request-supplied ``base_url`` NEVER inherits the server's environment or runtime API key.
+      * Custom providers never fall back to OpenAI API keys or URLs.
     """
+    req_base_url = (request_override.base_url or "").strip() if request_override else ""
+    req_api_key = request_override.api_key if request_override else None
+    req_extra_headers = request_override.extra_headers if request_override else None
+    run_base_url = (runtime_override.base_url or "").strip() if runtime_override else ""
+    run_api_key = runtime_override.api_key if runtime_override else None
+
+    # Enforce BYO policy: caller cannot supply custom base_url or api_key unless opt-in enabled
+    has_byo_request = bool(req_base_url or req_api_key is not None or req_extra_headers)
+    if has_byo_request and not settings.llm_byo_enabled:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            "Per-request BYO LLM override is disabled "
+            "(set LLM_BYO_ENABLED=true to allow custom base_url/api_key)",
+        )
+
     eff_override = LLMOverride()
     for ov in (runtime_override, request_override):
         if ov is not None:
@@ -801,13 +895,44 @@ def resolve_llm_target(
     if provider == "none":
         protocol = "none"
 
-    base_url = (eff_override.base_url or _provider_env_base_url(settings, provider)).rstrip("/")
-    if eff_override.base_url:
-        base_url = validate_llm_base_url(base_url)
+    # Base URL resolution & origin tracking
+    base_url_origin: str
+    if req_base_url:
+        base_url = validate_llm_base_url(
+            req_base_url,
+            allow_private=False,
+            allowed_hosts=settings.llm_byo_allowed_hosts,
+            private_hosts=settings.llm_private_hosts,
+        )
+        base_url_origin = "request"
+    elif run_base_url:
+        base_url = validate_llm_base_url(
+            run_base_url,
+            allow_private=True,
+            allowed_hosts=settings.llm_byo_allowed_hosts,
+            private_hosts=settings.llm_private_hosts,
+        )
+        base_url_origin = "runtime"
+    else:
+        base_url = _provider_env_base_url(settings, provider)
+        base_url_origin = "env"
 
-    api_key = eff_override.api_key
-    if api_key is None:
-        api_key = _provider_env_api_key(settings, provider)
+    # API key resolution: strictly bound to destination
+    # - If base_url came from request: MUST use request api_key (never env, never runtime)
+    # - If base_url came from runtime: MUST use request api_key or runtime api_key
+    # - If base_url came from env: request api_key -> runtime api_key -> env api_key
+    if base_url_origin == "request":
+        api_key = req_api_key or ""
+    elif base_url_origin == "runtime":
+        api_key = req_api_key if req_api_key is not None else (run_api_key or "")
+    else:
+        if req_api_key is not None:
+            api_key = req_api_key
+        elif run_api_key is not None:
+            api_key = run_api_key
+        else:
+            api_key = _provider_env_api_key(settings, provider)
+
     if not api_key and provider in ("pollinations", "ollama"):
         api_key = f"{provider}-free"
 
@@ -841,7 +966,14 @@ def resolve_llm_target(
     if settings.custom_llm_headers:
         headers.update(parse_extra_headers(settings.custom_llm_headers))
     if eff_override.extra_headers:
-        headers.update(parse_extra_headers(eff_override.extra_headers))
+        parsed_extra = parse_extra_headers(eff_override.extra_headers)
+        if not req_api_key:
+            parsed_extra = {
+                k: v
+                for k, v in parsed_extra.items()
+                if k.lower() not in ("authorization", "x-api-key", "cookie")
+            }
+        headers.update(parsed_extra)
 
     fallback_models: list[str] = []
     if provider == "openrouter" and settings.openrouter_fallback_models:
@@ -854,6 +986,11 @@ def resolve_llm_target(
         if eff_override.fallback_provider is not None
         else settings.llm_fallback_provider
     ).strip()
+    if fallback_provider and fallback_provider not in LLM_PROVIDER_PRESETS:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            f"Invalid fallback_provider: '{fallback_provider}'. Must be a known preset.",
+        )
 
     return ResolvedLLMTarget(
         provider=provider,

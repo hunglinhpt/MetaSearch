@@ -127,6 +127,10 @@ class Settings(BaseSettings):
     custom_llm_base_url: str = ""
     custom_llm_api_key: str = ""
     custom_llm_headers: str = ""
+    # BYO (Bring-Your-Own) LLM Configuration & Security Guards
+    llm_byo_enabled: bool = False
+    llm_byo_allowed_hosts: str = ""
+    llm_private_hosts: str = "127.0.0.1,localhost,ollama"
     # Automatic failover provider (e.g. "pollinations" or "openrouter") when primary hits 429/5xx
     llm_fallback_provider: str = ""
     # Multi-Endpoint LLM Council + Cross-Review + Dream-RSI settings

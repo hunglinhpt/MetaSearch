@@ -27,7 +27,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from app.api import deps
@@ -247,8 +247,23 @@ async def reset_dream_rsi_state() -> dict[str, Any]:
     "/llm/council",
     summary="Run Multi-Endpoint Free LLM Council + Anonymous Cross-Review + Dream-RSI Synthesis",
 )
-async def run_llm_council(request: CouncilRequest) -> dict[str, Any]:
+async def run_llm_council(request: CouncilRequest, raw_request: Request) -> dict[str, Any]:
     settings = get_settings()
+    if request.endpoints:
+        has_custom = any(
+            isinstance(ep, LLMOverride) and (ep.base_url or ep.api_key or ep.extra_headers)
+            for ep in request.endpoints
+        )
+        if has_custom:
+            if settings.auth_enabled:
+                await require_admin(raw_request)
+            elif not settings.llm_byo_enabled:
+                raise MetaSearchError(
+                    ErrorCode.UNAUTHORIZED,
+                    "Custom LLM endpoints in council require admin privileges or "
+                    "LLM_BYO_ENABLED=true",
+                    status_code=403,
+                )
     gateway = deps.get_gateway()
     sources: list[dict[str, Any]] = []
 
@@ -358,8 +373,18 @@ async def analyze_domain_query(request: DomainAnalyzeRequest) -> dict[str, Any]:
 
 
 @router.post("/llm/test", summary="Test connectivity and latency of an LLM endpoint")
-async def test_llm_connection(request: LLMTestRequest) -> dict[str, Any]:
+async def test_llm_connection(request: LLMTestRequest, raw_request: Request) -> dict[str, Any]:
     started = time.perf_counter()
+    settings = get_settings()
+    if request.llm and (request.llm.base_url or request.llm.api_key or request.llm.extra_headers):
+        if settings.auth_enabled:
+            await require_admin(raw_request)
+        elif not settings.llm_byo_enabled:
+            raise MetaSearchError(
+                ErrorCode.UNAUTHORIZED,
+                "Custom LLM target test requires admin privileges or LLM_BYO_ENABLED=true",
+                status_code=403,
+            )
     gateway = deps.get_gateway()
     if hasattr(gateway, "with_override") and request.llm is not None:
         gateway = gateway.with_override(request.llm)

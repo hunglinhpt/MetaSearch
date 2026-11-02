@@ -172,16 +172,22 @@ class LLMGateway:
     def _headers_for(self, target: ResolvedLLMTarget) -> dict[str, str]:
         if target.protocol == "anthropic":
             headers: dict[str, str] = {
-                "x-api-key": target.api_key,
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
             }
-            headers.update(target.extra_headers)
-            return headers
-        headers = {"content-type": "application/json"}
-        if target.api_key:
-            headers["Authorization"] = f"Bearer {target.api_key}"
-        headers.update(target.extra_headers)
+            if target.api_key:
+                headers["x-api-key"] = target.api_key
+        else:
+            headers = {"content-type": "application/json"}
+            if target.api_key:
+                headers["Authorization"] = f"Bearer {target.api_key}"
+
+        # Strip auth-bearing headers from extra_headers when target has no explicit API key
+        for k, v in target.extra_headers.items():
+            k_lower = k.lower()
+            if not target.api_key and k_lower in ("authorization", "x-api-key", "cookie"):
+                continue
+            headers[k] = v
         return headers
 
     def _body_for(
@@ -337,7 +343,15 @@ class LLMGateway:
             ) as resp:
                 if resp.status_code >= 400:
                     detail = (await resp.aread()).decode(errors="replace")[:500]
-                    raise LLMError(f"LLM HTTP {resp.status_code}: {detail}")
+                    logger.warning(
+                        "llm_upstream_error",
+                        provider=target.provider,
+                        status_code=resp.status_code,
+                        detail=detail,
+                    )
+                    raise LLMError(
+                        f"LLM provider '{target.provider}' returned HTTP {resp.status_code}"
+                    )
                 content_type = resp.headers.get("content-type", "").lower()
                 # Support non-streaming JSON responses from lightweight OpenAI-compatible proxies
                 if "application/json" in content_type and "event-stream" not in content_type:
