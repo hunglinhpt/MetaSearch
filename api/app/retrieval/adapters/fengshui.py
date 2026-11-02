@@ -12,7 +12,6 @@ Category: ``fengshui``.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
 from typing import Any
 
 from app.retrieval.models import RawResult
@@ -290,7 +289,6 @@ class FengShuiAdapter:
                     years.append(rep_year)
 
         results: list[RawResult] = []
-        now = datetime.now(UTC)
 
         if years:
             for y in years[:2]:
@@ -330,13 +328,17 @@ class FengShuiAdapter:
 
                 results.append(
                     RawResult(
-                        url=f"https://metasearch.ai/fengshui/tra-cuu/{y}-{slug_can_chi}",
+                        url=f"https://vi.wikipedia.org/wiki/L%E1%BB%A5c_th%E1%BA%ADp_hoa_gi%C3%A1p#{slug_can_chi}",
                         title=f"Tra Cứu Bát Trạch & Can Chi Phong Thủy Tuổi {can_chi} ({y})",
                         snippet=snippet,
                         adapter="fengshui",
                         source_engines=["fengshui"],
                         rank=len(results) + 1,
-                        published_at=now,
+                        published_at=None,
+                        source_name="Thuật toán Can Chi & Bát Trạch",
+                        source_url=None,
+                        as_of=None,
+                        data_kind="computed",
                     )
                 )
 
@@ -357,7 +359,7 @@ class FengShuiAdapter:
         if is_office_or_house or not results:
             results.append(
                 RawResult(
-                    url="https://metasearch.ai/fengshui/nguyen-ly-ung-dung",
+                    url="https://vi.wikipedia.org/wiki/Phong_th%E1%BB%A7y",
                     title="Nguyên Lý Phong Thủy Loan Đầu & Bát Trạch Ứng Dụng Khoa Học",
                     snippet=(
                         "Phong thủy chính phái đề cao: 'Tàng phong tụ khí' và cân bằng âm dương. "
@@ -369,7 +371,11 @@ class FengShuiAdapter:
                     adapter="fengshui",
                     source_engines=["fengshui"],
                     rank=len(results) + 1,
-                    published_at=now,
+                    published_at=None,
+                    source_name="Nguyên Lý Phong Thủy Học",
+                    source_url=None,
+                    as_of=None,
+                    data_kind="computed",
                 )
             )
 

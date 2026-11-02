@@ -211,7 +211,7 @@ def apply_signals(
     kw = keyword_relevance(query_terms, item.title, item.snippet)
     cons = consensus_score(item.consensus, max_engines)
     ew = engine_weight_score(item.adapters, registry)
-    fresh = freshness(item.published_at, now)
+    fresh = 0.0 if item.data_kind == "computed" else freshness(item.published_at, now)
     da = domain_authority(item.domain)
     sq = snippet_quality(item.snippet)
     fresh_weight = WEIGHTS["freshness_news"] if news else WEIGHTS["freshness_other"]

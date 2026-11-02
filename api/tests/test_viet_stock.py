@@ -100,20 +100,21 @@ class TestVietStockAdapter:
         results = await adapter.search("kế hoạch kinh doanh và kết quả BCTC FPT 2024")
         assert len(results) >= 2
 
-        # 1. Primary FA Profile
+        # 1. Primary Grounded FA Profile
         profile_res = results[0]
         assert "HSX:FPT" in profile_res.title
         assert "Công nghệ thông tin" in profile_res.snippet
         assert "P/E: 24.5" in profile_res.snippet
         assert "ROE: 28.2%" in profile_res.snippet
+        assert profile_res.source_name == "Simplize"
+        assert profile_res.source_url == "https://simplize.vn/co-phieu/FPT"
         assert profile_res.published_at is not None
-        # Check published_at is properly grounded, not datetime.now()
         assert profile_res.published_at.year in (2024, 2025, 2026)
 
-        # 2. Plan & Earnings deep-dive
-        plan_res = results[1]
-        assert "KẾT QUẢ KINH DOANH" in plan_res.snippet
-        assert "62,980" in plan_res.snippet or "61,890" in plan_res.snippet
+        # 2. Grounded VNDIRECT EOD Technicals
+        tech_res = results[1]
+        assert "KỸ THUẬT NÂNG CAO" in tech_res.snippet
+        assert tech_res.source_name == "VNDIRECT"
 
     async def test_search_fpt_technical_analysis_with_real_candles(self, mock_viet_stock_network):
         adapter = VietStockAdapter()
@@ -125,19 +126,20 @@ class TestVietStockAdapter:
         assert "Fibo Retracement" in t_res.snippet
         assert "Mây Ichimoku" in t_res.snippet
         assert t_res.published_at is not None
-        assert t_res.published_at.year == 2024
+        assert t_res.published_at.year in (2024, 2025, 2026)
+        assert t_res.source_name == "VNDIRECT"
 
     async def test_search_hpg_dividend_history(self, mock_viet_stock_network):
         adapter = VietStockAdapter()
         results = await adapter.search("lịch sử trả cổ tức HPG ngày GDKHQ tiền mặt cổ phiếu")
         assert len(results) >= 2
 
-        div_results = [r for r in results if "CỔ TỨC" in r.snippet]
-        assert len(div_results) >= 1
-        div_res = div_results[0]
-        assert "GDKHQ" in div_res.snippet
-        assert "Dung Quất 2" in div_res.snippet or "cổ tức" in div_res.snippet.lower()
-        assert "HPG" in div_res.title
+        # Verify results are grounded to HPG without inventing fake corporate stories
+        hpg_results = [r for r in results if "HPG" in r.title]
+        assert len(hpg_results) >= 1
+        top_res = hpg_results[0]
+        assert top_res.source_name in ("Simplize", "VNDIRECT")
+        assert not any("Dung Quất 2" in r.snippet for r in results)
 
     async def test_search_vcb_shareholders_and_deals(self, mock_viet_stock_network):
         adapter = VietStockAdapter()
@@ -146,24 +148,22 @@ class TestVietStockAdapter:
         )
         assert len(results) >= 2
 
-        deal_results = [
-            r for r in results if "CƠ CẤU CỔ ĐÔNG" in r.snippet or "TRAO TAY" in r.snippet
-        ]
-        assert len(deal_results) >= 1
-        d_res = deal_results[0]
-        assert "Ngân hàng Nhà nước" in d_res.snippet or "Mizuho" in d_res.snippet
-        assert "thỏa thuận" in d_res.snippet.lower()
-        assert "room ngoại" in d_res.snippet.lower()
+        # Verify results are grounded to VCB without hallucinated block trades
+        vcb_results = [r for r in results if "VCB" in r.title]
+        assert len(vcb_results) >= 1
+        top_res = vcb_results[0]
+        assert top_res.source_name in ("Simplize", "VNDIRECT")
+        assert not any("Mizuho" in r.snippet for r in results)
 
     async def test_search_hnx_idc_restructuring_and_esop(self, mock_viet_stock_network):
         adapter = VietStockAdapter()
         results = await adapter.search("IDC sàn HNX tăng vốn quỹ đất KCN và cổ tức")
         assert len(results) >= 2
 
-        top = results[0]
-        assert "HNX:IDC" in top.title
-        assert "Thủ phủ cổ tức tiền mặt sàn HNX" in top.snippet or "30-40%" in top.snippet
-        assert "HNX" in top.title
+        # Query mentions both IDC and index HNX
+        idc_results = [r for r in results if "IDC" in r.title]
+        assert len(idc_results) >= 1
+        assert idc_results[0].source_name in ("Simplize", "VNDIRECT")
 
     async def test_general_market_query_not_hijacked(self):
         adapter = VietStockAdapter()

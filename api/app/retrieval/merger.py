@@ -49,6 +49,10 @@ def merge(
                 best_rank=primary.rank,
                 adapter_score=primary.adapter_score,
                 published_at=next((r.published_at for r in group if r.published_at), None),
+                source_url=primary.source_url,
+                source_name=primary.source_name,
+                as_of=next((r.as_of for r in group if r.as_of), primary.as_of),
+                data_kind=primary.data_kind,
             )
         )
 

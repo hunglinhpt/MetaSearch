@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
 
 
 @dataclass(slots=True)
@@ -34,6 +35,10 @@ class RawResult:
     adapter_score: float | None = None  # engine-provided ranking score, if any
     published_at: datetime | None = None
     rank: int = 0  # position within the adapter's result list
+    source_url: str | None = None  # nơi kiểm chứng được thật
+    source_name: str | None = None  # "VNDIRECT dchart", "Simplize"
+    as_of: datetime | None = None  # mốc của dữ liệu, không phải lúc gọi
+    data_kind: Literal["observed", "derived", "reference", "computed"] | None = None
 
 
 @dataclass(slots=True)
@@ -51,6 +56,10 @@ class ScoredResult:
     best_rank: int = 0
     adapter_score: float | None = None
     published_at: datetime | None = None
+    source_url: str | None = None
+    source_name: str | None = None
+    as_of: datetime | None = None
+    data_kind: Literal["observed", "derived", "reference", "computed"] | None = None
 
     # scoring signals (0..1 each), kept for observability/debugging
     keyword_relevance: float = 0.0
