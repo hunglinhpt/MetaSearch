@@ -1,16 +1,19 @@
-// MetaSearch k6 load test (docs/12-roadmap-plan.md Phase 4).
+// MetaSearch k6 load test (docs/12-roadmap-plan.md Phase 4 & WP-00 perf harness).
 //
-// Requires the compose stack (real SearXNG):
+// Requires the compose stack (real SearXNG) or local bench upstream:
 //   cd deploy && docker compose --profile observability up -d
 //   k6 run -e BASE_URL=http://localhost:8000 k6/load-test.js
 //
-// Scenarios: steady search traffic + answer streaming + a small spike.
+// Scenarios: steady search traffic + context retrieval + answer streaming + spike.
 // Thresholds mirror the KPIs in docs/12 §3.
 
 import http from "k6/http";
 import { check, sleep } from "k6";
+import { Trend } from "k6/metrics";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8000";
+
+const ttftTrend = new Trend("stream_ttft_duration");
 
 export const options = {
   scenarios: {
@@ -23,6 +26,28 @@ export const options = {
         { duration: "15s", target: 0 },
       ],
       exec: "searchFlow",
+    },
+    context_steady: {
+      executor: "ramping-vus",
+      startVUs: 1,
+      stages: [
+        { duration: "30s", target: 5 },
+        { duration: "1m", target: 5 },
+        { duration: "15s", target: 0 },
+      ],
+      exec: "contextFlow",
+      startTime: "15s",
+    },
+    answer_stream: {
+      executor: "ramping-vus",
+      startVUs: 1,
+      stages: [
+        { duration: "30s", target: 3 },
+        { duration: "1m", target: 3 },
+        { duration: "15s", target: 0 },
+      ],
+      exec: "answerFlow",
+      startTime: "30s",
     },
     spike: {
       executor: "ramping-arrival-rate",
@@ -41,6 +66,7 @@ export const options = {
   thresholds: {
     "http_req_duration{scenario:steady_search}": ["p(95)<2500"], // raw search KPI
     "http_req_failed": ["rate<0.05"],
+    "stream_ttft_duration": ["p(95)<3000"],
   },
 };
 
@@ -64,13 +90,31 @@ export function searchFlow() {
   sleep(1);
 }
 
+export function contextFlow() {
+  const query = QUERIES[Math.floor(Math.random() * QUERIES.length)];
+  const res = http.post(
+    `${BASE_URL}/v1/context`,
+    JSON.stringify({ query, k: 10 }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+  check(res, {
+    "context 200": (r) => r.status === 200,
+    "has text": (r) => r.status !== 200 || r.json("text") !== undefined,
+  });
+  sleep(1);
+}
+
 export function answerFlow() {
-  // SSE streaming: k6 measures time-to-first-byte; done event ends the stream.
+  // SSE streaming: measures response duration and verifies done event
+  const start = Date.now();
   const res = http.post(
     `${BASE_URL}/v1/answer`,
     JSON.stringify({ query: "postgresql replication overview", stream: true }),
     { headers: { "Content-Type": "application/json" } }
   );
+  const duration = Date.now() - start;
+  ttftTrend.add(duration);
+
   check(res, {
     "answer 200": (r) => r.status === 200,
     "stream contains done": (r) => r.body.includes("event: done"),

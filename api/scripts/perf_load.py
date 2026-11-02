@@ -6,23 +6,30 @@ stack (uvicorn, in-process) is exercised end to end.
     python scripts/perf_load.py
 
 Environment pinned inside the script BEFORE app import (settings are cached):
-fake engine on 127.0.0.1:9999, cache disabled, Postgres pointed at a port
+fake engine on 127.0.0.1:18766, cache disabled, Postgres pointed at a port
 that refuses connections instantly so fallback paths run, not hang.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
+import socket
 import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+DEFAULT_PORT = 18765
+FAKE_SEARXNG_PORT = 18766
+DEFAULT_HOST = "127.0.0.1"
+API = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
+
 os.environ["ENVIRONMENT"] = "dev"
 os.environ["LOG_LEVEL"] = "WARNING"
-os.environ["SEARXNG_URL"] = "http://127.0.0.1:9999"
+os.environ["SEARXNG_URL"] = f"http://127.0.0.1:{FAKE_SEARXNG_PORT}"
 os.environ["CACHE_ENABLED"] = "false"
 # Nothing listens here: connect is refused in milliseconds, exercising the
 # same fallback paths a dead-DB production box would take.
@@ -33,9 +40,6 @@ os.environ["REDIS_URL"] = "redis://127.0.0.1:6399/0"
 os.environ["ENGINE_AUTO_DISABLE_THRESHOLD"] = "999"
 # Pure pipeline numbers: skip the Postgres-backed engine store entirely.
 os.environ["ENGINE_STORE_BACKEND"] = "memory"
-
-API = "http://127.0.0.1:8001"
-FAKE_SEARXNG_PORT = 9999
 
 FAKE_RESULTS = [
     {
@@ -48,6 +52,56 @@ FAKE_RESULTS = [
     }
     for i in range(15)
 ]
+
+
+def assert_port_available(host: str, port: int) -> None:
+    """Verify that host:port is free before launching test services.
+
+    Prevents hammering foreign services (another local service) or failing unexpectedly.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        if sock.connect_ex((host, port)) == 0:
+            raise RuntimeError(
+                f"Port {port} on {host} is already in use (connected successfully). "
+                "Refusing to run load test against occupied port."
+            )
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((host, port))
+    except OSError as err:
+        raise RuntimeError(f"Port {port} on {host} is already in use/occupied: {err}") from err
+
+
+def wait_ready(api_url: str = API, max_attempts: int = 100, delay_s: float = 0.1) -> None:
+    """Wait for API to be ready and verify identity against foreign services."""
+    import httpx
+
+    last_err = None
+    for _ in range(max_attempts):
+        try:
+            resp_health = httpx.get(f"{api_url}/healthz", timeout=1)
+            if resp_health.status_code == 200:
+                resp_meta = httpx.get(f"{api_url}/v1/meta", timeout=1)
+                if resp_meta.status_code == 200:
+                    data = resp_meta.json()
+                    name = data.get("name")
+                    if name != "MetaSearch AI":
+                        raise RuntimeError(
+                            f"Foreign service detected on {api_url}: "
+                            f"expected name 'MetaSearch AI', got {name!r}"
+                        )
+                    return
+                raise RuntimeError(
+                    f"Foreign service or invalid MetaSearch instance on {api_url}: "
+                    f"/v1/meta returned status {resp_meta.status_code}"
+                )
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            last_err = exc
+            time.sleep(delay_s)
+    raise RuntimeError(f"API did not come up within timeout: {last_err}")
 
 
 class FakeSearXNG(BaseHTTPRequestHandler):
@@ -77,34 +131,22 @@ class FakeSearXNG(BaseHTTPRequestHandler):
         pass
 
 
-def start_fake_searxng() -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer(("127.0.0.1", FAKE_SEARXNG_PORT), FakeSearXNG)
+def start_fake_searxng(port: int = FAKE_SEARXNG_PORT) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer(("127.0.0.1", port), FakeSearXNG)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
 
-def start_api() -> threading.Thread:
+def start_api(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> threading.Thread:
     import uvicorn
 
     from app.main import app as fastapp  # import AFTER env vars are set
 
-    config = uvicorn.Config(fastapp, host="127.0.0.1", port=8001, log_level="warning")
+    config = uvicorn.Config(fastapp, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     return thread
-
-
-def wait_ready() -> None:
-    import httpx
-
-    for _ in range(100):
-        try:
-            if httpx.get(f"{API}/healthz", timeout=1).status_code == 200:
-                return
-        except Exception:
-            time.sleep(0.1)
-    raise RuntimeError("API did not come up")
 
 
 async def load(url: str, *, n: int, concurrency: int, payload: dict | None = None) -> dict:
@@ -218,38 +260,60 @@ def micro_benchmarks() -> list[tuple[str, float, str]]:
 
 
 async def main() -> int:
+    parser = argparse.ArgumentParser(description="MetaSearch performance check")
+    parser.add_argument(
+        "--host", default=DEFAULT_HOST, help="Host to bind API (default: 127.0.0.1)"
+    )
+    parser.add_argument(
+        "--port", type=int, default=DEFAULT_PORT, help="Port to bind API (default: 18765)"
+    )
+    parser.add_argument(
+        "--searxng-port",
+        type=int,
+        default=FAKE_SEARXNG_PORT,
+        help="Port for fake SearXNG (default: 18766)",
+    )
+    args = parser.parse_args()
+
     print("=" * 72)
     print("MetaSearch performance check (no Docker needed)")
     print("=" * 72)
+
+    # 1. Assert ports are free BEFORE touching network
+    assert_port_available(args.host, args.port)
+    assert_port_available(args.host, args.searxng_port)
+
+    api_url = f"http://{args.host}:{args.port}"
+    os.environ["SEARXNG_URL"] = f"http://{args.host}:{args.searxng_port}"
 
     print("\n-- Micro benchmarks (hot paths) --")
     for name, value, unit in micro_benchmarks():
         print(f"   {name:<48} {value:8.1f} {unit}")
 
     print("\n-- API load test (real pipeline: fanout -> merge -> score -> JSON) --")
-    start_fake_searxng()
-    start_api()
-    wait_ready()
+    start_fake_searxng(port=args.searxng_port)
+    start_api(host=args.host, port=args.port)
+    wait_ready(api_url=api_url)
 
     scenarios = [
-        ("GET  /healthz", f"{API}/healthz", None, 400, 20),
+        ("GET  /healthz", f"{api_url}/healthz", None, 400, 20),
         (
             "POST /v1/search k=10 (c=1)",
-            f"{API}/v1/search",
+            f"{api_url}/v1/search",
             {"query": "postgres tuning", "k": 10},
             30,
             1,
         ),
         (
             "POST /v1/search k=10 (c=5)",
-            f"{API}/v1/search",
+            f"{api_url}/v1/search",
             {"query": "postgres tuning", "k": 10},
             60,
             5,
         ),
         (
             "POST /v1/search k=10 (c=25)",
-            f"{API}/v1/search",
+            f"{api_url}/v1/search",
             {"query": "postgres tuning", "k": 10},
             200,
             25,
