@@ -697,11 +697,14 @@ class AnswerPipeline:
 
         text_parts: list[str] = []
         usage = Usage()
+        finish_reasons: set[str] = set()
         try:
             async for delta in gateway.stream(messages, model=model):
                 if delta.text:
                     text_parts.append(delta.text)
                     yield ("token", {"t": delta.text})
+                if delta.finish_reason:
+                    finish_reasons.add(delta.finish_reason)
                 if delta.usage:
                     usage.input_tokens += delta.usage.input_tokens
                     usage.output_tokens += delta.usage.output_tokens
@@ -710,6 +713,8 @@ class AnswerPipeline:
             yield ("error", {"code": "internal", "message": str(exc)[:200]})
             return
         record_usage(model, usage)
+        # DAT-07: a "length" cut-off is not a complete answer.
+        answer_status = "truncated" if "length" in finish_reasons else "complete"
 
         check = validate_citations("".join(text_parts), included)
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -745,6 +750,7 @@ class AnswerPipeline:
                 latency_ms=latency_ms,
                 citations=[(c.n, c.url, c.title, c.chunk_id) for c in check.citations],
                 query=normalize_query(params.query),
+                status=answer_status,
             )
         )
         _background_tasks.add(finalize)
@@ -755,8 +761,8 @@ class AnswerPipeline:
             {
                 "answer_id": str(answer_id),
                 "latency_ms": latency_ms,
-                "complete": outcome.complete and bool(ok_pages),
-                "status": "complete",
+                "complete": outcome.complete and bool(ok_pages) and answer_status == "complete",
+                "status": answer_status,
                 "model": model,
                 "cached": False,
             },
@@ -875,6 +881,7 @@ class AnswerPipeline:
         latency_ms: int,
         citations: list[tuple[int, str, str, str | None]],
         query: str,
+        status: str = "complete",
     ) -> None:
         if pages:
             await persist.persist_pages_async(pages, chunks)
@@ -888,6 +895,7 @@ class AnswerPipeline:
             cost_usd=usage.cost_usd(model),
             latency_ms=latency_ms,
             citations=citations,
+            status=status,
         )
         if self.embedder is not None and self.embedder.enabled:
             await self._semantic_cache_store(query, answer_id, model)

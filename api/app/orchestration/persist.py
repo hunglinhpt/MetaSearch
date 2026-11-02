@@ -247,6 +247,7 @@ async def _persist_answer(
     cost_usd: float,
     latency_ms: int,
     citations: list[tuple[int, str, str, str | None]],
+    status: str = "complete",
 ) -> None:
     """``citations``: (n, url, title, chunk_id-or-None)."""
     async with get_sessionmaker()() as session:
@@ -262,7 +263,7 @@ async def _persist_answer(
                 output_tokens=output_tokens or None,
                 cost_usd=cost_usd or None,
                 latency_ms=latency_ms,
-                status="complete",
+                status=status,
             )
         )
         for n, url, _title, chunk_id in citations:
@@ -310,6 +311,7 @@ async def persist_answer(
     cost_usd: float,
     latency_ms: int,
     citations: list[tuple[int, str, str, str | None]],
+    status: str = "complete",
 ) -> None:
     """Awaited by the answer pipeline after the ``done`` event so the
     semantic-cache write (which references the answers FK) runs safely."""
