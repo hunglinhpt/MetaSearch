@@ -54,9 +54,13 @@ jobs:
       - name: Backend Full Test Suite (Pytest)
         run: python -m pytest tests -q
 
-      - name: Dependency Audit (pip-audit)
-        continue-on-error: true
+      - name: Dependency Audit (pip-audit, blocking since WP-16)
         run: pip-audit --skip-editable
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   frontend-matrix:
     name: Frontend (${{ matrix.os }} / Node ${{ matrix.node-version }})
@@ -81,7 +85,7 @@ jobs:
           cache-dependency-path: frontend/package.json
 
       - name: Install Dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Strict TypeScript Typecheck
         run: npm run typecheck
@@ -125,7 +129,7 @@ jobs:
 
       - name: Install Frontend Dependencies
         working-directory: frontend
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Run Full Quality Gate & Pre-Flight Check (scripts/release.py --check)
         run: python scripts/release.py --check
