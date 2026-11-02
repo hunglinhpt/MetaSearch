@@ -92,7 +92,15 @@ class TestProviderPresetsAndResolution:
         assert (
             validate_llm_base_url("https://openrouter.ai/api/v1/") == "https://openrouter.ai/api/v1"
         )
-        assert validate_llm_base_url("http://127.0.0.1:11434/v1") == "http://127.0.0.1:11434/v1"
+        # Private loopback allowed only when allow_private=True (e.g. server env / admin config)
+        assert (
+            validate_llm_base_url("http://127.0.0.1:11434/v1", allow_private=True)
+            == "http://127.0.0.1:11434/v1"
+        )
+        with pytest.raises(MetaSearchError) as exc_priv:
+            validate_llm_base_url("http://127.0.0.1:11434/v1", allow_private=False)
+        assert exc_priv.value.code == ErrorCode.INVALID_REQUEST
+
         with pytest.raises(MetaSearchError) as exc_info:
             validate_llm_base_url("http://169.254.169.254/latest/meta-data")
         assert exc_info.value.code == ErrorCode.INVALID_REQUEST
