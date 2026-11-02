@@ -32,7 +32,10 @@ async def search(request: SearchRequest) -> SearchResponse:
                     timeout_ms=request.timeout_ms,
                 )
             )
-            if not outcome.results:
+            # WP-15: empty results with healthy engines = 200 complete:true;
+            # all engines failed = 503. Agents must distinguish the two.
+            all_failed = all(s.status != "ok" for s in outcome.statuses)
+            if not outcome.results and all_failed:
                 raise MetaSearchError(
                     ErrorCode.NO_RESULTS,
                     "All engines failed or returned no results",

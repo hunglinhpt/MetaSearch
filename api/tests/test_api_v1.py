@@ -216,13 +216,20 @@ class TestSearchEndpoint:
         assert second.json()["cached"] is True
         assert second.json()["results"][0]["url"] == "https://a.com/1"
 
-    def test_search_no_results_is_503(self, client, stack):
+    def test_search_no_results_is_200_complete(self, client, stack):
+        """WP-15: empty results with healthy engines = 200, not 503."""
         stack.adapters = [FakeAdapter("searxng", [])]
         stack.install()
         resp = client.post("/v1/search", json={"query": "nothing to find"})
+        assert resp.status_code == 200
+        assert resp.json()["results"] == []
+
+    def test_search_all_engines_failed_is_503(self, client, stack):
+        stack.adapters = [FakeAdapter("searxng", [], fail=True)]
+        stack.install()
+        resp = client.post("/v1/search", json={"query": "nothing"})
         assert resp.status_code == 503
         assert resp.json()["error"]["code"] == "no_results"
-        assert resp.json()["error"]["details"]["engines_status"]["searxng"] == "ok"
 
     def test_search_validation_error(self, client, stack):
         stack.install()
