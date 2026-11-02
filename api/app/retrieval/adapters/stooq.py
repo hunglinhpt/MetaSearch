@@ -460,7 +460,7 @@ class StooqFinanceAdapter:
             closes, volumes, highs=highs, lows=lows, **custom_params
         )
 
-        pat_name = patterns[0].name if patterns else "Đang tích lũy"
+        pat_name = patterns[0].name if patterns else "Không phát hiện mẫu hình"
         rsi_info = customs.get("rsi", {})
         macd_info = customs.get("macd", {})
         extra_ind = ""
@@ -497,6 +497,10 @@ class StooqFinanceAdapter:
                 adapter=self.id,
                 source_engines=[self.id],
                 published_at=pub_dt,
+                source_url=f"https://stooq.com/q/?s={symbol}",
+                source_name="Stooq",
+                as_of=pub_dt,
+                data_kind="derived",
             ),
             RawResult(
                 url=f"https://stooq.com/q/a/?s={symbol}",
@@ -506,5 +510,9 @@ class StooqFinanceAdapter:
                 adapter=self.id,
                 source_engines=[self.id],
                 published_at=pub_dt,
+                source_url=f"https://stooq.com/q/?s={symbol}",
+                source_name="Stooq",
+                as_of=pub_dt,
+                data_kind="derived",
             ),
         ][:max_results]

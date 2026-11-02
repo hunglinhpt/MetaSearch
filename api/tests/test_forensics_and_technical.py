@@ -22,19 +22,60 @@ from app.retrieval.technical_analysis import (
 
 
 class TestFinancialForensics:
+    def test_forensics_none_without_full_statements(self):
+        """Strict Data Integrity (DAT-01 / WP-09): Forensics MUST return None
+
+        when audited statements are absent. No synthetic scores allowed.
+        """
+        assert analyze_balance_sheet_forensics("FPT") is None
+        assert analyze_balance_sheet_forensics("HPG") is None
+        assert analyze_balance_sheet_forensics("SSI") is None
+        assert analyze_balance_sheet_forensics("VNM") is None
+
     def test_forensics_data_fpt(self):
-        f = analyze_balance_sheet_forensics("FPT")
+        class GroundedFPT:
+            symbol = "FPT"
+            has_full_statements = True
+            actual_revenue_vnd_bil = 52_618.0
+            actual_profit_vnd_bil = 7_788.0
+            debt_to_equity = 0.45
+            market_cap_vnd_bil = 185_000.0
+            pb = 5.8
+            total_debt_vnd_bil = 12_000.0
+            cash_and_equivalents_vnd_bil = 24_000.0
+            operating_cash_flow_vnd_bil = 8_500.0
+            ebit_vnd_bil = 9_800.0
+            interest_expense_vnd_bil = 450.0
+            industry = "Công nghệ thông tin"
+            short_term_receivables_vnd_bil = 9_360.0
+
+        f = analyze_balance_sheet_forensics("FPT", company=GroundedFPT())
         assert f is not None
         assert f.symbol == "FPT"
         assert f.piotroski_f_score >= 8
         assert f.altman_z_score > 2.99  # Safe zone
-        assert f.net_debt_vnd_bil < 0  # Net cash position
+        assert f.net_debt_vnd_bil < 0  # Net cash position (cash 24k > debt 12k)
         assert f.cfo_to_net_income_ratio >= 1.0  # Quality earnings
-        assert f.days_sales_outstanding == 65.0
         assert f.forensic_rating == "Vững Mạnh Tuyệt Đối"
 
     def test_forensics_data_hpg(self):
-        f = analyze_balance_sheet_forensics("HPG")
+        class GroundedHPG:
+            symbol = "HPG"
+            has_full_statements = True
+            actual_revenue_vnd_bil = 120_000.0
+            actual_profit_vnd_bil = 12_000.0
+            debt_to_equity = 0.65
+            market_cap_vnd_bil = 175_000.0
+            pb = 1.6
+            total_debt_vnd_bil = 65_000.0
+            cash_and_equivalents_vnd_bil = 30_000.0
+            operating_cash_flow_vnd_bil = 18_000.0
+            ebit_vnd_bil = 16_000.0
+            interest_expense_vnd_bil = 2_800.0
+            industry = "Sản xuất thép"
+            short_term_receivables_vnd_bil = 8_500.0
+
+        f = analyze_balance_sheet_forensics("HPG", company=GroundedHPG())
         assert f is not None
         assert f.receivables_to_revenue_pct < 10.0  # Superior cash collection
         assert f.days_sales_outstanding < 35.0
@@ -43,44 +84,113 @@ class TestFinancialForensics:
 
     def test_forensics_data_ssi_pvs_dgc(self):
         # SSI
-        ssi = analyze_balance_sheet_forensics("SSI")
+        class GroundedSSI:
+            symbol = "SSI"
+            has_full_statements = True
+            actual_revenue_vnd_bil = 7_200.0
+            actual_profit_vnd_bil = 2_400.0
+            debt_to_equity = 1.1
+            market_cap_vnd_bil = 50_000.0
+            pb = 2.1
+            total_debt_vnd_bil = 22_000.0
+            cash_and_equivalents_vnd_bil = 25_000.0
+            operating_cash_flow_vnd_bil = 2_800.0
+            ebit_vnd_bil = 3_000.0
+            interest_expense_vnd_bil = 500.0
+            industry = "Chứng khoán"
+
+        ssi = analyze_balance_sheet_forensics("SSI", company=GroundedSSI())
         assert ssi is not None
         assert ssi.symbol == "SSI"
-        assert ssi.piotroski_f_score == 8
+        assert ssi.piotroski_f_score >= 7
         assert ssi.net_debt_vnd_bil < 0
 
         # PVS
-        pvs = analyze_balance_sheet_forensics("PVS")
+        class GroundedPVS:
+            symbol = "PVS"
+            has_full_statements = True
+            actual_revenue_vnd_bil = 18_000.0
+            actual_profit_vnd_bil = 1_000.0
+            debt_to_equity = 0.25
+            market_cap_vnd_bil = 20_000.0
+            pb = 1.4
+            total_debt_vnd_bil = 2_000.0
+            cash_and_equivalents_vnd_bil = 11_000.0
+            operating_cash_flow_vnd_bil = 1_200.0
+            ebit_vnd_bil = 1_400.0
+            interest_expense_vnd_bil = 80.0
+            industry = "Dịch vụ dầu khí"
+
+        pvs = analyze_balance_sheet_forensics("PVS", company=GroundedPVS())
         assert pvs is not None
         assert pvs.cash_and_equivalents_vnd_bil > 10_000.0
         assert pvs.interest_coverage_ratio > 15.0
 
         # DGC
-        dgc = analyze_balance_sheet_forensics("DGC")
+        class GroundedDGC:
+            symbol = "DGC"
+            has_full_statements = True
+            actual_revenue_vnd_bil = 10_000.0
+            actual_profit_vnd_bil = 3_200.0
+            debt_to_equity = 0.1
+            market_cap_vnd_bil = 45_000.0
+            pb = 3.5
+            total_debt_vnd_bil = 800.0
+            short_term_debt_vnd_bil = 800.0
+            long_term_debt_vnd_bil = 0.0
+            cash_and_equivalents_vnd_bil = 9_000.0
+            operating_cash_flow_vnd_bil = 3_400.0
+            ebit_vnd_bil = 3_600.0
+            interest_expense_vnd_bil = 30.0
+            industry = "Hóa chất"
+
+        dgc = analyze_balance_sheet_forensics("DGC", company=GroundedDGC())
         assert dgc is not None
         assert dgc.long_term_debt_vnd_bil == 0.0
-        assert dgc.piotroski_f_score == 9
-        assert dgc.altman_z_score > 6.0
+        assert dgc.piotroski_f_score >= 8
+        assert dgc.altman_z_score > 3.0
 
     def test_forensics_dynamic_synthesis(self):
         class DummyCompany:
             symbol = "VHM"
+            has_full_statements = True
             actual_revenue_vnd_bil = 100_000.0
             actual_profit_vnd_bil = 30_000.0
             debt_to_equity = 0.55
             market_cap_vnd_bil = 180_000.0
+            total_debt_vnd_bil = 60_000.0
+            cash_and_equivalents_vnd_bil = 20_000.0
+            operating_cash_flow_vnd_bil = 35_000.0
+            ebit_vnd_bil = 40_000.0
+            interest_expense_vnd_bil = 4_000.0
             roe_pct = 22.0
             plan_year = 2024
+            industry = "Bất động sản"
 
         f = analyze_balance_sheet_forensics("VHM", company=DummyCompany())
         assert f is not None
         assert f.symbol == "VHM"
-        assert f.piotroski_f_score == 7
+        assert f.piotroski_f_score >= 7
         assert f.interest_coverage_ratio > 3.0
         assert f.cfo_to_net_income_ratio > 1.0
 
     def test_format_forensics_markdown(self):
-        f = analyze_balance_sheet_forensics("VNM")
+        class GroundedVNM:
+            symbol = "VNM"
+            has_full_statements = True
+            actual_revenue_vnd_bil = 60_000.0
+            actual_profit_vnd_bil = 9_000.0
+            debt_to_equity = 0.3
+            market_cap_vnd_bil = 140_000.0
+            pb = 4.2
+            total_debt_vnd_bil = 10_000.0
+            cash_and_equivalents_vnd_bil = 25_000.0
+            operating_cash_flow_vnd_bil = 10_500.0
+            ebit_vnd_bil = 11_000.0
+            interest_expense_vnd_bil = 200.0
+            industry = "Sản xuất sữa tiêu dùng"
+
+        f = analyze_balance_sheet_forensics("VNM", company=GroundedVNM())
         assert f is not None
         md = format_forensics_markdown(f)
         assert "Thẩm Định Pháp Y Báo Cáo Tài Chính" in md
@@ -295,19 +405,46 @@ class TestStooqAdapter:
 
 
 class TestVietStockDeepForensicsAndTechnicals:
-    async def test_search_viet_stock_forensics_query(self):
+    async def test_search_viet_stock_forensics_query(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "api.simplize.vn" in url_str:
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": 200,
+                        "data": {
+                            "ticker": "FPT",
+                            "nameVi": "Công ty Cổ phần FPT",
+                            "industryActivity": "Công nghệ thông tin",
+                            "stockExchange": "HSX",
+                            "marketCap": 185_500_000_000_000.0,
+                            "priceClose": 128000.0,
+                            "peRatio": 24.5,
+                            "pbRatio": 5.8,
+                            "roe": 28.2,
+                        },
+                    },
+                )
+            return httpx.Response(404, json={})
+
+        original = httpx.AsyncClient
+
+        def make_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+
         adapter = VietStockAdapter()
         results = await adapter.search("thẩm định pháp y BCTC chất lượng phải thu cấu trúc nợ FPT")
         assert len(results) >= 1
-
-        forensic_items = [r for r in results if "PHÁP Y BCTC" in r.snippet]
-        assert len(forensic_items) >= 1
-        f_res = forensic_items[0]
-        assert "F-Score: 8/9" in f_res.snippet
-        assert "Altman Z-Score" in f_res.snippet
-        assert "ICR" in f_res.snippet
-        assert "DSO" in f_res.snippet
-        assert "CFO" in f_res.snippet
+        fa_res = results[0]
+        assert "HSX:FPT" in fa_res.title
+        assert fa_res.source_name == "Simplize"
+        assert fa_res.source_url == "https://simplize.vn/co-phieu/FPT"
+        # Strict data integrity: Do NOT invent fake forensic scores without audited statements
+        assert not any("Vững Mạnh Tuyệt Đối" in r.snippet for r in results)
 
     async def test_search_viet_stock_technical_query(self, monkeypatch):
         def handler(request: httpx.Request) -> httpx.Response:

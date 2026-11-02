@@ -127,8 +127,17 @@ class YahooFinanceAdapter:
         if not clean_q:
             return []
 
+        # Strip generic noise keywords for ticker/company lookup
+        clean_lookup = re.sub(
+            r"\b(stock|stocks|share|shares|quote|quotes|cổ phiếu|chứng khoán|price|prices)\b",
+            "",
+            clean_q,
+            flags=re.IGNORECASE,
+        ).strip()
+        effective_q = clean_lookup or clean_q
+
         search_params = {
-            "q": clean_q,
+            "q": effective_q,
             "quotesCount": str(min(max_results, 6)),
             "newsCount": str(min(max_results, 6)),
             "enableFuzzyQuery": "false",
@@ -252,6 +261,14 @@ class YahooFinanceAdapter:
                     f"[{symbol} · {quote_type}] {name} · Exchange: {exchange}{extra_sec}".strip()
                 )
 
+            market_time = None
+            raw_time = q.get("regularMarketTime")
+            if raw_time:
+                try:
+                    market_time = datetime.fromtimestamp(raw_time, tz=UTC)
+                except (ValueError, OSError):
+                    market_time = None
+
             results.append(
                 RawResult(
                     url=url,
@@ -260,7 +277,11 @@ class YahooFinanceAdapter:
                     rank=len(results) + 1,
                     adapter=self.id,
                     source_engines=[self.id],
-                    published_at=datetime.now(UTC),
+                    published_at=market_time,
+                    source_url=url,
+                    source_name="Yahoo Finance",
+                    as_of=market_time,
+                    data_kind="observed",
                 )
             )
 
@@ -299,6 +320,10 @@ class YahooFinanceAdapter:
                     adapter=self.id,
                     source_engines=[self.id],
                     published_at=published_at,
+                    source_url=link,
+                    source_name=publisher,
+                    as_of=published_at,
+                    data_kind="observed",
                 )
             )
 

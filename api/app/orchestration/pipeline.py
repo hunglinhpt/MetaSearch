@@ -51,6 +51,7 @@ from app.retrieval.merger import diversity_cap, merge
 from app.retrieval.models import EngineConfig, EngineStatus, RawResult, ScoredResult
 from app.retrieval.reranker import Reranker, RerankerUnavailable, heuristic_order
 from app.retrieval.scoring import heuristic_chunk_score
+from app.retrieval.vn_tickers import is_vn_ticker
 
 logger = get_logger(__name__)
 
@@ -61,11 +62,11 @@ _background_tasks: set[asyncio.Task[None]] = set()
 
 _QUANT_ADAPTERS = frozenset({"viet_stock", "stooq", "yahoo_finance", "sec_edgar", "fengshui"})
 
-_VN_TICKER_RE = re.compile(
-    r"\b(fpt|hpg|vcb|vnm|ssi|mwg|vic|idc|tcb|mbb|acb|vhm|msn|gas|pnj|vnd|kbc|bid|ctg|vci)\b",
-    re.IGNORECASE,
-)
 _DOLLAR_TICKER_RE = re.compile(r"\$[a-zA-Z]{1,6}\b")
+
+
+def _has_vn_ticker(query: str) -> bool:
+    return any(is_vn_ticker(word) for word in re.findall(r"\b[A-Za-z0-9]{3}\b", query))
 
 
 def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
@@ -118,7 +119,7 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "kết quả kinh doanh",
         "pháp y tài chính",
     )
-    if any(t in q for t in fin_terms) or _DOLLAR_TICKER_RE.search(q) or _VN_TICKER_RE.search(q):
+    if any(t in q for t in fin_terms) or _DOLLAR_TICKER_RE.search(q) or _has_vn_ticker(query):
         inferred.add("financial")
 
     fengshui_terms = (
