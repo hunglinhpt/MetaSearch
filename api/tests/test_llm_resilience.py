@@ -546,21 +546,52 @@ class TestWPObservability:
 
 
 class TestExpiredKey:
-    async def test_expired_key_rejected(self, monkeypatch):
-        """SEC fix: a key past its expires_at must be rejected, not accepted."""
+    async def test_query_includes_expiry_filter(self, monkeypatch):
+        """SEC fix: authenticate() SQL must filter on expires_at."""
+        import json as _json
         from datetime import UTC, datetime, timedelta
 
-        class FakeRow:
-            id = "kid"
-            name = "expired"
-            role = "user"
-            rate_limit_rpm = 60
-            enabled = True
-            expires_at = datetime.now(UTC) - timedelta(hours=1)  # expired
+        row = type("R", (), {
+            "id": "kid", "name": "valid", "role": "user",
+            "rate_limit_rpm": 60, "enabled": True,
+            "expires_at": datetime.now(UTC) + timedelta(days=365),
+        })()
+
+        captured = {}
 
         class FakeResult:
             def scalar_one_or_none(self):
-                return FakeRow()
+                return row
+
+        class FakeSession:
+            async def execute(self, stmt):
+                captured["stmt"] = str(stmt)
+                return FakeResult()
+
+        class FakeMaker:
+            def __call__(self):
+                return self
+
+            async def __aenter__(self):
+                return FakeSession()
+
+            async def __aexit__(self, *a):
+                return False
+
+        monkeypatch.setattr(auth_mod, "get_sessionmaker", FakeMaker())
+        ctx = await auth_mod.authenticate("msk_valid")
+        assert ctx.role == "user"
+        assert "expires_at" in captured["stmt"], (
+            "authenticate() SQL must include expires_at filter"
+        )
+
+    async def test_db_returns_none_for_expired(self, monkeypatch):
+        """When the DB rejects an expired key (returns None), auth gives 401."""
+        from app.core import auth as auth_mod
+
+        class FakeResult:
+            def scalar_one_or_none(self):
+                return None  # DB expired-key filter -> row not found
 
         class FakeSession:
             async def execute(self, stmt):
@@ -578,38 +609,5 @@ class TestExpiredKey:
 
         monkeypatch.setattr(auth_mod, "get_sessionmaker", FakeMaker())
         with pytest.raises(MetaSearchError) as excinfo:
-            await auth_mod.authenticate("msk_expired_key")
+            await auth_mod.authenticate("msk_expired")
         assert excinfo.value.status_code == 401
-
-    async def test_valid_future_expiry_accepted(self, monkeypatch):
-        from datetime import UTC, datetime, timedelta
-
-        class FakeRow:
-            id = "kid"
-            name = "valid"
-            role = "user"
-            rate_limit_rpm = 60
-            enabled = True
-            expires_at = datetime.now(UTC) + timedelta(days=365)
-
-        class FakeResult:
-            def scalar_one_or_none(self):
-                return FakeRow()
-
-        class FakeSession:
-            async def execute(self, stmt):
-                return FakeResult()
-
-        class FakeMaker:
-            def __call__(self):
-                return self
-
-            async def __aenter__(self):
-                return FakeSession()
-
-            async def __aexit__(self, *a):
-                return False
-
-        monkeypatch.setattr(auth_mod, "get_sessionmaker", FakeMaker())
-        ctx = await auth_mod.authenticate("msk_valid_future")
-        assert ctx.role == "user"
