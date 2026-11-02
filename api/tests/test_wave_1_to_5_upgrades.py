@@ -376,13 +376,10 @@ class TestWave4MultiEngineAdapters:
                 )
             return httpx.Response(404, json={})
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+        mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        monkeypatch.setattr(
+            "app.retrieval.adapters.viet_stock.get_http_client", lambda *a, **kw: mock_client
+        )
 
         adapter = VietStockAdapter()
         fpt_res = await adapter.search("phân tích kỹ thuật FPT RSI 9")

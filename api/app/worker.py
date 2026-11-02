@@ -12,6 +12,7 @@ import signal
 from app.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import dispose_engine
+from app.http import get_http_client
 
 logger = get_logger(__name__)
 
@@ -20,7 +21,6 @@ HEARTBEAT_INTERVAL_S = 30.0
 
 async def _probe_adapter(engine_id: str) -> bool:
     """Cheap liveness check for one engine; True means it works again."""
-    import httpx
 
     from app.api.deps import build_adapters
     from app.retrieval.adapters.searxng import SearXNGAdapter
@@ -31,8 +31,8 @@ async def _probe_adapter(engine_id: str) -> bool:
         return False
     try:
         if isinstance(adapter, SearXNGAdapter):
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{adapter.base_url}/healthz")
+            client = get_http_client("internal")
+            resp = await client.get(f"{adapter.base_url}/healthz", timeout=5.0)
             return resp.status_code < 500
         results = await adapter.search("metasearch recovery probe", max_results=1, timeout_s=5.0)
         return bool(results)

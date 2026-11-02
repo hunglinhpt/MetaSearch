@@ -139,7 +139,7 @@ async def test_all_open_fails_open() -> None:
     t0 = time.monotonic()
     for _ in range(3):
         health.record("ddg", Outcome.UPSTREAM_ERROR, now=t0)
-        health.record("searxng", Outcome.UPSTREAM_ERROR, now=t0 + 5.0)
+        health.record("searxng", Outcome.UPSTREAM_ERROR, now=t0 + 50.0)
 
     assert health.get("ddg").state == "open"
     assert health.get("searxng").state == "open"

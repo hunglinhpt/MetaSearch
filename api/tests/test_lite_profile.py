@@ -46,8 +46,8 @@ class TestDuckDuckGo:
             assert request.url.host == "html.duckduckgo.com"
             return httpx.Response(200, text=DDG_HTML)
 
-        monkeypatch.setattr(httpx, "AsyncClient", _mock_client_factory(handler))
-        results = await DuckDuckGoAdapter().search("postgres docs", max_results=10)
+        adapter = DuckDuckGoAdapter(client=_mock_client_factory(handler)())
+        results = await adapter.search("postgres docs", max_results=10)
         assert len(results) == 2
         assert results[0].url == "https://www.postgresql.org/docs/"
         assert "PostgreSQL" in results[0].title
@@ -56,29 +56,22 @@ class TestDuckDuckGo:
 
     async def test_bot_block_not_retried(self, monkeypatch):
         monkeypatch.setattr("app.retrieval.adapters.ddg._last_call", 0.0)
-        monkeypatch.setattr(
-            httpx, "AsyncClient", _mock_client_factory(lambda r: httpx.Response(403))
-        )
+        adapter = DuckDuckGoAdapter(client=_mock_client_factory(lambda r: httpx.Response(403))())
         with pytest.raises(AdapterError, match="403"):
-            await DuckDuckGoAdapter().search("x")
+            await adapter.search("x")
 
     async def test_challenge_page_detected(self, monkeypatch):
         monkeypatch.setattr("app.retrieval.adapters.ddg._last_call", 0.0)
-        monkeypatch.setattr(
-            httpx,
-            "AsyncClient",
-            _mock_client_factory(lambda r: httpx.Response(200, text="anomaly detected")),
+        adapter = DuckDuckGoAdapter(
+            client=_mock_client_factory(lambda r: httpx.Response(200, text="anomaly detected"))()
         )
         with pytest.raises(AdapterError, match="challenge"):
-            await DuckDuckGoAdapter().search("x")
+            await adapter.search("x")
 
 
 def _mock_client_factory(handler):
-    original = httpx.AsyncClient
-
     def make_client(*args, **kwargs):
-        kwargs["transport"] = httpx.MockTransport(handler)
-        return original(*args, **kwargs)
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
     return make_client
 

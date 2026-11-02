@@ -16,13 +16,8 @@ class TestProbeAdapter:
             assert request.url.path == "/healthz"
             return httpx.Response(200)
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr("httpx.AsyncClient", make_client)
+        mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        monkeypatch.setattr("app.worker.get_http_client", lambda *a, **kw: mock_client)
         ok = await _probe_adapter("searxng")
         assert ok is True
 

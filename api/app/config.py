@@ -195,6 +195,9 @@ class Settings(BaseSettings):
     search_fanout_budget_s: float = 5.0
     scrape_timeout_s: float = 8.0
     scrape_concurrency: int = 6
+    scrape_global_concurrency: int = 24
+    scrape_per_domain_concurrency: int = 2
+    tls_trust_store: Literal["certifi", "system"] = "certifi"
     max_scrape_bytes: int = 5 * 1024 * 1024
     max_redirects: int = 3
     user_agent: str = "MetaSearchBot/1.0 (+https://metasearch.example/bot)"

@@ -15,7 +15,9 @@ from datetime import UTC, datetime
 
 import httpx
 
+from app.http import get_http_client
 from app.retrieval.adapters.base import AdapterError
+from app.retrieval.health import Outcome
 from app.retrieval.models import RawResult
 from app.retrieval.technical_analysis import (
     calc_fibonacci_retracement,
@@ -109,9 +111,11 @@ class YahooFinanceAdapter:
         *,
         search_url: str = DEFAULT_SEARCH_URL,
         chart_url: str = DEFAULT_CHART_URL,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.search_url = search_url
         self.chart_url = chart_url
+        self._client = client
 
     async def search(
         self,
@@ -150,16 +154,36 @@ class YahooFinanceAdapter:
             "Accept": "application/json",
         }
 
+        client = self._client or get_http_client("search")
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_s) as client:
-                resp = await client.get(self.search_url, params=search_params, headers=headers)
-                if resp.status_code != 200:
-                    raise AdapterError(f"yahoo_finance HTTP {resp.status_code}", retryable=False)
-                payload = resp.json()
+            resp = await client.get(
+                self.search_url,
+                params=search_params,
+                headers=headers,
+                follow_redirects=True,
+                timeout=timeout_s,
+            )
+            if resp.status_code == 429:
+                raise AdapterError("yahoo_finance rate limited", kind=Outcome.RATE_LIMITED)
+            if resp.status_code == 403:
+                raise AdapterError("yahoo_finance forbidden", kind=Outcome.BLOCKED, retryable=False)
+            if resp.status_code != 200:
+                raise AdapterError(
+                    f"yahoo_finance HTTP {resp.status_code}",
+                    kind=Outcome.UPSTREAM_ERROR,
+                    retryable=False,
+                )
+            payload = resp.json()
+        except httpx.PoolTimeout as exc:
+            raise AdapterError("yahoo_finance pool timeout", kind=Outcome.LOCAL_OVERLOAD) from exc
         except httpx.TimeoutException as exc:
-            raise AdapterError(f"yahoo_finance timeout after {timeout_s}s") from exc
+            raise AdapterError(
+                f"yahoo_finance timeout after {timeout_s}s", kind=Outcome.TIMEOUT
+            ) from exc
         except httpx.HTTPError as exc:
-            raise AdapterError(f"yahoo_finance transport error: {type(exc).__name__}") from exc
+            raise AdapterError(
+                f"yahoo_finance transport error: {type(exc).__name__}", kind=Outcome.UPSTREAM_ERROR
+            ) from exc
         except ValueError as exc:
             raise AdapterError("yahoo_finance returned non-JSON body") from exc
 
@@ -182,33 +206,32 @@ class YahooFinanceAdapter:
         if primary_symbols:
             top_sym = primary_symbols[0]
             try:
-                async with httpx.AsyncClient(
-                    follow_redirects=True, timeout=min(timeout_s, 2.5)
-                ) as client:
-                    c_resp = await client.get(
-                        f"{self.chart_url}/{top_sym}",
-                        params={"interval": "1d", "range": "3mo"},
-                        headers=headers,
-                    )
-                    if c_resp.status_code == 200:
-                        c_data = c_resp.json()
-                        chart_res = c_data.get("chart", {}).get("result") or []
-                        if chart_res:
-                            meta = chart_res[0].get("meta") or {}
-                            price_meta[top_sym] = meta
-                            indicators = chart_res[0].get("indicators") or {}
-                            quote_list = indicators.get("quote") or [{}]
-                            q_item = quote_list[0] if quote_list else {}
-                            closes = q_item.get("close") or []
-                            vols = q_item.get("volume") or []
-                            highs = q_item.get("high") or []
-                            lows = q_item.get("low") or []
-                            cur_price = meta.get("regularMarketPrice")
-                            tech_str = _calc_technical_summary(
-                                closes, vols, cur_price, highs=highs, lows=lows
-                            )
-                            if tech_str:
-                                price_tech[top_sym] = tech_str
+                c_resp = await client.get(
+                    f"{self.chart_url}/{top_sym}",
+                    params={"interval": "1d", "range": "3mo"},
+                    headers=headers,
+                    follow_redirects=True,
+                    timeout=min(timeout_s, 2.5),
+                )
+                if c_resp.status_code == 200:
+                    c_data = c_resp.json()
+                    chart_res = c_data.get("chart", {}).get("result") or []
+                    if chart_res:
+                        meta = chart_res[0].get("meta") or {}
+                        price_meta[top_sym] = meta
+                        indicators = chart_res[0].get("indicators") or {}
+                        quote_list = indicators.get("quote") or [{}]
+                        q_item = quote_list[0] if quote_list else {}
+                        closes = q_item.get("close") or []
+                        vols = q_item.get("volume") or []
+                        highs = q_item.get("high") or []
+                        lows = q_item.get("low") or []
+                        cur_price = meta.get("regularMarketPrice")
+                        tech_str = _calc_technical_summary(
+                            closes, vols, cur_price, highs=highs, lows=lows
+                        )
+                        if tech_str:
+                            price_tech[top_sym] = tech_str
             except Exception as exc:
                 logger.debug("Yahoo Finance chart enrichment skipped: %s", exc)
 

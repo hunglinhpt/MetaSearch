@@ -25,18 +25,12 @@ PAYLOAD = {
 
 
 @pytest.fixture
-def adapter(monkeypatch):
+def adapter():
     """TavilyAdapter whose HTTP requests go through a MockTransport."""
 
     def _make(handler) -> TavilyAdapter:
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr("app.retrieval.adapters.tavily.httpx.AsyncClient", make_client)
-        return TavilyAdapter("tvly-key")
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        return TavilyAdapter("tvly-key", client=client)
 
     return _make
 

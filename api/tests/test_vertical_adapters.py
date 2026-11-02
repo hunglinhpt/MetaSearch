@@ -35,16 +35,13 @@ ARXIV_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
 
 @pytest.fixture
 def patched_httpx(monkeypatch):
-    original = httpx.AsyncClient
-
     def _patch(module_name: str, handler):
-        module = __import__(module_name, fromlist=["httpx"])
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(module.httpx, "AsyncClient", make_client)
+        module = __import__(module_name, fromlist=["get_http_client", "httpx"])
+        mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        if hasattr(module, "get_http_client"):
+            monkeypatch.setattr(module, "get_http_client", lambda *a, **kw: mock_client)
+        if hasattr(module, "httpx"):
+            monkeypatch.setattr(module.httpx, "AsyncClient", lambda *a, **kw: mock_client)
 
     return _patch
 

@@ -10,7 +10,9 @@ from typing import Any
 
 import httpx
 
+from app.http import get_http_client
 from app.retrieval.adapters.base import AdapterError
+from app.retrieval.health import Outcome
 from app.retrieval.models import RawResult
 
 DEFAULT_BASE_URL = "https://api.tavily.com"
@@ -31,9 +33,16 @@ def _parse_published(value: Any) -> datetime | None:
 class TavilyAdapter:
     id = "tavily"
 
-    def __init__(self, api_key: str, *, base_url: str = DEFAULT_BASE_URL) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str = DEFAULT_BASE_URL,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        self._client = client
 
     async def search(
         self,
@@ -92,30 +101,44 @@ class TavilyAdapter:
         return results
 
     async def _post(self, payload: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+        client = self._client or get_http_client("search")
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_s) as client:
-                resp = await client.post(
-                    f"{self.base_url}/search",
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
+            resp = await client.post(
+                f"{self.base_url}/search",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                follow_redirects=True,
+                timeout=timeout_s,
+            )
+        except httpx.PoolTimeout as exc:
+            raise AdapterError("tavily pool timeout", kind=Outcome.LOCAL_OVERLOAD) from exc
         except httpx.TimeoutException as exc:
-            raise AdapterError(f"tavily timeout after {timeout_s}s") from exc
+            raise AdapterError(f"tavily timeout after {timeout_s}s", kind=Outcome.TIMEOUT) from exc
         except httpx.HTTPError as exc:
-            raise AdapterError(f"tavily transport error: {type(exc).__name__}") from exc
+            raise AdapterError(
+                f"tavily transport error: {type(exc).__name__}", kind=Outcome.UPSTREAM_ERROR
+            ) from exc
 
         if resp.status_code in (401, 403):
-            raise AdapterError(f"tavily auth failed (HTTP {resp.status_code})", retryable=False)
+            raise AdapterError(
+                f"tavily auth failed (HTTP {resp.status_code})",
+                kind=Outcome.BLOCKED,
+                retryable=False,
+            )
         if resp.status_code == 429:
-            raise AdapterError("tavily rate limited (HTTP 429)", retryable=False)
+            raise AdapterError(
+                "tavily rate limited (HTTP 429)", kind=Outcome.RATE_LIMITED, retryable=False
+            )
         try:
             resp.raise_for_status()
             body = resp.json()
         except httpx.HTTPStatusError as exc:
-            raise AdapterError(f"tavily HTTP {exc.response.status_code}") from exc
+            raise AdapterError(
+                f"tavily HTTP {exc.response.status_code}", kind=Outcome.UPSTREAM_ERROR
+            ) from exc
         except ValueError as exc:
             raise AdapterError("tavily returned non-JSON body") from exc
         if not isinstance(body, dict):

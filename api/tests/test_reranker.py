@@ -59,40 +59,19 @@ async def test_jina_rerank_blends_model_scores():
         assert request.headers["authorization"] == "Bearer jina-key"
         return httpx.Response(200, json=payload)
 
-    reranker = JinaAPIReranker("jina-key")
-    import app.retrieval.reranker as rr
-
-    # Inject a mocked HTTP transport for the client created inside rerank().
-    original_asyncclient = httpx.AsyncClient
-
-    def make_client(*args, **kwargs):
-        kwargs["transport"] = httpx.MockTransport(handler)
-        return original_asyncclient(*args, **kwargs)
-
-    monkey = pytest.MonkeyPatch()
-    monkey.setattr(rr.httpx, "AsyncClient", make_client)
-    try:
-        chunks = await reranker.rerank("q", scored(("weak", 0.1), ("strong", 0.9), ("middle", 0.5)))
-    finally:
-        monkey.undo()
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    reranker = JinaAPIReranker("jina-key", client=mock_client)
+    chunks = await reranker.rerank("q", scored(("weak", 0.1), ("strong", 0.9), ("middle", 0.5)))
     # Model score 1.0 dominates the 0.1 heuristic for the first document.
     assert chunks[0].content == "weak"
 
 
-async def test_jina_failure_falls_back(monkeypatch):
+async def test_jina_failure_falls_back():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, text="boom")
 
-    import app.retrieval.reranker as rr
-
-    original_asyncclient = httpx.AsyncClient
-
-    def make_client(*args, **kwargs):
-        kwargs["transport"] = httpx.MockTransport(handler)
-        return original_asyncclient(*args, **kwargs)
-
-    monkeypatch.setattr(rr.httpx, "AsyncClient", make_client)
-    reranker = JinaAPIReranker("jina-key")
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    reranker = JinaAPIReranker("jina-key", client=mock_client)
     input_order = scored(("strong", 0.9), ("weak", 0.1))
     with pytest.raises(RerankerUnavailable):
         await reranker.rerank("q", input_order)

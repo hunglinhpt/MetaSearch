@@ -2,9 +2,10 @@
 
 Checks before any outbound fetch:
 1. Only http/https; no userinfo in the URL.
-2. Resolve DNS and reject private/loopback/link-local/reserved/metadata IPs,
-   including IPv4-mapped IPv6 addresses.
-3. Returns the validated IP set so callers can log it; connection pinning and
+2. Only allowed ports (80, 443, 8080, 8443).
+3. Resolve DNS and reject private/loopback/link-local/reserved/metadata IPs,
+   including CGNAT 100.64.0.0/10 and IPv4-mapped IPv6 addresses.
+4. Returns the validated IP set so callers can log it; connection pinning and
    redirect re-check hardening land in Phase 4 (docs/12-roadmap-plan.md).
 """
 
@@ -15,6 +16,8 @@ import ipaddress
 import socket
 from urllib.parse import urlsplit
 
+ALLOWED_PORTS: set[int] = {80, 443, 8080, 8443}
+
 
 class SSRFViolation(Exception):
     """The URL targets a forbidden host and must not be fetched."""
@@ -24,14 +27,14 @@ def _assert_safe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
         ip = ip.ipv4_mapped
     if (
-        ip.is_private
+        not ip.is_global
+        or ip.is_multicast
         or ip.is_loopback
         or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
         or ip.is_unspecified
+        or ip.is_reserved
     ):
-        raise SSRFViolation(f"refusing to fetch private/reserved address {ip}")
+        raise SSRFViolation(f"refusing to fetch non-global/reserved address {ip}")
 
 
 async def resolve_and_check(url: str) -> frozenset[str]:
@@ -47,6 +50,10 @@ async def resolve_and_check(url: str) -> frozenset[str]:
     hostname = parts.hostname
     if not hostname:
         raise SSRFViolation("URL has no hostname")
+
+    port = parts.port
+    if port is not None and port not in ALLOWED_PORTS:
+        raise SSRFViolation(f"port {port} not allowed (only {sorted(ALLOWED_PORTS)})")
 
     # A literal IP in the hostname skips DNS.
     try:

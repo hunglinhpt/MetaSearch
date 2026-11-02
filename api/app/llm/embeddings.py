@@ -12,6 +12,7 @@ import httpx
 from app.config import Settings
 from app.core.logging import get_logger
 from app.db.base import EMBEDDING_DIM
+from app.http import get_http_client
 
 logger = get_logger(__name__)
 
@@ -37,20 +38,13 @@ class EmbeddingClient:
         if self._settings.embedding_api_key:
             headers["Authorization"] = f"Bearer {self._settings.embedding_api_key}"
         try:
-            client = self._client
-            if client is None:
-                async with httpx.AsyncClient(timeout=10.0) as own:
-                    resp = await own.post(
-                        url,
-                        json={"model": self._settings.embedding_model, "input": [text]},
-                        headers=headers,
-                    )
-            else:
-                resp = await client.post(
-                    url,
-                    json={"model": self._settings.embedding_model, "input": [text]},
-                    headers=headers,
-                )
+            client = self._client or get_http_client("internal")
+            resp = await client.post(
+                url,
+                json={"model": self._settings.embedding_model, "input": [text]},
+                headers=headers,
+                timeout=10.0,
+            )
             resp.raise_for_status()
             payload = resp.json()
         except Exception as exc:

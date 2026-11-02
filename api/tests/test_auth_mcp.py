@@ -321,13 +321,13 @@ class TestLangfuseTracing:
             async def __aexit__(self, *a):
                 return False
 
-            async def post(self, url, json=None, headers=None):
+            async def post(self, url, json=None, headers=None, **kw):
                 sent["url"] = url
                 sent["json"] = json
                 sent["auth"] = headers["Authorization"]
                 return type("R", (), {"status_code": 200})()
 
-        monkeypatch.setattr(lf.httpx, "AsyncClient", FakeClient)
+        monkeypatch.setattr(lf, "get_http_client", lambda *a, **kw: FakeClient())
         await lf.trace_llm_call(
             settings, task="planner", model="m", messages=[], output="o", usage={}
         )

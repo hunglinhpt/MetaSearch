@@ -19,6 +19,7 @@ import httpx
 from app.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.db.models import BlogPost
+from app.http import get_http_client
 
 logger = get_logger(__name__)
 
@@ -147,16 +148,16 @@ class NotificationDispatcher:
         """
         results: dict[str, bool] = {}
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                tasks = [
-                    self._send_telegram(post, client),
-                    self._send_webhook(post, client),
-                    self._send_discord(post, client),
-                ]
-                res_tg, res_wh, res_dc = await asyncio.gather(*tasks, return_exceptions=True)
-                results["telegram"] = bool(res_tg) if not isinstance(res_tg, Exception) else False
-                results["webhook"] = bool(res_wh) if not isinstance(res_wh, Exception) else False
-                results["discord"] = bool(res_dc) if not isinstance(res_dc, Exception) else False
+            client = get_http_client("internal")
+            tasks = [
+                self._send_telegram(post, client),
+                self._send_webhook(post, client),
+                self._send_discord(post, client),
+            ]
+            res_tg, res_wh, res_dc = await asyncio.gather(*tasks, return_exceptions=True)
+            results["telegram"] = bool(res_tg) if not isinstance(res_tg, Exception) else False
+            results["webhook"] = bool(res_wh) if not isinstance(res_wh, Exception) else False
+            results["discord"] = bool(res_dc) if not isinstance(res_dc, Exception) else False
         except Exception as exc:
             logger.error("notification_dispatcher_unexpected_error", error=str(exc))
             results = {"telegram": False, "webhook": False, "discord": False}

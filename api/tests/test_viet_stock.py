@@ -15,7 +15,6 @@ from app.retrieval.adapters.viet_stock import (
 @pytest.fixture
 def mock_viet_stock_network(monkeypatch):
     """Provides grounded mocked responses for VNDIRECT and Simplize APIs."""
-    original = httpx.AsyncClient
 
     def handler(request: httpx.Request) -> httpx.Response:
         url_str = str(request.url)
@@ -63,11 +62,10 @@ def mock_viet_stock_network(monkeypatch):
             )
         return httpx.Response(404, json={})
 
-    def make_client(*args, **kwargs):
-        kwargs["transport"] = httpx.MockTransport(handler)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(httpx, "AsyncClient", make_client)
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(
+        "app.retrieval.adapters.viet_stock.get_http_client", lambda *a, **kw: mock_client
+    )
 
 
 class TestVietStockAdapter:
@@ -177,13 +175,10 @@ class TestVietStockAdapter:
         def fail_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, json={"error": "offline"})
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(fail_handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+        fail_client = httpx.AsyncClient(transport=httpx.MockTransport(fail_handler))
+        monkeypatch.setattr(
+            "app.retrieval.adapters.viet_stock.get_http_client", lambda *a, **kw: fail_client
+        )
 
         adapter = VietStockAdapter()
         results = await adapter.search("phân tích kỹ thuật FPT")

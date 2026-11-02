@@ -20,7 +20,9 @@ from urllib.parse import unquote, urlsplit
 import httpx
 
 from app.core.logging import get_logger
+from app.http import get_http_client
 from app.retrieval.adapters.base import AdapterError
+from app.retrieval.health import Outcome
 from app.retrieval.models import RawResult
 
 logger = get_logger(__name__)
@@ -90,8 +92,14 @@ def _parse_published(snippet: str) -> datetime | None:
 class DuckDuckGoAdapter:
     id = "ddg"
 
-    def __init__(self, *, base_url: str = DEFAULT_BASE_URL) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str = DEFAULT_BASE_URL,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self.base_url = base_url
+        self._client = client
 
     async def search(
         self,
@@ -136,22 +144,32 @@ class DuckDuckGoAdapter:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
             }
-            async with httpx.AsyncClient(
+            client = self._client or get_http_client("search")
+            resp = await client.post(
+                self.base_url,
+                data=params,
+                headers=headers,
                 follow_redirects=True,
                 timeout=timeout_s,
-                headers=headers,
-            ) as client:
-                resp = await client.post(self.base_url, data=params)
+            )
+        except httpx.PoolTimeout as exc:
+            raise AdapterError("ddg pool timeout", kind=Outcome.LOCAL_OVERLOAD) from exc
         except httpx.TimeoutException as exc:
-            raise AdapterError(f"ddg timeout after {timeout_s}s") from exc
+            raise AdapterError(f"ddg timeout after {timeout_s}s", kind=Outcome.TIMEOUT) from exc
         except httpx.HTTPError as exc:
-            raise AdapterError(f"ddg transport error: {type(exc).__name__}") from exc
+            raise AdapterError(
+                f"ddg transport error: {type(exc).__name__}", kind=Outcome.UPSTREAM_ERROR
+            ) from exc
 
         if resp.status_code in (202, 403, 429):
             # 202 = DDG's soft anomaly throttle; treat like an explicit block.
-            raise AdapterError(f"ddg bot-blocked (HTTP {resp.status_code})", retryable=False)
+            raise AdapterError(
+                f"ddg bot-blocked (HTTP {resp.status_code})",
+                kind=Outcome.BLOCKED if resp.status_code != 429 else Outcome.RATE_LIMITED,
+                retryable=False,
+            )
         if resp.status_code != 200:
-            raise AdapterError(f"ddg HTTP {resp.status_code}")
+            raise AdapterError(f"ddg HTTP {resp.status_code}", kind=Outcome.UPSTREAM_ERROR)
         if "anomaly" in resp.text[:2000].lower() or "captcha" in resp.text[:2000].lower():
             raise AdapterError("ddg challenge page (bot detection)", retryable=False)
 

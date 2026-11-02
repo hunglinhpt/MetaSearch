@@ -63,26 +63,34 @@ class RobotsCache:
         a 3xx is treated as "no robots" — best-effort compliance, and pinned
         fetching keeps the SSRF guard intact)."""
         settings = get_settings()
-        client = self._client or get_http_client()
+        client = self._client or get_http_client("scrape")
         try:
             from app.extraction import ssrf
             from app.extraction.pinning import build_pinned_request
+            from app.extraction.scraper import _ordered_ips
 
             url = f"{origin}/robots.txt"
             ips = await ssrf.resolve_and_check(url)
-            pinned_url, headers, extensions = build_pinned_request(url, sorted(ips)[0])
-            req_headers = {**headers, "Connection": "close"}
-            resp = await client.get(
-                url=pinned_url,
-                headers=req_headers,
-                extensions=extensions,
-                timeout=settings.robots_timeout_s,
-            )
-            if resp.status_code != 200 or not resp.content:
-                return None
-            parser = RobotFileParser()
-            parser.parse(resp.text[:_ROBOTS_MAX_CHARS].splitlines())
-            return parser
+            ordered = _ordered_ips(ips)
+            timeout = httpx.Timeout(settings.robots_timeout_s, connect=2.0)
+            for ip in ordered:
+                try:
+                    pinned_url, headers, extensions = build_pinned_request(url, ip)
+                    req_headers = {**headers, "Connection": "close"}
+                    resp = await client.get(
+                        url=pinned_url,
+                        headers=req_headers,
+                        extensions=extensions,
+                        timeout=timeout,
+                    )
+                    if resp.status_code != 200 or not resp.content:
+                        return None
+                    parser = RobotFileParser()
+                    parser.parse(resp.text[:_ROBOTS_MAX_CHARS].splitlines())
+                    return parser
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    continue
+            return None
         except Exception:
             # Unreachable robots → assume allow (RFC 9309 §2.4).
             return None

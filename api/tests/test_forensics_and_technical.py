@@ -327,15 +327,8 @@ class TestStooqAdapter:
         def mock_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, text=csv_sample)
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(mock_handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(httpx, "AsyncClient", make_client)
-
-        adapter = StooqFinanceAdapter()
+        client = httpx.AsyncClient(transport=httpx.MockTransport(mock_handler))
+        adapter = StooqFinanceAdapter(client=client)
         results = await adapter.search("NVDA")
         assert len(results) >= 1
         res = results[0]
@@ -357,15 +350,8 @@ class TestStooqAdapter:
         def mock_handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, text=csv_sample)
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(mock_handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(httpx, "AsyncClient", make_client)
-
-        adapter = StooqFinanceAdapter()
+        client = httpx.AsyncClient(transport=httpx.MockTransport(mock_handler))
+        adapter = StooqFinanceAdapter(client=client)
 
         # Query with Vietnamese words before ticker
         res_googl = await adapter.search("phân tích kỹ thuật GOOGL hôm nay")
@@ -387,15 +373,8 @@ class TestStooqAdapter:
         def mock_fail(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, text="Internal Server Error")
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(mock_fail)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(httpx, "AsyncClient", make_client)
-
-        adapter = StooqFinanceAdapter()
+        client = httpx.AsyncClient(transport=httpx.MockTransport(mock_fail))
+        adapter = StooqFinanceAdapter(client=client)
         assert await adapter.search("NVDA") == []
 
     async def test_stooq_non_financial_query_ignored(self):
@@ -428,15 +407,8 @@ class TestVietStockDeepForensicsAndTechnicals:
                 )
             return httpx.Response(404, json={})
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(httpx, "AsyncClient", make_client)
-
-        adapter = VietStockAdapter()
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        adapter = VietStockAdapter(client=client)
         results = await adapter.search("thẩm định pháp y BCTC chất lượng phải thu cấu trúc nợ FPT")
         assert len(results) >= 1
         fa_res = results[0]
@@ -446,7 +418,7 @@ class TestVietStockDeepForensicsAndTechnicals:
         # Strict data integrity: Do NOT invent fake forensic scores without audited statements
         assert not any("Vững Mạnh Tuyệt Đối" in r.snippet for r in results)
 
-    async def test_search_viet_stock_technical_query(self, monkeypatch):
+    async def test_search_viet_stock_technical_query(self):
         def handler(request: httpx.Request) -> httpx.Response:
             url_str = str(request.url)
             if "dchart-api.vndirect.com.vn" in url_str:
@@ -467,15 +439,8 @@ class TestVietStockDeepForensicsAndTechnicals:
                 )
             return httpx.Response(404, json={})
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(httpx, "AsyncClient", make_client)
-
-        adapter = VietStockAdapter()
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        adapter = VietStockAdapter(client=client)
         results = await adapter.search("fibonacci retracement và mây ichimoku HPG")
         assert len(results) >= 1
 

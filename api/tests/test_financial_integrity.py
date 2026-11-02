@@ -86,13 +86,10 @@ class TestFinancialDataIntegrity:
         def mock_error(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, json={"error": "upstream unavailable"})
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(mock_error)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+        fail_client = httpx.AsyncClient(transport=httpx.MockTransport(mock_error))
+        monkeypatch.setattr(
+            "app.retrieval.adapters.viet_stock.get_http_client", lambda *a, **kw: fail_client
+        )
 
         adapter = VietStockAdapter()
         results = await adapter.search("phân tích mã HPG và FPT")
@@ -144,13 +141,10 @@ class TestFinancialDataIntegrity:
                 )
             return httpx.Response(404, json={})
 
-        original = httpx.AsyncClient
-
-        def make_client(*args, **kwargs):
-            kwargs["transport"] = httpx.MockTransport(handler)
-            return original(*args, **kwargs)
-
-        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+        mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        monkeypatch.setattr(
+            "app.retrieval.adapters.viet_stock.get_http_client", lambda *a, **kw: mock_client
+        )
 
         adapter = VietStockAdapter()
         results = await adapter.search("FPT kỹ thuật và cơ bản")

@@ -23,6 +23,7 @@ from typing import Any
 
 import httpx
 
+from app.http import get_http_client
 from app.retrieval.financial_forensics import (
     analyze_balance_sheet_forensics,
 )
@@ -174,6 +175,7 @@ async def _fetch_vndirect_ohlcv(
     symbol: str,
     base_url: str = "https://dchart-api.vndirect.com.vn/dchart/history",
     timeout_s: float = 3.5,
+    client: httpx.AsyncClient | None = None,
 ) -> tuple[list[float], list[float], list[float], list[float], list[float], int | None] | None:
     """Fetches real historical daily OHLCV candles from VNDIRECT TradingView dchart API.
 
@@ -193,36 +195,36 @@ async def _fetch_vndirect_ohlcv(
     }
 
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_s) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                logger.debug("vndirect_status_%s: %s", resp.status_code, sym)
-                return None
-            data = resp.json()
-            if not isinstance(data, dict) or data.get("s") != "ok":
-                return None
+        http_client = client or get_http_client("search")
+        resp = await http_client.get(url, headers=headers, follow_redirects=True, timeout=timeout_s)
+        if resp.status_code != 200:
+            logger.debug("vndirect_status_%s: %s", resp.status_code, sym)
+            return None
+        data = resp.json()
+        if not isinstance(data, dict) or data.get("s") != "ok":
+            return None
 
-            t_list = data.get("t", [])
-            c_list = data.get("c", [])
-            o_list = data.get("o", [])
-            h_list = data.get("h", [])
-            l_list = data.get("l", [])
-            v_list = data.get("v", [])
+        t_list = data.get("t", [])
+        c_list = data.get("c", [])
+        o_list = data.get("o", [])
+        h_list = data.get("h", [])
+        l_list = data.get("l", [])
+        v_list = data.get("v", [])
 
-            if not c_list or len(c_list) < 5:
-                return None
+        if not c_list or len(c_list) < 5:
+            return None
 
-            is_index = sym in ("VNINDEX", "VN30", "HNX", "HNX-INDEX", "UPCOM")
-            multiplier = 1000.0 if not is_index and float(c_list[-1]) < 1000.0 else 1.0
+        is_index = sym in ("VNINDEX", "VN30", "HNX", "HNX-INDEX", "UPCOM")
+        multiplier = 1000.0 if not is_index and float(c_list[-1]) < 1000.0 else 1.0
 
-            opens = [round(float(x) * multiplier, 2) for x in (o_list or c_list)]
-            highs = [round(float(x) * multiplier, 2) for x in (h_list or c_list)]
-            lows = [round(float(x) * multiplier, 2) for x in (l_list or c_list)]
-            closes = [round(float(x) * multiplier, 2) for x in c_list]
-            volumes = [round(float(x), 0) for x in (v_list or [0.0] * len(c_list))]
-            last_ts = int(t_list[-1]) if t_list else None
+        opens = [round(float(x) * multiplier, 2) for x in (o_list or c_list)]
+        highs = [round(float(x) * multiplier, 2) for x in (h_list or c_list)]
+        lows = [round(float(x) * multiplier, 2) for x in (l_list or c_list)]
+        closes = [round(float(x) * multiplier, 2) for x in c_list]
+        volumes = [round(float(x), 0) for x in (v_list or [0.0] * len(c_list))]
+        last_ts = int(t_list[-1]) if t_list else None
 
-            return opens, highs, lows, closes, volumes, last_ts
+        return opens, highs, lows, closes, volumes, last_ts
     except Exception as exc:
         logger.debug("vndirect_fetch_failed for %s: %s", sym, exc)
         return None
@@ -232,6 +234,7 @@ async def _fetch_simplize_summary(
     symbol: str,
     base_url: str = "https://api.simplize.vn/api/company/summary",
     timeout_s: float = 3.5,
+    client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any] | None:
     """Fetches real fundamentals and company overview from Simplize API."""
     sym = symbol.upper()
@@ -243,19 +246,19 @@ async def _fetch_simplize_summary(
         ),
     }
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_s) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                logger.debug("simplize_status_%s: %s", resp.status_code, sym)
-                return None
-            body = resp.json()
-            if (
-                isinstance(body, dict)
-                and body.get("status") == 200
-                and isinstance(body.get("data"), dict)
-            ):
-                return body["data"]
+        http_client = client or get_http_client("search")
+        resp = await http_client.get(url, headers=headers, follow_redirects=True, timeout=timeout_s)
+        if resp.status_code != 200:
+            logger.debug("simplize_status_%s: %s", resp.status_code, sym)
             return None
+        body = resp.json()
+        if (
+            isinstance(body, dict)
+            and body.get("status") == 200
+            and isinstance(body.get("data"), dict)
+        ):
+            return body["data"]
+        return None
     except Exception as exc:
         logger.debug("simplize_fetch_failed for %s: %s", sym, exc)
         return None
@@ -361,9 +364,11 @@ class VietStockAdapter:
         self,
         vndirect_url: str = "https://dchart-api.vndirect.com.vn/dchart/history",
         simplize_url: str = "https://api.simplize.vn/api/company/summary",
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.vndirect_url = vndirect_url
         self.simplize_url = simplize_url
+        self._client = client
 
     async def search(
         self,
@@ -393,9 +398,17 @@ class VietStockAdapter:
 
         for sym in tickers[:4]:
             # Fetch real candles from VNDIRECT and fundamentals from Simplize concurrently
-            vnd_task = _fetch_vndirect_ohlcv(sym, base_url=self.vndirect_url, timeout_s=timeout_s)
+            vnd_task = _fetch_vndirect_ohlcv(
+                sym,
+                base_url=self.vndirect_url,
+                timeout_s=timeout_s,
+                client=self._client,
+            )
             simp_task = _fetch_simplize_summary(
-                sym, base_url=self.simplize_url, timeout_s=timeout_s
+                sym,
+                base_url=self.simplize_url,
+                timeout_s=timeout_s,
+                client=self._client,
             )
             ohlcv_res, simp_data = await asyncio.gather(vnd_task, simp_task, return_exceptions=True)
 

@@ -16,6 +16,7 @@ import httpx
 
 from app.config import Settings
 from app.core.logging import get_logger
+from app.http import get_http_client
 
 if TYPE_CHECKING:
     from app.extraction.chunker import Chunk
@@ -58,9 +59,16 @@ class JinaAPIReranker:
 
     name = "api"
 
-    def __init__(self, api_key: str, *, base_url: str = "https://api.jina.ai") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str = "https://api.jina.ai",
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        self._client = client
 
     async def rerank(self, query: str, scored: list[tuple[float, Chunk]]) -> list[Chunk]:
         if not scored:
@@ -72,14 +80,15 @@ class JinaAPIReranker:
             "documents": [chunk.content for _, chunk in top],
         }
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/v1/rerank",
-                    json=body,
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                )
-                resp.raise_for_status()
-                payload = resp.json()
+            client = self._client or get_http_client("internal")
+            resp = await client.post(
+                f"{self.base_url}/v1/rerank",
+                json=body,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
         except Exception as exc:
             logger.warning("rerank_api_failed", error=type(exc).__name__)
             raise RerankerUnavailable(str(exc)) from exc

@@ -11,11 +11,14 @@ process-local negative cache (TTL 1h) so dead URLs are not retried.
 from __future__ import annotations
 
 import asyncio
+import collections.abc
+import ipaddress
 import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -88,6 +91,19 @@ def is_challenge_page(content: str | bytes) -> bool:
     return any(p in text for p in CHALLENGE_PATTERNS)
 
 
+def _ordered_ips(ips: collections.abc.Iterable[str]) -> list[str]:
+    """Sort IP addresses putting IPv4 first, then IPv6, preserving order within each family."""
+    v4: list[str] = []
+    v6: list[str] = []
+    for ip_str in ips:
+        ip = ipaddress.ip_address(ip_str)
+        if ip.version == 4:
+            v4.append(ip_str)
+        else:
+            v6.append(ip_str)
+    return v4 + v6
+
+
 class Scraper:
     def __init__(
         self,
@@ -104,6 +120,17 @@ class Scraper:
         # a fast path when it is up (multi-worker installs share via Redis).
         self._negative: dict[str, float] = {}
         self._lock = asyncio.Lock()
+        self._global_sem = asyncio.Semaphore(self._settings.scrape_global_concurrency)
+        self._domain_sems: dict[str, asyncio.Semaphore] = {}
+        self._domain_sem_lock = asyncio.Lock()
+
+    async def _get_domain_sem(self, domain: str) -> asyncio.Semaphore:
+        async with self._domain_sem_lock:
+            sem = self._domain_sems.get(domain)
+            if sem is None:
+                sem = asyncio.Semaphore(self._settings.scrape_per_domain_concurrency)
+                self._domain_sems[domain] = sem
+            return sem
 
     # -- public API --------------------------------------------------------
 
@@ -131,19 +158,24 @@ class Scraper:
         self, url: str, *, timeout_s: float | None = None
     ) -> PageContent | PageFailure:
         timeout = self._settings.scrape_timeout_s if timeout_s is None else timeout_s
-        if await self._is_negatively_cached(url):
-            return PageFailure(url=url, status="failed", error="recently failed (negative cache)")
-        try:
-            page = await self._scrape_uncached(url, timeout)
-        except ssrf.SSRFViolation as exc:
-            logger.info("scrape_blocked_ssrf", url=url, reason=str(exc))
-            return PageFailure(url=url, status="blocked", error=str(exc))
-        except Exception as exc:
-            logger.info("scrape_failed", url=url, error=type(exc).__name__)
-            await self._mark_failed(url)
-            return PageFailure(url=url, status="failed", error=type(exc).__name__)
-        await self._cache_page(page)
-        return page
+        domain = (urlsplit(url).hostname or "").lower()
+        domain_sem = await self._get_domain_sem(domain)
+        async with self._global_sem, domain_sem:
+            if await self._is_negatively_cached(url):
+                return PageFailure(
+                    url=url, status="failed", error="recently failed (negative cache)"
+                )
+            try:
+                page = await self._scrape_uncached(url, timeout)
+            except ssrf.SSRFViolation as exc:
+                logger.info("scrape_blocked_ssrf", url=url, reason=str(exc))
+                return PageFailure(url=url, status="blocked", error=str(exc))
+            except Exception as exc:
+                logger.info("scrape_failed", url=url, error=type(exc).__name__)
+                await self._mark_failed(url)
+                return PageFailure(url=url, status="failed", error=type(exc).__name__)
+            await self._cache_page(page)
+            return page
 
     # -- internals ---------------------------------------------------------
 
@@ -189,11 +221,29 @@ class Scraper:
 
         page = await self._crawl4ai(target_url, timeout_s, original_url=url)
         if page is not None and not is_challenge_page(page.markdown):
-            return page
+            try:
+                await ssrf.resolve_and_check(page.final_url)
+                return page
+            except ssrf.SSRFViolation as exc:
+                logger.warning(
+                    "crawl4ai_rejected_internal_final_url",
+                    url=url,
+                    final_url=page.final_url,
+                    error=str(exc),
+                )
 
         page = await self._jina(target_url, timeout_s, original_url=url)
         if page is not None and not is_challenge_page(page.markdown):
-            return page
+            try:
+                await ssrf.resolve_and_check(page.final_url)
+                return page
+            except ssrf.SSRFViolation as exc:
+                logger.warning(
+                    "jina_rejected_internal_final_url",
+                    url=url,
+                    final_url=page.final_url,
+                    error=str(exc),
+                )
 
         raise RuntimeError("all extractors failed or blocked by anti-bot challenge")
 
@@ -210,10 +260,9 @@ class Scraper:
             if not await self._robots.allowed(current, user_agent=self._settings.user_agent):
                 raise ssrf.SSRFViolation(f"robots.txt disallows {current}")
 
-            pinned_url, pin_headers, extensions = build_pinned_request(current, sorted(ips)[0])
-            client = self._client or get_http_client()
+            ordered = _ordered_ips(ips)
+            client = self._client or get_http_client("scrape")
             stealth_headers = {
-                **pin_headers,
                 "Connection": "close",
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -230,26 +279,52 @@ class Scraper:
                 "Sec-Fetch-User": "?1",
                 "Upgrade-Insecure-Requests": "1",
             }
-            async with client.stream(
-                "GET", pinned_url, headers=stealth_headers, extensions=extensions, timeout=timeout_s
-            ) as resp:
-                if resp.is_redirect:
-                    location = resp.headers.get("location")
-                    if not location:
+            last_conn_exc: Exception | None = None
+            redirect_target: str | None = None
+            body_result: bytes | None = None
+
+            for ip in ordered:
+                pinned_url, pin_headers, extensions = build_pinned_request(current, ip)
+                merged_headers = {**stealth_headers, **pin_headers}
+                hop_timeout = httpx.Timeout(timeout_s, connect=2.0)
+                try:
+                    async with client.stream(
+                        "GET",
+                        pinned_url,
+                        headers=merged_headers,
+                        extensions=extensions,
+                        timeout=hop_timeout,
+                    ) as resp:
+                        if resp.is_redirect:
+                            location = resp.headers.get("location")
+                            if location:
+                                redirect_target = str(httpx.URL(current).join(location))
+                            break
+                        resp.raise_for_status()
+                        buf = bytearray()
+                        async for chunk in resp.aiter_bytes():
+                            buf.extend(chunk)
+                            if len(buf) > self._settings.max_scrape_bytes:
+                                raise RuntimeError(
+                                    f"page larger than {self._settings.max_scrape_bytes} bytes"
+                                )
+                        body_result = bytes(buf)
                         break
-                    current = str(httpx.URL(current).join(location))
+                except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                    last_conn_exc = exc
+                    logger.info("guarded_fetch_ip_failed_next", ip=ip, url=current, error=str(exc))
                     continue
-                resp.raise_for_status()
-                buf = bytearray()
-                async for chunk in resp.aiter_bytes():
-                    buf.extend(chunk)
-                    if len(buf) > self._settings.max_scrape_bytes:
-                        raise RuntimeError(
-                            f"page larger than {self._settings.max_scrape_bytes} bytes"
-                        )
-                # ``current`` (original form) beats resp.url: the response URL
-                # carries the pinned IP host.
-                return bytes(buf), current
+
+            if body_result is not None:
+                return body_result, current
+
+            if redirect_target is not None:
+                current = redirect_target
+                continue
+
+            if last_conn_exc is not None:
+                raise last_conn_exc
+            raise RuntimeError(f"could not fetch {current} from any resolved IP")
 
         raise RuntimeError(f"too many redirects fetching {url}")
 
@@ -261,7 +336,7 @@ class Scraper:
         if settings.crawl4ai_api_token:
             headers["Authorization"] = f"Bearer {settings.crawl4ai_api_token}"
         try:
-            client = self._client or get_http_client()
+            client = self._client or get_http_client("scrape")
             resp = await client.post(
                 f"{settings.crawl4ai_url.rstrip('/')}/md",
                 json={"url": url},
@@ -278,9 +353,20 @@ class Scraper:
         if not markdown:
             return None
         req_url = original_url or url
+        final_url = str(payload.get("url") or url)
+        try:
+            await ssrf.resolve_and_check(final_url)
+        except ssrf.SSRFViolation as exc:
+            logger.warning(
+                "crawl4ai_rejected_internal_final_url",
+                url=url,
+                final_url=final_url,
+                error=str(exc),
+            )
+            return None
         return PageContent(
             url=req_url,
-            final_url=str(payload.get("url") or url),
+            final_url=final_url,
             title=title or req_url,
             markdown=self._cap(markdown),
             extractor_used="crawl4ai",
@@ -304,7 +390,7 @@ class Scraper:
             {"Authorization": f"Bearer {settings.jina_api_key}"} if settings.jina_api_key else {}
         )
         try:
-            client = self._client or get_http_client()
+            client = self._client or get_http_client("scrape")
             resp = await client.get(
                 f"{settings.jina_reader_base_url.rstrip('/')}/{url}",
                 headers=headers,

@@ -10,10 +10,9 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-import httpx
-
 from app.config import Settings
 from app.core.logging import get_logger
+from app.http import get_http_client
 
 logger = get_logger(__name__)
 
@@ -58,12 +57,13 @@ async def trace_llm_call(
         **({"latencyMs": latency_ms} if latency_ms is not None else {}),
     }
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(
-                f"{settings.langfuse_host.rstrip('/')}/api/public/traces",
-                json=payload,
-                headers={"Authorization": f"Basic {auth}"},
-            )
+        client = get_http_client("internal")
+        resp = await client.post(
+            f"{settings.langfuse_host.rstrip('/')}/api/public/traces",
+            json=payload,
+            headers={"Authorization": f"Basic {auth}"},
+            timeout=5.0,
+        )
         if resp.status_code >= 400:
             logger.info("langfuse_trace_rejected", status=resp.status_code)
     except Exception as exc:

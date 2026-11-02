@@ -16,6 +16,7 @@ Kẻ tấn công điều khiển kết quả search (SEO poisoning) hoặc truy�
 4. **Redirect control**: max 3 redirects; mỗi redirect chạy lại toàn bộ check.
 5. **Response limits**: max 5MB, timeout 8s, không chạy JS (trừ Playwright sandbox không network tới internal).
 6. **Chạy scraper trong network namespace riêng** (container không route tới internal services ngoài những port cần thiết).
+7. **Kiểm tra final_url từ tầng dịch vụ ngoài (crawl4ai / Jina)**: Kiểm tra `final_url` trả về từ dịch vụ trích xuất; nếu trỏ vào dải địa chỉ nội bộ/không toàn cầu hoặc port lạ sẽ lập tức loại bỏ. Lưu ý: Tầng crawl4ai/Jina không tự chống được DNS rebinding cục bộ nên bắt buộc phải chạy trong network namespace riêng biệt cách ly hoàn toàn khỏi mạng nội bộ.
 
 ```python
 BLOCKED_NETS = [ip_network(n) for n in (

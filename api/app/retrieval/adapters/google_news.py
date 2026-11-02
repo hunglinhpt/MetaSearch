@@ -16,7 +16,9 @@ from typing import Any
 import httpx
 from defusedxml import ElementTree as DET
 
+from app.http import get_http_client
 from app.retrieval.adapters.base import AdapterError
+from app.retrieval.health import Outcome
 from app.retrieval.models import RawResult
 
 _DEFAULT_NEWS_URL = "https://news.google.com/rss/search"
@@ -40,10 +42,12 @@ class GoogleNewsAdapter:
         base_url: str = _DEFAULT_NEWS_URL,
         default_hl: str = "vi",
         default_gl: str = "VN",
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url
         self.default_hl = default_hl
         self.default_gl = default_gl
+        self._client = client
 
     async def search(
         self,
@@ -100,20 +104,34 @@ class GoogleNewsAdapter:
             "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
         }
 
+        client = self._client or get_http_client("search")
         try:
-            async with httpx.AsyncClient(
+            resp = await client.get(
+                self.base_url,
+                params=params,
+                headers=headers,
                 follow_redirects=True,
                 timeout=timeout_s,
-            ) as client:
-                resp = await client.get(self.base_url, params=params, headers=headers)
+            )
+        except httpx.PoolTimeout as exc:
+            raise AdapterError("google_news pool timeout", kind=Outcome.LOCAL_OVERLOAD) from exc
         except httpx.TimeoutException as exc:
-            raise AdapterError(f"google_news_timeout: Timeout after {timeout_s}s") from exc
+            raise AdapterError(
+                f"google_news_timeout: Timeout after {timeout_s}s", kind=Outcome.TIMEOUT
+            ) from exc
         except httpx.RequestError as exc:
-            raise AdapterError(f"google_news_network_error: {exc}") from exc
+            raise AdapterError(
+                f"google_news_network_error: {exc}", kind=Outcome.UPSTREAM_ERROR
+            ) from exc
 
+        if resp.status_code == 429:
+            raise AdapterError("google_news rate limited", kind=Outcome.RATE_LIMITED)
+        if resp.status_code == 403:
+            raise AdapterError("google_news forbidden", kind=Outcome.BLOCKED, retryable=False)
         if resp.status_code != 200:
             raise AdapterError(
-                f"google_news_upstream_error: Google News RSS returned status {resp.status_code}"
+                f"google_news_upstream_error: Google News RSS returned status {resp.status_code}",
+                kind=Outcome.UPSTREAM_ERROR,
             )
 
         try:

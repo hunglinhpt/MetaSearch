@@ -13,7 +13,9 @@ from typing import Any
 import httpx
 
 from app.core.logging import get_logger
+from app.http import get_http_client
 from app.retrieval.adapters.base import AdapterError
+from app.retrieval.health import Outcome
 from app.retrieval.models import RawResult
 
 logger = get_logger(__name__)
@@ -52,10 +54,7 @@ class SearXNGAdapter:
         self._client = client
 
     async def _fetch(self, params: dict[str, str], timeout_s: float) -> dict[str, Any]:
-        client = self._client
-        owns_client = client is None
-        if client is None:
-            client = httpx.AsyncClient(follow_redirects=True)
+        client = self._client or get_http_client("search")
         try:
             resp = await client.get(
                 f"{self.base_url}/search",
@@ -70,22 +69,28 @@ class SearXNGAdapter:
                 # transient, so no retry.
                 raise AdapterError(
                     "searxng returned 403 (json format disabled or limiter)",
+                    kind=Outcome.BLOCKED,
                     retryable=False,
                 )
+            if resp.status_code == 429:
+                raise AdapterError("searxng rate limited", kind=Outcome.RATE_LIMITED)
             resp.raise_for_status()
             payload = resp.json()
             if not isinstance(payload, dict):
-                raise AdapterError("searxng returned non-object JSON")
+                raise AdapterError("searxng returned non-object JSON", kind=Outcome.UPSTREAM_ERROR)
             return payload
+        except httpx.PoolTimeout as exc:
+            raise AdapterError("searxng pool timeout", kind=Outcome.LOCAL_OVERLOAD) from exc
         except httpx.TimeoutException as exc:
-            raise AdapterError(f"searxng timeout after {timeout_s}s") from exc
+            raise AdapterError(f"searxng timeout after {timeout_s}s", kind=Outcome.TIMEOUT) from exc
         except httpx.HTTPStatusError as exc:
-            raise AdapterError(f"searxng HTTP {exc.response.status_code}") from exc
+            raise AdapterError(
+                f"searxng HTTP {exc.response.status_code}", kind=Outcome.UPSTREAM_ERROR
+            ) from exc
         except httpx.HTTPError as exc:
-            raise AdapterError(f"searxng transport error: {type(exc).__name__}") from exc
-        finally:
-            if owns_client:
-                await client.aclose()
+            raise AdapterError(
+                f"searxng transport error: {type(exc).__name__}", kind=Outcome.UPSTREAM_ERROR
+            ) from exc
 
     async def search(
         self,
@@ -153,8 +158,8 @@ def _as_float(value: Any) -> float | None:
 async def probe(base_url: str, timeout_s: float = 2.0) -> bool:
     """Cheap readiness probe used by /readyz."""
     try:
-        async with httpx.AsyncClient(timeout=timeout_s) as client:
-            resp = await client.get(f"{base_url.rstrip('/')}/healthz")
+        client = get_http_client("internal")
+        resp = await client.get(f"{base_url.rstrip('/')}/healthz", timeout=timeout_s)
         return resp.status_code < 500
     except Exception:
         return False

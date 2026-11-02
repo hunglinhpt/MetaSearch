@@ -20,6 +20,9 @@ from typing import Any
 
 import httpx
 
+from app.http import get_http_client
+from app.retrieval.adapters.base import AdapterError
+from app.retrieval.health import Outcome
 from app.retrieval.models import RawResult
 from app.retrieval.technical_analysis import (
     calc_fibonacci_retracement,
@@ -369,8 +372,14 @@ def _extract_stooq_symbol(query: str) -> str | None:
 class StooqFinanceAdapter:
     id = "stooq"
 
-    def __init__(self, base_url: str = DEFAULT_STOOQ_URL) -> None:
+    def __init__(
+        self,
+        base_url: str = DEFAULT_STOOQ_URL,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self.base_url = base_url
+        self._client = client
 
     async def search(
         self,
@@ -403,31 +412,39 @@ class StooqFinanceAdapter:
         volumes: list[float] = []
         latest_date: str | None = None
 
+        client = self._client or get_http_client("search")
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_s) as client:
-                resp = await client.get(self.base_url, params=params, headers=headers)
-                if resp.status_code == 200 and resp.text and "Date" in resp.text[:100]:
-                    reader = csv.DictReader(io.StringIO(resp.text))
-                    rows = sorted(
-                        (r for r in reader if r.get("Date")),
-                        key=lambda item: str(item.get("Date", "")),
-                    )
-                    for r in rows[-120:]:
-                        try:
-                            c = float(r.get("Close", 0.0))
-                            o_val = float(r.get("Open", c) or c)
-                            h = float(r.get("High", c) or c)
-                            l_val = float(r.get("Low", c) or c)
-                            v = float(r.get("Volume", 0.0) or 0.0)
-                            if c > 0:
-                                opens.append(o_val)
-                                closes.append(c)
-                                highs.append(h)
-                                lows.append(l_val)
-                                volumes.append(v)
-                                latest_date = str(r.get("Date", "")).strip() or latest_date
-                        except (ValueError, TypeError):
-                            continue
+            resp = await client.get(
+                self.base_url,
+                params=params,
+                headers=headers,
+                follow_redirects=True,
+                timeout=timeout_s,
+            )
+            if resp.status_code == 200 and resp.text and "Date" in resp.text[:100]:
+                reader = csv.DictReader(io.StringIO(resp.text))
+                rows = sorted(
+                    (r for r in reader if r.get("Date")),
+                    key=lambda item: str(item.get("Date", "")),
+                )
+                for r in rows[-120:]:
+                    try:
+                        c = float(r.get("Close", 0.0))
+                        o_val = float(r.get("Open", c) or c)
+                        h = float(r.get("High", c) or c)
+                        l_val = float(r.get("Low", c) or c)
+                        v = float(r.get("Volume", 0.0) or 0.0)
+                        if c > 0:
+                            opens.append(o_val)
+                            closes.append(c)
+                            highs.append(h)
+                            lows.append(l_val)
+                            volumes.append(v)
+                            latest_date = str(r.get("Date", "")).strip() or latest_date
+                    except (ValueError, TypeError):
+                        continue
+        except httpx.PoolTimeout as exc:
+            raise AdapterError("stooq pool timeout", kind=Outcome.LOCAL_OVERLOAD) from exc
         except Exception as exc:
             logger.debug("stooq_fetch_failed: %s", exc)
 

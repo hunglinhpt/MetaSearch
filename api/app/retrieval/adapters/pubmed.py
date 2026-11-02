@@ -12,7 +12,9 @@ from datetime import UTC, datetime
 
 import httpx
 
+from app.http import get_http_client
 from app.retrieval.adapters.base import AdapterError
+from app.retrieval.health import Outcome
 from app.retrieval.models import RawResult
 
 DEFAULT_ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -59,10 +61,12 @@ class PubMedAdapter:
         search_url: str = DEFAULT_ESEARCH_URL,
         summary_url: str = DEFAULT_ESUMMARY_URL,
         api_key: str = "",
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.search_url = search_url
         self.summary_url = summary_url
         self.api_key = api_key
+        self._client = client
 
     async def search(
         self,
@@ -94,34 +98,62 @@ class PubMedAdapter:
             "Accept": "application/json",
         }
 
+        client = self._client or get_http_client("search")
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_s) as client:
-                s_resp = await client.get(self.search_url, params=search_params, headers=headers)
-                if s_resp.status_code != 200:
-                    raise AdapterError(f"pubmed search HTTP {s_resp.status_code}", retryable=False)
-                s_data = s_resp.json()
-                id_list = s_data.get("esearchresult", {}).get("idlist", [])
-                if not id_list:
-                    return []
-
-                summary_params = {
-                    "db": "pubmed",
-                    "id": ",".join(id_list),
-                    "retmode": "json",
-                }
-                if self.api_key:
-                    summary_params["api_key"] = self.api_key
-
-                sum_resp = await client.get(
-                    self.summary_url, params=summary_params, headers=headers
+            s_resp = await client.get(
+                self.search_url,
+                params=search_params,
+                headers=headers,
+                follow_redirects=True,
+                timeout=timeout_s,
+            )
+            if s_resp.status_code == 429:
+                raise AdapterError("pubmed rate limited", kind=Outcome.RATE_LIMITED)
+            if s_resp.status_code == 403:
+                raise AdapterError("pubmed forbidden", kind=Outcome.BLOCKED, retryable=False)
+            if s_resp.status_code != 200:
+                raise AdapterError(
+                    f"pubmed search HTTP {s_resp.status_code}",
+                    kind=Outcome.UPSTREAM_ERROR,
+                    retryable=False,
                 )
-                if sum_resp.status_code != 200:
-                    raise AdapterError(f"pubmed summary HTTP {sum_resp.status_code}")
-                sum_data = sum_resp.json()
+            s_data = s_resp.json()
+            id_list = s_data.get("esearchresult", {}).get("idlist", [])
+            if not id_list:
+                return []
+
+            summary_params = {
+                "db": "pubmed",
+                "id": ",".join(id_list),
+                "retmode": "json",
+            }
+            if self.api_key:
+                summary_params["api_key"] = self.api_key
+
+            sum_resp = await client.get(
+                self.summary_url,
+                params=summary_params,
+                headers=headers,
+                follow_redirects=True,
+                timeout=timeout_s,
+            )
+            if sum_resp.status_code == 429:
+                raise AdapterError("pubmed rate limited", kind=Outcome.RATE_LIMITED)
+            if sum_resp.status_code == 403:
+                raise AdapterError("pubmed forbidden", kind=Outcome.BLOCKED, retryable=False)
+            if sum_resp.status_code != 200:
+                raise AdapterError(
+                    f"pubmed summary HTTP {sum_resp.status_code}", kind=Outcome.UPSTREAM_ERROR
+                )
+            sum_data = sum_resp.json()
+        except httpx.PoolTimeout as exc:
+            raise AdapterError("pubmed pool timeout", kind=Outcome.LOCAL_OVERLOAD) from exc
         except httpx.TimeoutException as exc:
-            raise AdapterError(f"pubmed timeout after {timeout_s}s") from exc
+            raise AdapterError(f"pubmed timeout after {timeout_s}s", kind=Outcome.TIMEOUT) from exc
         except httpx.HTTPError as exc:
-            raise AdapterError(f"pubmed transport error: {type(exc).__name__}") from exc
+            raise AdapterError(
+                f"pubmed transport error: {type(exc).__name__}", kind=Outcome.UPSTREAM_ERROR
+            ) from exc
         except ValueError as exc:
             raise AdapterError("pubmed returned non-JSON body") from exc
 
