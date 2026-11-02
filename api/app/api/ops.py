@@ -76,13 +76,36 @@ async def collect_readiness() -> dict[str, Any]:
     return {"ready": ready, "checks": checks}
 
 
-@router.get("/readyz", summary="Readiness probe")
-async def readyz(response: Response) -> dict[str, Any]:
+@router.get("/readyz", summary="Readiness probe with degraded state (WP-14)")
+async def readyz(response: Response, strict: bool = False) -> dict[str, Any]:
     result = await collect_readiness()
-    READINESS.set(1 if result["ready"] else 0)
-    if not result["ready"]:
+    if result["ready"]:
+        result["status"] = "ready"
+        result["schema_version"] = 1
+        READINESS.set(1)
+        return result
+    # WP-14: DB/Redis down = degraded (200), not_ready = 503.
+    # "Not ready" means: no search engine usable or the process is shutting down.
+    engines_usable = _any_engine_usable()
+    if not engines_usable:
+        result["status"] = "not_ready"
+        READINESS.set(0)
+        if strict:
+            response.status_code = 503
+        return result
+    result["status"] = "degraded"
+    result["schema_version"] = 1
+    READINESS.set(1)  # still serving traffic
+    if strict:
         response.status_code = 503
     return result
+
+
+def _any_engine_usable() -> bool:
+    from app.retrieval.registry import build_adapters
+
+    adapters = build_adapters(get_settings())
+    return bool(adapters)
 
 
 @router.get("/metrics", summary="Prometheus metrics", include_in_schema=False)

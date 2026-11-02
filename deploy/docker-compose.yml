@@ -4,14 +4,14 @@ name: metasearch
 
 services:
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:2024.10.30-8e2e8f4
     container_name: metasearch-searxng
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
-      - SEARXNG_SECRET=${SEARXNG_SECRET:-changeme-generate-a-random-secret}
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?set SEARXNG_SECRET in .env}
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     mem_limit: 512m
@@ -23,7 +23,7 @@ services:
       start_period: 20s
 
   crawl4ai:
-    image: ghcr.io/unclecode/crawl4ai:latest
+    image: ghcr.io/unclecode/crawl4ai:v0.6.0
     container_name: metasearch-crawl4ai
     restart: unless-stopped
     ports:
@@ -43,7 +43,7 @@ services:
       start_period: 60s
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: metasearch-redis
     restart: unless-stopped
     command: ["redis-server", "--maxmemory", "200mb", "--maxmemory-policy", "volatile-lru"]
@@ -58,13 +58,13 @@ services:
       retries: 5
 
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16.4
     container_name: metasearch-postgres
     restart: unless-stopped
     command: ["postgres", "-c", "shared_buffers=256MB"]
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-metasearch}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-metasearch}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       - POSTGRES_DB=${POSTGRES_DB:-metasearch}
     ports:
       - "127.0.0.1:5432:5432"
@@ -140,7 +140,7 @@ services:
 
   # Observability (prod, bật khi cần): docker compose --profile observability up -d
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.54.1
     container_name: metasearch-prometheus
     profiles: ["observability"]
     restart: unless-stopped
@@ -152,7 +152,7 @@ services:
     mem_limit: 512m
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.2.0
     container_name: metasearch-grafana
     profiles: ["observability"]
     restart: unless-stopped
