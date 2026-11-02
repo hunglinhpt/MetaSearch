@@ -515,3 +515,30 @@ class TestAdversarial:
         with pytest.raises(LLMError, match="malformed JSON"):
             async for _ in gw.stream([{"role": "user", "content": "x"}], model="m"):
                 pass
+
+
+class TestWPObservability:
+    def test_cache_metric_single_counter(self):
+        from app.core.metrics import CACHE_EVENTS, REGISTRY
+
+        names = [c.name for c in REGISTRY.collect() if hasattr(c, "name")]
+        assert "metasearch_cache_events" in names  # prometheus strips _total
+        # Only ONE cache counter family exists.
+        assert names.count("metasearch_cache_events") == 1
+        # Label names include kind (not the old layer).
+        assert "kind" in CACHE_EVENTS._labelnames
+        assert "layer" not in CACHE_EVENTS._labelnames
+
+    def test_unmatched_route_label_bounded(self):
+        # Middleware route_class derives from path prefix, never the raw path.
+        from app.core.middleware import _route_class_of
+
+        assert _route_class_of("/v1/search") == "/v1"
+        assert _route_class_of("/v1/queries/abc-def") == "/v1"
+        assert _route_class_of("/") == "/"
+
+    def test_loop_lag_metric_exported(self):
+        from app.core.metrics import REGISTRY
+
+        names = [c.name for c in REGISTRY.collect()]
+        assert "metasearch_event_loop_lag_seconds" in names

@@ -245,7 +245,7 @@ class SearchPipeline:
 
         cached_payload = await self._cache_lookup(query, params)
         if cached_payload is not None:
-            CACHE_EVENTS.labels(layer="l1_search", outcome="hit").inc()
+            CACHE_EVENTS.labels(kind="search", outcome="hit").inc()
             return SearchOutcome(
                 query_id=uuid.UUID(cached_payload["query_id"]),
                 results=deserialize_results(cached_payload["results"]),
@@ -258,7 +258,7 @@ class SearchPipeline:
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 cached=True,
             )
-        CACHE_EVENTS.labels(layer="l1_search", outcome="miss").inc()
+        CACHE_EVENTS.labels(kind="search", outcome="miss").inc()
 
         raws, statuses = await self._fanout(query, params, on_event)
         configs = await self.registry.configs()
@@ -933,12 +933,12 @@ class AnswerPipeline:
                 )
             )
             if payload and payload.get("answer_md"):
-                CACHE_EVENTS.labels(layer="l1_answer", outcome="hit").inc()
+                CACHE_EVENTS.labels(kind="answer", outcome="hit").inc()
                 return self._replay(payload)
-            CACHE_EVENTS.labels(layer="l1_answer", outcome="miss").inc()
+            CACHE_EVENTS.labels(kind="answer", outcome="miss").inc()
         payload = await self._semantic_lookup(query)
         if payload is not None:
-            CACHE_EVENTS.labels(layer="l2_semantic", outcome="hit").inc()
+            CACHE_EVENTS.labels(kind="semantic", outcome="hit").inc()
             return self._replay(payload)
         return None
 
@@ -1030,7 +1030,7 @@ class AnswerPipeline:
                     )
                 ).first()
             if row is None or not row[1]:
-                CACHE_EVENTS.labels(layer="l2_semantic", outcome="miss").inc()
+                CACHE_EVENTS.labels(kind="semantic", outcome="miss").inc()
                 return None
         except Exception as exc:
             logger.warning("semantic_lookup_failed", error=type(exc).__name__)

@@ -20,6 +20,18 @@ request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 REQUEST_ID_HEADER = b"x-request-id"
 
 
+def _route_class_of(path: str) -> str:
+    """Bound route label: the first path segment, never the raw path.
+
+    ``/v1/search`` -> ``/v1``, ``/v1/queries/abc`` -> ``/v1``; cardinally
+    bounded because the set of top-level segments is fixed.
+    """
+    parts = [p for p in (path or "").split("/") if p]
+    if not parts:
+        return "/"
+    return "/" + parts[0]
+
+
 class RequestContextMiddleware:
     """Assign a request id, expose it to logs, echo it in response, and record HTTP metrics."""
 
