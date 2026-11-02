@@ -44,6 +44,20 @@ def get_engine_store() -> EngineStore:
 
 
 @lru_cache(maxsize=1)
+def get_health_registry():
+    from app.retrieval.health import EngineBreakerRegistry
+
+    return EngineBreakerRegistry(threshold=get_settings().engine_auto_disable_threshold)
+
+
+@lru_cache(maxsize=1)
+def get_health_writer():
+    from app.retrieval.health import EngineHealthWriter
+
+    return EngineHealthWriter(sessionmaker_provider=get_session_factory)
+
+
+@lru_cache(maxsize=1)
 def get_registry() -> EngineRegistry:
     return EngineRegistry(get_engine_store(), build_adapters(get_settings()))
 
@@ -72,7 +86,13 @@ def get_reranker():
 
 @lru_cache(maxsize=1)
 def get_search_pipeline() -> SearchPipeline:
-    return SearchPipeline(get_settings(), get_registry(), cache=get_cache())
+    return SearchPipeline(
+        get_settings(),
+        get_registry(),
+        cache=get_cache(),
+        health_registry=get_health_registry(),
+        health_writer=get_health_writer(),
+    )
 
 
 @lru_cache(maxsize=1)
@@ -107,6 +127,8 @@ def reset_pipelines() -> None:
         get_scanner,
         get_answer_pipeline,
         get_search_pipeline,
+        get_health_registry,
+        get_health_writer,
         get_reranker,
         get_embedder,
         get_gateway,
@@ -129,6 +151,8 @@ __all__ = [
     "get_embedder",
     "get_engine_store",
     "get_gateway",
+    "get_health_registry",
+    "get_health_writer",
     "get_registry",
     "get_reranker",
     "get_scanner",

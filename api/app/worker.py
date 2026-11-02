@@ -1,7 +1,6 @@
 """Background worker entrypoint: ``python -m app.worker``.
 
-Phase 2 jobs: heartbeat + engine recovery probe (re-enables engines that were
-auto-disabled after consecutive failures, docs/12-roadmap-plan.md Phase 2).
+Phase 2 jobs: heartbeat (engine recovery is managed autonomously by in-memory circuit breakers).
 """
 
 from __future__ import annotations
@@ -17,13 +16,6 @@ from app.db.session import dispose_engine
 logger = get_logger(__name__)
 
 HEARTBEAT_INTERVAL_S = 30.0
-
-
-async def _heartbeat(stop: asyncio.Event) -> None:
-    while not stop.is_set():
-        logger.info("worker_heartbeat")
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_INTERVAL_S)
 
 
 async def _probe_adapter(engine_id: str) -> bool:
@@ -49,27 +41,11 @@ async def _probe_adapter(engine_id: str) -> bool:
         return False
 
 
-async def _recovery_loop(stop: asyncio.Event) -> None:
-    settings = get_settings()
-    from app.api.deps import get_engine_store, reset_pipelines
-
+async def _heartbeat(stop: asyncio.Event) -> None:
     while not stop.is_set():
+        logger.info("worker_heartbeat")
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=settings.engine_recovery_probe_s)
-        if stop.is_set():
-            return
-        reset_pipelines()
-        store = get_engine_store()
-        try:
-            candidates = await store.auto_disabled()
-        except Exception as exc:
-            logger.warning("recovery_probe_skipped", error=type(exc).__name__)
-            continue
-        for engine_id in candidates:
-            ok = await _probe_adapter(engine_id)
-            logger.info("engine_recovery_probe", engine=engine_id, recovered=ok)
-            if ok:
-                await store.update(engine_id, {"enabled": True})
+            await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_INTERVAL_S)
 
 
 async def run() -> None:
@@ -86,14 +62,10 @@ async def run() -> None:
             # Windows' ProactorEventLoop has no signal handlers.
             signal.signal(sig, lambda *_: stop.set())
 
-    recovery = asyncio.create_task(_recovery_loop(stop))
     try:
         await _heartbeat(stop)
     finally:
         stop.set()
-        recovery.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await recovery
         await dispose_engine()
         logger.info("worker_stopped")
 

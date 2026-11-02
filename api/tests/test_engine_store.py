@@ -43,9 +43,10 @@ class TestInMemoryStore:
         for _ in range(get_settings().engine_auto_disable_threshold):
             await store.record_result("searxng", ok=False, latency_ms=10)
         snapshot = await store.snapshot()
-        assert snapshot["searxng"].enabled is False
-        assert "auto:" in snapshot["searxng"].disabled_reason
-        assert "searxng" in await store.auto_disabled()
+        # WP-03: admin enabled is decoupled from failures; circuit breaker handles dynamic health
+        assert snapshot["searxng"].enabled is True
+        health = (await store.health())["searxng"]
+        assert health.consecutive_failures == get_settings().engine_auto_disable_threshold
 
     async def test_success_resets_consecutive_failures(self):
         store = make_store()
@@ -95,7 +96,10 @@ class TestDbEngineStoreFallback:
         for _ in range(3):
             await store.record_result("searxng", ok=False, latency_ms=1)
         snapshot = await store.snapshot()
-        assert snapshot["searxng"].enabled is False
+        # WP-03: admin enabled is decoupled from failures; circuit breaker handles dynamic health
+        assert snapshot["searxng"].enabled is True
+        health = await store.health()
+        assert health["searxng"].consecutive_failures == 3
 
     async def test_health_falls_back_when_db_down(self):
         store = DbEngineStore(refresh_s=0)

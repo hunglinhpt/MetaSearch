@@ -18,6 +18,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 
@@ -204,10 +205,23 @@ def normalize_query(raw: str) -> str:
 class SearchPipeline:
     """Cache check -> fan-out -> merge -> score -> diversity cap (stages 3-7)."""
 
-    def __init__(self, settings: Settings, registry, cache: CacheClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        registry,
+        cache: CacheClient | None = None,
+        health_registry: Any | None = None,
+        health_writer: Any | None = None,
+    ) -> None:
         self.settings = settings
         self.registry = registry
         self.cache = cache
+        from app.retrieval.health import EngineBreakerRegistry
+
+        self.health_registry = health_registry or EngineBreakerRegistry(
+            threshold=settings.engine_auto_disable_threshold
+        )
+        self.health_writer = health_writer
 
     async def run(self, params: SearchParams, on_event: OnEvent = None) -> SearchOutcome:
         started = time.perf_counter()
@@ -314,8 +328,17 @@ class SearchPipeline:
                 details={"requested_engines": params.engines or []},
             )
 
+        candidate_map = {cfg.id: (cfg, ad) for cfg, ad in candidates}
+        candidate_ids = [cfg.id for cfg, _ in candidates]
+        allowed_ids, skipped_ids = self.health_registry.filter_candidates(candidate_ids)
+
         raws: list[RawResult] = []
         statuses: list[EngineStatus] = []
+
+        for sid in skipped_ids:
+            statuses.append(EngineStatus(engine=sid, status="skipped_breaker", results=0, ms=0))
+
+        active_candidates = [candidate_map[eid] for eid in allowed_ids]
 
         async def call_engine(cfg: EngineConfig, adapter: SearchAdapter) -> list[RawResult]:
             started = time.perf_counter()
@@ -335,7 +358,21 @@ class SearchPipeline:
                 )
                 ENGINE_CALLS.labels(engine=cfg.id, outcome="error").inc()
                 logger.info("engine_failed", engine=cfg.id, error=str(exc)[:200])
+                from app.retrieval.adapters.base import AdapterError
+                from app.retrieval.health import Outcome
+
+                outcome = Outcome.UPSTREAM_ERROR
+                retry_after_s = None
+                if isinstance(exc, AdapterError):
+                    outcome = exc.kind
+                    retry_after_s = exc.retry_after_s
+                elif isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+                    outcome = Outcome.TIMEOUT
+
+                self.health_registry.record(cfg.id, outcome, retry_after_s=retry_after_s)
                 await self.registry.store.record_result(cfg.id, ok=False, latency_ms=ms)
+                if self.health_writer:
+                    self.health_writer.record(cfg.id, ok=False, latency_ms=ms)
                 if on_event:
                     on_event(("engine_done", {"engine": cfg.id, "results": 0, "ms": ms}))
                 return []
@@ -343,20 +380,34 @@ class SearchPipeline:
             statuses.append(EngineStatus(engine=cfg.id, status="ok", results=len(results), ms=ms))
             ENGINE_CALLS.labels(engine=cfg.id, outcome="ok").inc()
             ENGINE_LATENCY.labels(engine=cfg.id).observe(ms / 1000)
+
+            from app.retrieval.health import Outcome
+
+            outcome = Outcome.EMPTY if len(results) == 0 else Outcome.OK
+            self.health_registry.record(cfg.id, outcome)
             await self.registry.store.record_result(cfg.id, ok=True, latency_ms=ms)
+            if self.health_writer:
+                self.health_writer.record(cfg.id, ok=True, latency_ms=ms)
+
             if on_event:
                 on_event(("engine_done", {"engine": cfg.id, "results": len(results), "ms": ms}))
             return results
 
         tasks = {
-            asyncio.create_task(call_engine(cfg, adapter)): cfg.id for cfg, adapter in candidates
+            asyncio.create_task(call_engine(cfg, adapter)): cfg.id
+            for cfg, adapter in active_candidates
         }
         done, pending = await asyncio.wait(tasks, timeout=self.settings.search_fanout_budget_s)
         if pending:
+            from app.retrieval.health import Outcome
+
             for task in pending:
-                statuses.append(EngineStatus(engine=tasks[task], status="timeout"))
-                ENGINE_CALLS.labels(engine=tasks[task], outcome="timeout").inc()
-                await self.registry.store.record_result(tasks[task], ok=False, latency_ms=0)
+                engine_id = tasks[task]
+                statuses.append(EngineStatus(engine=engine_id, status="timeout"))
+                ENGINE_CALLS.labels(engine=engine_id, outcome="timeout").inc()
+                self.health_registry.record(engine_id, Outcome.TIMEOUT)
+                if self.health_writer:
+                    self.health_writer.record(engine_id, ok=False, latency_ms=0)
                 task.cancel()
             # Let cancellations settle so no task leaks past the request.
             await asyncio.gather(*pending, return_exceptions=True)
