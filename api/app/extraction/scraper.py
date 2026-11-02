@@ -24,6 +24,7 @@ import httpx
 
 from app.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.core.offload import run_cpu
 from app.extraction import ssrf
 from app.extraction.pinning import build_pinned_request
 from app.extraction.robots import RobotsCache
@@ -174,6 +175,18 @@ class Scraper:
                 logger.info("scrape_failed", url=url, error=type(exc).__name__)
                 await self._mark_failed(url)
                 return PageFailure(url=url, status="failed", error=type(exc).__name__)
+            if (
+                isinstance(page, PageContent)
+                and len(page.markdown) > self._settings.max_page_markdown_chars
+            ):
+                page = PageContent(
+                    url=page.url,
+                    final_url=page.final_url,
+                    title=page.title,
+                    markdown=page.markdown[: self._settings.max_page_markdown_chars],
+                    extractor_used=page.extractor_used,
+                    fetched_at=page.fetched_at,
+                )
             await self._cache_page(page)
             return page
 
@@ -204,8 +217,18 @@ class Scraper:
             if is_challenge_page(body):
                 logger.info("direct_fetch_captcha_detected_escalating", url=url)
             else:
-                markdown, title, extractor = extract_static(body)
+                if len(body) > self._settings.max_extract_bytes:
+                    logger.info(
+                        "direct_fetch_body_too_large_truncating",
+                        url=url,
+                        size=len(body),
+                        max_bytes=self._settings.max_extract_bytes,
+                    )
+                    body = body[: self._settings.max_extract_bytes]
+                markdown, title, extractor = await run_cpu(extract_static, body)
                 if markdown:
+                    if len(markdown) > self._settings.max_page_markdown_chars:
+                        markdown = markdown[: self._settings.max_page_markdown_chars]
                     return PageContent(
                         url=url,
                         final_url=final_url,
@@ -506,10 +529,21 @@ def _crawl4ai_markdown(payload: dict[str, Any]) -> tuple[str, str]:
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
-def extract_static(html: str | bytes) -> tuple[str, str, str]:
+def extract_static(
+    html: str | bytes, *, max_extract_bytes: int | None = None
+) -> tuple[str, str, str]:
     """trafilatura extraction -> (markdown, title, extractor). Empty on failure."""
     if not html or len(html) < 200:  # too small to be a real page worth parsing
         return "", "", ""
+    if max_extract_bytes is None:
+        try:
+            max_extract_bytes = get_settings().max_extract_bytes
+        except Exception:
+            max_extract_bytes = 2 * 1024 * 1024
+    if (isinstance(html, bytes) and len(html) > max_extract_bytes) or (
+        isinstance(html, str) and len(html.encode("utf-8", "replace")) > max_extract_bytes
+    ):
+        html = html[:max_extract_bytes]
     try:
         import trafilatura
 

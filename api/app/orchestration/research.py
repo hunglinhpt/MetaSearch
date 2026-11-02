@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 
 from app.config import Settings
 from app.core.logging import get_logger
+from app.core.offload import run_cpu
 from app.extraction.chunker import Chunk, chunk_markdown
 from app.extraction.scraper import PageContent, Scraper
 from app.llm.citations import validate_citations
@@ -583,6 +584,60 @@ class ResearchParams:
     llm_override: LLMOverride | None = None
 
 
+def _chunks_sync(
+    question: str,
+    results: list[ScoredResult],
+    pages: list[PageContent],
+    *,
+    offset: int,
+) -> list[Chunk]:
+    scored: list[tuple[float, Chunk]] = []
+    res_by_url: dict[str, ScoredResult] = {}
+    for r in results:
+        res_by_url[r.url] = r
+        res_by_url.setdefault(r.canonical_url, r)
+
+    scraped_urls: set[str] = set()
+    for page in pages:
+        scraped_urls.add(page.url)
+        scraped_urls.add(page.final_url)
+        scraped_urls.add(canonicalize(page.url))
+        matched_res = res_by_url.get(page.url) or res_by_url.get(canonicalize(page.url))
+        result_score = matched_res.score if matched_res else 0.0
+        md_body = page.markdown
+        if (
+            matched_res is not None
+            and matched_res.snippet
+            and any(a in _QUANT_ADAPTERS for a in matched_res.adapters)
+            and matched_res.snippet[:80] not in md_body
+        ):
+            md_body = f"{matched_res.snippet}\n\n{md_body}"
+        page_chunks = chunk_markdown(md_body, document_url=page.url, source_title=page.title)
+        for chunk in page_chunks:
+            # Score using within-document position BEFORE adding offset
+            score = heuristic_chunk_score(question, chunk.content, result_score, chunk.position)
+            chunk.position += offset
+            scored.append((score, chunk))
+
+    for r in results:
+        if r.url in scraped_urls or r.canonical_url in scraped_urls:
+            continue
+        snippet_text = (r.snippet or "").strip()
+        if not snippet_text:
+            continue
+        fallback_md = f"# {r.title}\n\n{snippet_text}" if r.title else snippet_text
+        fallback_chunks = chunk_markdown(
+            fallback_md, document_url=r.url, source_title=r.title or r.url
+        )
+        for chunk in fallback_chunks:
+            score = heuristic_chunk_score(question, chunk.content, r.score, chunk.position)
+            chunk.position += offset
+            scored.append((score, chunk))
+
+    scored.sort(key=lambda pair: -pair[0])
+    return [chunk for _, chunk in scored]
+
+
 class ResearchPipeline:
     def __init__(
         self,
@@ -691,7 +746,7 @@ class ResearchPipeline:
             pages = await self.scraper.scrape_many([r.url for r in merged_results])
             ok_pages = [p for p in pages if isinstance(p, PageContent)]
             chunk_start = pack.next_citation_number()  # last chunk number so far
-            new_chunks = self._chunks(question, merged_results, ok_pages, offset=chunk_start)
+            new_chunks = await self._chunks(question, merged_results, ok_pages, offset=chunk_start)
             sources = [
                 {"url": r.url, "title": r.title, "domain": r.domain, "score": round(r.score, 4)}
                 for r in merged_results
@@ -874,7 +929,7 @@ class ResearchPipeline:
             logger.warning("research_extract_fallback", error=type(exc).__name__)
             return [], [], Usage()
 
-    def _chunks(
+    async def _chunks(
         self,
         question: str,
         results: list[ScoredResult],
@@ -882,51 +937,7 @@ class ResearchPipeline:
         *,
         offset: int,
     ) -> list[Chunk]:
-        scored: list[tuple[float, Chunk]] = []
-        res_by_url: dict[str, ScoredResult] = {}
-        for r in results:
-            res_by_url[r.url] = r
-            res_by_url.setdefault(r.canonical_url, r)
-
-        scraped_urls: set[str] = set()
-        for page in pages:
-            scraped_urls.add(page.url)
-            scraped_urls.add(page.final_url)
-            scraped_urls.add(canonicalize(page.url))
-            matched_res = res_by_url.get(page.url) or res_by_url.get(canonicalize(page.url))
-            result_score = matched_res.score if matched_res else 0.0
-            md_body = page.markdown
-            if (
-                matched_res is not None
-                and matched_res.snippet
-                and any(a in _QUANT_ADAPTERS for a in matched_res.adapters)
-                and matched_res.snippet[:80] not in md_body
-            ):
-                md_body = f"{matched_res.snippet}\n\n{md_body}"
-            page_chunks = chunk_markdown(md_body, document_url=page.url, source_title=page.title)
-            for chunk in page_chunks:
-                # Score using within-document position BEFORE adding offset
-                score = heuristic_chunk_score(question, chunk.content, result_score, chunk.position)
-                chunk.position += offset
-                scored.append((score, chunk))
-
-        for r in results:
-            if r.url in scraped_urls or r.canonical_url in scraped_urls:
-                continue
-            snippet_text = (r.snippet or "").strip()
-            if not snippet_text:
-                continue
-            fallback_md = f"# {r.title}\n\n{snippet_text}" if r.title else snippet_text
-            fallback_chunks = chunk_markdown(
-                fallback_md, document_url=r.url, source_title=r.title or r.url
-            )
-            for chunk in fallback_chunks:
-                score = heuristic_chunk_score(question, chunk.content, r.score, chunk.position)
-                chunk.position += offset
-                scored.append((score, chunk))
-
-        scored.sort(key=lambda pair: -pair[0])
-        return [chunk for _, chunk in scored]
+        return await run_cpu(_chunks_sync, question, results, pages, offset=offset)
 
 
 def _extract_json(text: str) -> dict:

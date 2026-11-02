@@ -10,12 +10,14 @@ dependency — rerank không bao giờ làm fail request.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import httpx
 
 from app.config import Settings
 from app.core.logging import get_logger
+from app.core.offload import run_cpu
 from app.http import get_http_client
 
 if TYPE_CHECKING:
@@ -114,6 +116,7 @@ class ONNXReranker:
         self._tokenizer = None
         self._loaded = False
         self._load_error: Exception | None = None
+        self._load_lock = asyncio.Lock()
 
     def _ensure_loaded(self) -> None:
         if self._load_error is not None:
@@ -151,8 +154,11 @@ class ONNXReranker:
             return []
         top = scored[:RERANK_INPUT_CAP]
         try:
-            self._ensure_loaded()
-            model_scores = self._score(query, [chunk.content for _, chunk in top])
+            if not self._loaded:
+                async with self._load_lock:
+                    if not self._loaded:
+                        await run_cpu(self._ensure_loaded)
+            model_scores = await run_cpu(self._score, query, [chunk.content for _, chunk in top])
         except RerankerUnavailable:
             raise
         except Exception as exc:

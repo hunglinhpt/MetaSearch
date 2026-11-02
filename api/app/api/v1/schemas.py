@@ -40,6 +40,7 @@ class AnswerRequest(SearchRequest):
 class ScrapeRequest(BaseModel):
     urls: list[str] = Field(min_length=1, max_length=10)
     timeout_s: float = Field(default=8.0, ge=1, le=30)
+    max_chars: int = Field(default=200_000, ge=1, le=1_000_000)
 
 
 class ScrapeItem(BaseModel):
@@ -49,6 +50,7 @@ class ScrapeItem(BaseModel):
     title: str = ""
     extractor_used: str = ""
     error: str | None = None
+    truncated: bool = False
 
 
 class SearchResponse(BaseModel):

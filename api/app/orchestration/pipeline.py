@@ -34,6 +34,7 @@ from app.config import Settings
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
 from app.core.metrics import CACHE_EVENTS, ENGINE_CALLS, ENGINE_LATENCY
+from app.core.offload import run_cpu
 from app.db.base import EMBEDDING_DIM
 from app.db.models import Answer, SemanticCache
 from app.db.session import get_sessionmaker
@@ -419,6 +420,56 @@ class SearchPipeline:
         return raws, statuses
 
 
+def _score_chunks_sync(
+    query: str, results: list[ScoredResult], pages: list[PageContent]
+) -> list[tuple[float, Chunk]]:
+    scored_chunks: list[tuple[float, Chunk]] = []
+    res_by_url: dict[str, ScoredResult] = {}
+    for r in results:
+        res_by_url[r.url] = r
+        res_by_url.setdefault(r.canonical_url, r)
+
+    scraped_urls: set[str] = set()
+    for page in pages:
+        scraped_urls.add(page.url)
+        scraped_urls.add(page.final_url)
+        scraped_urls.add(canonicalize(page.url))
+        matched_res = res_by_url.get(page.url) or res_by_url.get(canonicalize(page.url))
+        result_score = matched_res.score if matched_res else 0.0
+        md_body = page.markdown
+        # Preserve quantitative synthesis snippets from vertical adapters even when scraped
+        if (
+            matched_res is not None
+            and matched_res.snippet
+            and any(a in _QUANT_ADAPTERS for a in matched_res.adapters)
+            and matched_res.snippet[:80] not in md_body
+        ):
+            md_body = f"{matched_res.snippet}\n\n{md_body}"
+        page_chunks = chunk_markdown(md_body, document_url=page.url, source_title=page.title)
+        for chunk in page_chunks:
+            score = heuristic_chunk_score(query, chunk.content, result_score, chunk.position)
+            scored_chunks.append((score, chunk))
+
+    # Fallback: for any search result whose URL could not be scraped (or was blocked),
+    # ground the synthesizer using its search snippet so quantitative data is never lost.
+    for r in results:
+        if r.url in scraped_urls or r.canonical_url in scraped_urls:
+            continue
+        snippet_text = (r.snippet or "").strip()
+        if not snippet_text:
+            continue
+        fallback_md = f"# {r.title}\n\n{snippet_text}" if r.title else snippet_text
+        fallback_chunks = chunk_markdown(
+            fallback_md, document_url=r.url, source_title=r.title or r.url
+        )
+        for chunk in fallback_chunks:
+            score = heuristic_chunk_score(query, chunk.content, r.score, chunk.position)
+            scored_chunks.append((score, chunk))
+
+    scored_chunks.sort(key=lambda pair: -pair[0])
+    return scored_chunks
+
+
 class AnswerPipeline:
     """Cache -> search -> scrape -> chunk -> rerank -> synthesize (stages 8-11)."""
 
@@ -487,7 +538,9 @@ class AnswerPipeline:
         pages = await self.scraper.scrape_many([r.url for r in outcome.results])
         ok_pages = [p for p in pages if isinstance(p, PageContent)]
 
-        scored_chunks = self._score_chunks(normalize_query(params.query), outcome.results, ok_pages)
+        scored_chunks = await self._score_chunks(
+            normalize_query(params.query), outcome.results, ok_pages
+        )
         if not scored_chunks:
             raise MetaSearchError(
                 ErrorCode.NO_RESULTS,
@@ -659,7 +712,7 @@ class AnswerPipeline:
         pages = await self.scraper.scrape_many([r.url for r in outcome.results])
         ok_pages = [p for p in pages if isinstance(p, PageContent)]
 
-        scored_chunks = self._score_chunks(normalized, outcome.results, ok_pages)
+        scored_chunks = await self._score_chunks(normalized, outcome.results, ok_pages)
         if not scored_chunks:
             raise MetaSearchError(
                 ErrorCode.NO_RESULTS,
@@ -751,54 +804,10 @@ class AnswerPipeline:
             logger.warning("rerank_fallback_heuristic", reason=str(exc)[:120])
             return heuristic_order(scored_chunks)
 
-    def _score_chunks(
+    async def _score_chunks(
         self, query: str, results: list[ScoredResult], pages: list[PageContent]
     ) -> list[tuple[float, Chunk]]:
-        scored_chunks: list[tuple[float, Chunk]] = []
-        res_by_url: dict[str, ScoredResult] = {}
-        for r in results:
-            res_by_url[r.url] = r
-            res_by_url.setdefault(r.canonical_url, r)
-
-        scraped_urls: set[str] = set()
-        for page in pages:
-            scraped_urls.add(page.url)
-            scraped_urls.add(page.final_url)
-            scraped_urls.add(canonicalize(page.url))
-            matched_res = res_by_url.get(page.url) or res_by_url.get(canonicalize(page.url))
-            result_score = matched_res.score if matched_res else 0.0
-            md_body = page.markdown
-            # Preserve quantitative synthesis snippets from vertical adapters even when scraped
-            if (
-                matched_res is not None
-                and matched_res.snippet
-                and any(a in _QUANT_ADAPTERS for a in matched_res.adapters)
-                and matched_res.snippet[:80] not in md_body
-            ):
-                md_body = f"{matched_res.snippet}\n\n{md_body}"
-            page_chunks = chunk_markdown(md_body, document_url=page.url, source_title=page.title)
-            for chunk in page_chunks:
-                score = heuristic_chunk_score(query, chunk.content, result_score, chunk.position)
-                scored_chunks.append((score, chunk))
-
-        # Fallback: for any search result whose URL could not be scraped (or was blocked),
-        # ground the synthesizer using its search snippet so quantitative data is never lost.
-        for r in results:
-            if r.url in scraped_urls or r.canonical_url in scraped_urls:
-                continue
-            snippet_text = (r.snippet or "").strip()
-            if not snippet_text:
-                continue
-            fallback_md = f"# {r.title}\n\n{snippet_text}" if r.title else snippet_text
-            fallback_chunks = chunk_markdown(
-                fallback_md, document_url=r.url, source_title=r.title or r.url
-            )
-            for chunk in fallback_chunks:
-                score = heuristic_chunk_score(query, chunk.content, r.score, chunk.position)
-                scored_chunks.append((score, chunk))
-
-        scored_chunks.sort(key=lambda pair: -pair[0])
-        return scored_chunks
+        return await run_cpu(_score_chunks_sync, query, results, pages)
 
     # -- answer cache (L1 + L2) ---------------------------------------------
 

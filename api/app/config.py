@@ -198,6 +198,9 @@ class Settings(BaseSettings):
     scrape_global_concurrency: int = 24
     scrape_per_domain_concurrency: int = 2
     tls_trust_store: Literal["certifi", "system"] = "certifi"
+    extract_concurrency: int = 2
+    max_extract_bytes: int = 2 * 1024 * 1024
+    max_page_markdown_chars: int = 200_000
     max_scrape_bytes: int = 5 * 1024 * 1024
     max_redirects: int = 3
     user_agent: str = "MetaSearchBot/1.0 (+https://metasearch.example/bot)"
