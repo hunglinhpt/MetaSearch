@@ -7,8 +7,8 @@ its heading path (``H1 > H2``) and position so citations can point back.
 
 from __future__ import annotations
 
+import hashlib
 import re
-import uuid
 from dataclasses import dataclass
 
 TARGET_WORDS = 512
@@ -32,8 +32,10 @@ def _new_chunk(
     document_url: str, position: int, heading_path: str, content: str, source_title: str = ""
 ) -> Chunk:
     words = content.split()
+    # WP-13: stable ID so citations link correctly when a document already exists.
+    chunk_id = hashlib.sha1(f"{document_url}:{position}".encode()).hexdigest()  # nosec B324
     return Chunk(
-        id=uuid.uuid4().hex,
+        id=chunk_id,
         document_url=document_url,
         position=position,
         heading_path=heading_path,

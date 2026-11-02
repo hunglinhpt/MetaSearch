@@ -2,12 +2,16 @@
 
 Everything is created lazily so importing the app never requires a live
 database (important for unit tests and for ``/healthz``).
+
+WP-13: SQLite connections get WAL + busy_timeout + synchronous pragmas on
+every connect via an engine event listener (not just at creation).
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -19,6 +23,15 @@ from app.config import get_settings
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+
+
+def _set_sqlite_pragma(dbapi_conn, _record) -> None:
+    """WP-13: per-connection pragmas for SQLite reliability."""
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=3000")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
 
 
 def get_engine() -> AsyncEngine:
@@ -36,6 +49,7 @@ def get_engine() -> AsyncEngine:
                 # A single shared connection: in-memory SQLite is per-connection
                 # otherwise, which would give every pool checkout a fresh DB.
                 kwargs.update(poolclass=StaticPool, connect_args={"check_same_thread": False})
+            kwargs["connect_args"] = kwargs.get("connect_args", {"check_same_thread": False})
         else:
             kwargs.update(
                 pool_pre_ping=True,
@@ -47,7 +61,10 @@ def get_engine() -> AsyncEngine:
                 # Fail fast on an unreachable Postgres (fallback paths rely on it).
                 connect_args={"timeout": 3, "command_timeout": 10},
             )
-        _engine = create_async_engine(settings.database_url, **kwargs)
+        eng = create_async_engine(settings.database_url, **kwargs)
+        if is_sqlite:
+            event.listen(eng.sync_engine, "connect", _set_sqlite_pragma)
+        _engine = eng
     return _engine
 
 
