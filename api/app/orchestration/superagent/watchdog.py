@@ -6,6 +6,7 @@ Prevents zombie workers, infinite ReAct loops, token burns, and cascading failur
 from __future__ import annotations
 
 import time
+from collections import deque
 from typing import Any
 
 from app.core.logging import get_logger
@@ -28,7 +29,7 @@ class WatchdogSupervisor:
         self.max_token_budget = max_token_budget
         self.heartbeat_timeout_sec = heartbeat_timeout_sec
         self._active_metrics: dict[str, WatchdogMetric] = {}
-        self._tripped_circuits: list[dict[str, Any]] = []
+        self._tripped_circuits: deque[dict[str, Any]] = deque(maxlen=100)
 
     def register_worker(self, worker_id: str, ticket: SuperAgentTicket) -> None:
         self._active_metrics[worker_id] = WatchdogMetric(
@@ -132,5 +133,5 @@ class WatchdogSupervisor:
                 }
                 for m in self._active_metrics.values()
             ],
-            "tripped_circuits": self._tripped_circuits[-20:],
+            "tripped_circuits": list(self._tripped_circuits)[-20:],
         }

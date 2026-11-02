@@ -3,17 +3,24 @@
 Implements DeepSeek Super-agent architecture: Router-Worker decoupling,
 Observe mode, Quiet Autonomy escalations, Proactive Event Ingestion,
 and Watchdog Circuit Breaker supervision.
+
+Strict Quarantine (WP-10 / DAT-05 / REL-11):
+- Gated by settings.superagent_enabled (404 when disabled, excluded from OpenAPI).
+- Zero hallucinated artifacts or fabricated token constants.
+- Standardized MetaSearchError error model and require_admin enforcement.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.api import deps
+from app.config import get_settings
 from app.core.auth import require_admin
+from app.core.errors import ErrorCode, MetaSearchError
 from app.orchestration.superagent import (
     ExecutionMode,
     SuperAgentTicket,
@@ -24,7 +31,23 @@ from app.orchestration.superagent import (
     get_watchdog_supervisor,
 )
 
-router = APIRouter(prefix="/superagent", tags=["superagent"])
+
+def require_superagent_enabled() -> None:
+    """Enforce SuperAgent quarantine gate (WP-10)."""
+    settings = get_settings()
+    if not settings.superagent_enabled:
+        raise MetaSearchError(
+            ErrorCode.NOT_FOUND,
+            "SuperAgent engine is currently quarantined and disabled",
+            status_code=404,
+        )
+
+
+router = APIRouter(
+    prefix="/superagent",
+    tags=["superagent"],
+    dependencies=[Depends(require_superagent_enabled), Depends(require_admin)],
+)
 
 
 class TicketCreateRequest(BaseModel):
@@ -129,7 +152,17 @@ async def list_tickets(
     domain: str | None = Query(default=None),
 ) -> dict[str, Any]:
     router_inst = get_superagent_router()
-    st_filter = TicketStatus(status) if status else None
+    st_filter: TicketStatus | None = None
+    if status:
+        try:
+            st_filter = TicketStatus(status)
+        except ValueError:
+            raise MetaSearchError(
+                ErrorCode.INVALID_REQUEST,
+                f"Invalid ticket status: '{status}'",
+                status_code=400,
+            ) from None
+
     tickets = router_inst.list_tickets(status=st_filter, domain=domain)
     return {
         "total_tickets": len(tickets),
@@ -142,7 +175,9 @@ async def get_ticket(ticket_id: str) -> dict[str, Any]:
     router_inst = get_superagent_router()
     ticket = router_inst.get_ticket(ticket_id)
     if not ticket:
-        raise HTTPException(status_code=404, detail=f"Ticket '{ticket_id}' not found")
+        raise MetaSearchError(
+            ErrorCode.NOT_FOUND, f"Ticket '{ticket_id}' not found", status_code=404
+        )
     return {"ok": True, "ticket": _serialize_ticket(ticket)}
 
 
@@ -151,20 +186,25 @@ async def dispatch_ticket_endpoint(ticket_id: str) -> dict[str, Any]:
     router_inst = get_superagent_router()
     ticket = router_inst.get_ticket(ticket_id)
     if not ticket:
-        raise HTTPException(status_code=404, detail=f"Ticket '{ticket_id}' not found")
+        raise MetaSearchError(
+            ErrorCode.NOT_FOUND, f"Ticket '{ticket_id}' not found", status_code=404
+        )
 
-    updated = await router_inst.dispatch_ticket(
-        ticket_id,
-        answer_pipeline=deps.get_answer_pipeline(),
-        council_engine=None,
-    )
+    try:
+        updated = await router_inst.dispatch_ticket(
+            ticket_id,
+            answer_pipeline=deps.get_answer_pipeline(),
+            council_engine=None,
+        )
+    except ValueError as exc:
+        raise MetaSearchError(ErrorCode.INVALID_REQUEST, str(exc), status_code=400) from exc
+
     return {"ok": True, "ticket": _serialize_ticket(updated)}
 
 
 @router.post(
     "/tickets/{ticket_id}/escalate/{escalation_id}/resolve",
     summary="Resolve a human-in-the-loop Quiet Autonomy escalation request",
-    dependencies=[Depends(require_admin)],
 )
 async def resolve_escalation_endpoint(
     ticket_id: str,
@@ -180,7 +220,7 @@ async def resolve_escalation_endpoint(
             resolved_by=request.resolved_by,
         )
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise MetaSearchError(ErrorCode.NOT_FOUND, str(exc), status_code=404) from exc
 
     return {"ok": True, "ticket": _serialize_ticket(updated)}
 

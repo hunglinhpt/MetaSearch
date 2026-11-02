@@ -103,6 +103,7 @@ class SuperAgentTicket:
     current_step: int = 0
     token_budget: int = 16_000
     consumed_tokens: int = 0
+    escalation_approved: bool = False
 
 
 @dataclass(slots=True)

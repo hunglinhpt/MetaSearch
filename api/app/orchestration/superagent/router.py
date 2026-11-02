@@ -3,6 +3,9 @@
 Acts as the persistent global coordinator and single point of entry for tickets
 and proactive events, decomposing complex objectives and dispatching them to
 isolated Domain Workers.
+
+Enforces state machine transitions, bounded memory (LRU 1,000 tickets), and
+background task reference retention (WP-10 / REL-11).
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections import OrderedDict, deque
 from typing import Any
 
 from app.core.logging import get_logger
@@ -27,6 +31,9 @@ from app.retrieval.domain_intelligence import classify_domain_intelligence
 
 logger = get_logger(__name__)
 
+MAX_TICKETS = 1000
+MAX_EVENTS = 500
+
 
 class SuperAgentRouter:
     """Coordinates tickets, dispatches to workers, and enforces the Router-Worker architecture."""
@@ -39,8 +46,9 @@ class SuperAgentRouter:
     ) -> None:
         self.watchdog = watchdog or WatchdogSupervisor()
         self.default_mode = default_mode
-        self._tickets: dict[str, SuperAgentTicket] = {}
-        self._events: list[SuperAgentEvent] = []
+        self._tickets: OrderedDict[str, SuperAgentTicket] = OrderedDict()
+        self._events: deque[SuperAgentEvent] = deque(maxlen=MAX_EVENTS)
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     def submit_goal(
         self,
@@ -73,6 +81,11 @@ class SuperAgentRouter:
             originating_event_id=event_id,
             created_at=time.time(),
         )
+
+        # Enforce LRU bound on ticket store
+        if len(self._tickets) >= MAX_TICKETS:
+            self._tickets.popitem(last=False)
+
         self._tickets[ticket_id] = ticket
         logger.info(
             "superagent_ticket_created",
@@ -90,10 +103,19 @@ class SuperAgentRouter:
         answer_pipeline: Any = None,
         council_engine: Any = None,
     ) -> SuperAgentTicket:
-        """Assign ticket to a new isolated worker and execute."""
+        """Assign ticket to a new isolated worker and execute under state machine guards."""
         ticket = self._tickets.get(ticket_id)
         if not ticket:
             raise KeyError(f"Ticket {ticket_id} not found in router")
+
+        # State machine transition guard
+        if ticket.status == TicketStatus.RUNNING:
+            raise ValueError(f"Ticket {ticket_id} is already running")
+        if ticket.status in (TicketStatus.COMPLETED, TicketStatus.CANCELLED):
+            raise ValueError(f"Cannot dispatch terminal ticket {ticket_id} ({ticket.status.value})")
+
+        # Move to most recently accessed
+        self._tickets.move_to_end(ticket_id)
 
         worker = IsolatedSuperAgentWorker(watchdog=self.watchdog)
         return await worker.execute_ticket(
@@ -107,12 +129,15 @@ class SuperAgentRouter:
         answer_pipeline: Any = None,
         council_engine: Any = None,
     ) -> asyncio.Task[SuperAgentTicket]:
-        """Fire-and-forget background execution of a ticket."""
-        return asyncio.create_task(
+        """Fire-and-forget background execution of a ticket with task reference retention."""
+        task = asyncio.create_task(
             self.dispatch_ticket(
                 ticket_id, answer_pipeline=answer_pipeline, council_engine=council_engine
             )
         )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     def resolve_escalation(
         self,
@@ -146,6 +171,7 @@ class SuperAgentRouter:
             ticket.finished_at = time.time()
         else:
             ticket.status = TicketStatus.PENDING
+            ticket.escalation_approved = True
 
         logger.info(
             "superagent_escalation_resolved",
@@ -169,12 +195,14 @@ class SuperAgentRouter:
         return sorted(tickets, key=lambda t: (t.priority.value, -t.created_at))
 
     def get_ticket(self, ticket_id: str) -> SuperAgentTicket | None:
-        return self._tickets.get(ticket_id)
+        t = self._tickets.get(ticket_id)
+        if t:
+            self._tickets.move_to_end(ticket_id)
+        return t
 
     def register_event(self, event: SuperAgentEvent) -> None:
         self._events.append(event)
-        if len(self._events) > 500:
-            self._events = self._events[-500:]
 
     def list_events(self, limit: int = 50) -> list[SuperAgentEvent]:
-        return list(reversed(self._events[-limit:]))
+        all_events = list(self._events)
+        return list(reversed(all_events[-limit:]))

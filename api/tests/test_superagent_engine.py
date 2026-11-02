@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -66,6 +67,12 @@ class TestSuperAgentRouterAndWorker:
         watchdog = WatchdogSupervisor()
         router = SuperAgentRouter(watchdog=watchdog)
         pipeline = DummyAnswerPipeline()
+        mock_council = AsyncMock()
+        mock_council.run_council.return_value = {
+            "verdict_md": "## Báo cáo CAMELS VCB [1]\n\nPhân tích nợ xấu NPL đạt chuẩn.",
+            "citations": [{"n": 1, "url": "https://vietstock.vn/vcb", "title": "VCB"}],
+            "usage": {"total_tokens": 1250},
+        }
 
         ticket = router.submit_goal(
             title="Phân tích pháp y BCTC VCB 2024",
@@ -77,7 +84,9 @@ class TestSuperAgentRouterAndWorker:
         assert ticket.status == TicketStatus.PENDING
         assert ticket.domain == "financial"
 
-        updated = await router.dispatch_ticket(ticket.ticket_id, answer_pipeline=pipeline)
+        updated = await router.dispatch_ticket(
+            ticket.ticket_id, answer_pipeline=pipeline, council_engine=mock_council
+        )
         assert updated.status == TicketStatus.COMPLETED
         assert len(updated.artifacts) >= 1
         artifact = updated.artifacts[0]
@@ -197,6 +206,12 @@ class TestWatchdogSupervisorCircuitBreaker:
 
 
 class TestSuperAgentRestApiEndpoints:
+    @pytest.fixture(autouse=True)
+    def enable_superagent(self, monkeypatch):
+        from app.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "superagent_enabled", True)
+
     def test_create_and_list_tickets_endpoint(self) -> None:
         client = TestClient(app)
         res = client.post(

@@ -2,17 +2,22 @@
 
 Operates in an isolated session, executes multi-step ReAct reasoning with
 domain intelligence, and produces actionable deliverables without spamming the user.
+
+Strict Data Integrity (WP-10 / DAT-05):
+- Zero fabricated deliverable artifacts ("Verified.") when LLM/council is missing.
+- Exact token consumption accounting from engine usage, removing fake constants.
+- Watchdog timeout execution via asyncio.timeout.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from typing import Any
 
 from app.core.logging import get_logger
 from app.extraction.chunker import Chunk
-from app.llm.citations import validate_citations
 from app.orchestration.superagent.models import (
     EscalationRequest,
     ExecutionMode,
@@ -61,17 +66,28 @@ class IsolatedSuperAgentWorker:
         )
 
         try:
-            # 1. Observe / Shadow Mode: Perform zero-burn evaluation without active execution
-            if ticket.execution_mode == ExecutionMode.OBSERVE:
-                await self._execute_observe_mode(ticket)
-                return ticket
+            async with asyncio.timeout(self.watchdog.max_duration_sec):
+                # 1. Observe / Shadow Mode: Perform zero-burn evaluation without active execution
+                if ticket.execution_mode == ExecutionMode.OBSERVE:
+                    await self._execute_observe_mode(ticket)
+                    return ticket
 
-            # 2. Live Execution: Multi-step ReAct under Quiet Autonomy
-            await self._execute_live_mode(
-                ticket, answer_pipeline=answer_pipeline, council_engine=council_engine
+                # 2. Live Execution: Multi-step ReAct under Quiet Autonomy
+                await self._execute_live_mode(
+                    ticket, answer_pipeline=answer_pipeline, council_engine=council_engine
+                )
+                return ticket
+        except TimeoutError:
+            ticket.status = TicketStatus.FAILED
+            ticket.finished_at = time.time()
+            ticket.error_message = f"Watchdog timeout exceeded: {self.watchdog.max_duration_sec}s"
+            self.watchdog.audit_ticket_health(self.worker_id, ticket)
+            logger.warning(
+                "superagent_worker_timed_out",
+                worker_id=self.worker_id,
+                ticket_id=ticket.ticket_id,
             )
             return ticket
-
         except Exception as exc:
             ticket.status = TicketStatus.FAILED
             ticket.error_message = str(exc)[:400]
@@ -139,7 +155,7 @@ class IsolatedSuperAgentWorker:
     ) -> None:
         pack = classify_domain_intelligence(ticket.objective, requested_domain=ticket.domain)
         ticket.current_step = 1
-        self.watchdog.record_heartbeat(self.worker_id, step=1, tokens_added=200)
+        self.watchdog.record_heartbeat(self.worker_id, step=1, tokens_added=0)
 
         # Step 1: Query Context Preparation & Search
         ticket.step_history.append(
@@ -170,30 +186,23 @@ class IsolatedSuperAgentWorker:
                     word_count=len(str(c.get("content") or "").split()),
                 )
                 chunks.append((num, chunk))
-        else:
-            # Fallback mock chunk for self-contained testing
-            chunks.append(
-                (
-                    1,
-                    Chunk(
-                        id="evidence-1",
-                        document_url="https://metasearch.local/evidence/1",
-                        source_title=ticket.title,
-                        heading_path="",
-                        position=1,
-                        content=f"Primary evidence context for: {ticket.objective}",
-                        word_count=20,
-                    ),
-                )
-            )
 
         ticket.current_step = 2
-        self.watchdog.record_heartbeat(self.worker_id, step=2, tokens_added=1500)
+        self.watchdog.record_heartbeat(self.worker_id, step=2, tokens_added=0)
 
-        # Step 2: Anomaly / Escalation Check
-        # If query touches extreme high-risk keywords, escalate under Quiet Autonomy
+        # Step 2: Anomaly / Escalation Check (Quiet Autonomy Contract)
         obj_lower = ticket.objective.lower()
-        if "gian lận nghiêm trọng" in obj_lower or "khởi tố" in obj_lower:
+        is_high_risk = any(
+            w in obj_lower
+            for w in (
+                "gian lận nghiêm trọng",
+                "khởi tố",
+                "thao túng báo cáo tài chính",
+                "thao túng bctc",
+            )
+        )
+
+        if is_high_risk and not ticket.escalation_approved:
             ticket.escalations.append(
                 EscalationRequest(
                     escalation_id=f"esc_{uuid.uuid4().hex[:6]}",
@@ -223,30 +232,33 @@ class IsolatedSuperAgentWorker:
 
         # Step 3: Synthesis & Verification
         ticket.current_step = 3
-        self.watchdog.record_heartbeat(self.worker_id, step=3, tokens_added=2500)
-
         answer_text = ""
         citations_list: list[dict[str, Any]] = []
+
         if council_engine is not None and hasattr(council_engine, "run_council"):
             council_res = await council_engine.run_council(
                 ticket.objective, chunks, domain=pack.id, enable_cross_review=True
             )
             answer_text = council_res.get("verdict_md") or council_res.get("answer_md") or ""
             citations_list = list(council_res.get("citations") or [])
+            usage = council_res.get("usage", {})
+            tokens_used = int(usage.get("total_tokens") or usage.get("totalTokens") or 0)
+            ticket.consumed_tokens += tokens_used
+            self.watchdog.record_heartbeat(self.worker_id, step=3, tokens_added=tokens_used)
         else:
-            # Fallback deterministic deliverable synthesis
-            answer_text = (
-                f"## Super-Agent Analysis: {ticket.title}\n\n"
-                f"**Domain Framework**: `{pack.name}`\n\n"
-                f"Based on verified primary evidence [1], the analysis decomposes along:\n"
-                + "\n".join(f"- **{dim}**: Verified." for dim in pack.essence_dimensions[:3])
+            # Strict Data Integrity (DAT-05): Do NOT fabricate deliverables when LLM is missing!
+            ticket.status = TicketStatus.FAILED
+            ticket.error_message = "no_llm_configured"
+            ticket.finished_at = time.time()
+            ticket.step_history.append(
+                {
+                    "step": 3,
+                    "action": "llm_synthesis_failed",
+                    "error": "no_llm_configured",
+                    "timestamp": time.time(),
+                }
             )
-            check = validate_citations(answer_text, chunks)
-            answer_text = check.text
-            citations_list = [
-                {"n": c.n, "url": c.url, "title": c.title, "chunk_id": c.chunk_id}
-                for c in check.citations
-            ]
+            return
 
         # Step 4: Deliverable Packaging (Quiet Autonomy Contract)
         ticket.artifacts.append(
@@ -259,7 +271,6 @@ class IsolatedSuperAgentWorker:
                 metadata={"domain": pack.id, "worker_id": self.worker_id},
             )
         )
-        ticket.consumed_tokens += 4200
         ticket.status = TicketStatus.COMPLETED
         ticket.finished_at = time.time()
         ticket.step_history.append(
@@ -275,4 +286,5 @@ class IsolatedSuperAgentWorker:
             worker_id=self.worker_id,
             ticket_id=ticket.ticket_id,
             artifacts=len(ticket.artifacts),
+            consumed_tokens=ticket.consumed_tokens,
         )
