@@ -18,6 +18,7 @@ logger = get_logger(__name__)
 class ErrorCode(StrEnum):
     INVALID_REQUEST = "invalid_request"
     UNAUTHORIZED = "unauthorized"
+    NOT_FOUND = "not_found"
     RATE_LIMITED = "rate_limited"
     UPSTREAM_TIMEOUT = "upstream_timeout"
     NO_RESULTS = "no_results"
@@ -27,6 +28,7 @@ class ErrorCode(StrEnum):
 HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.INVALID_REQUEST: 400,
     ErrorCode.UNAUTHORIZED: 401,
+    ErrorCode.NOT_FOUND: 404,
     ErrorCode.RATE_LIMITED: 429,
     ErrorCode.UPSTREAM_TIMEOUT: 502,
     ErrorCode.NO_RESULTS: 503,

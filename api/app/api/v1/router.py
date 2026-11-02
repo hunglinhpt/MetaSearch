@@ -57,4 +57,8 @@ router.include_router(ops_status.router, dependencies=_auth)
 router.include_router(research.router, dependencies=_auth)
 router.include_router(digests.router, dependencies=_auth)
 router.include_router(llm.router, dependencies=_auth)
-router.include_router(superagent.router, dependencies=_auth)
+router.include_router(
+    superagent.router,
+    dependencies=_auth,
+    include_in_schema=get_settings().superagent_enabled,
+)

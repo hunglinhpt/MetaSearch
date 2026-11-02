@@ -228,6 +228,9 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = ""
 
+    # --- Super-Agent Autonomous Engine (WP-10: Quarantined by default) ---
+    superagent_enabled: bool = False
+
     # --- Automated Daily Briefings / Blog Scanner ---
     scheduler_enabled: bool = False
     scheduler_interval_hours: float = 24.0
