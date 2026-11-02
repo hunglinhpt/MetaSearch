@@ -395,6 +395,10 @@ class LLMGateway:
                     attempts=attempts,
                     retry_after_s=exc.retry_after_s,
                 )
+                if emitted_any:
+                    # Partial answer already streamed — failover would append a
+                    # second answer on top. Surface the error instead.
+                    raise
                 # 429: the same candidate may recover after Retry-After —
                 # re-queue it (still bounded by the global attempt budget).
                 if exc.retry_after_s is not None:

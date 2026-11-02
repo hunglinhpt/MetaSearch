@@ -459,3 +459,59 @@ class TestInjection:
         m1 = build_messages("q", [(1, c)])[1]["content"]
         m2 = build_messages("q", [(1, c)])[1]["content"]
         assert m1 != m2  # fresh random delimiters each request
+
+
+class TestAdversarial:
+    async def test_partial_output_then_midstream_error_no_double_emit(self, monkeypatch):
+        """Review-1 finding: a mid-stream error after partial output must
+        surface the error — never failover-and-append a second answer."""
+        no_fallback(monkeypatch)
+
+        async def flaky_body():
+            event = (
+                'data: {"choices": [{"delta": {"content": "partial"}, "finish_reason": null}]}\n\n'
+            )
+            yield event.encode("utf-8")
+            raise httpx.ReadError("connection reset mid-stream")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, content=flaky_body(), headers={"content-type": "text/event-stream"}
+            )
+
+        gw, _calls = make_gateway(handler)
+        emitted = []
+        with pytest.raises(LLMError):
+            async for delta in gw.stream([{"role": "user", "content": "x"}], model="m"):
+                if delta.text:
+                    emitted.append(delta.text)
+        assert emitted == ["partial"]  # exactly one fragment, no duplication
+
+    async def test_429_without_header_moves_to_next_candidate(self, monkeypatch):
+        from app.llm import gateway as gw
+
+        def fake_candidates(self, target, messages, eff_model, **kwargs):
+            return [(target, eff_model), (target, "alt-model")]
+
+        monkeypatch.setattr(gw.LLMGateway, "_candidates", fake_candidates)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = request.read().decode("utf-8", "replace")
+            if '"alt-model"' in body:
+                return sse(openai_events(["alt ok"]))
+            return httpx.Response(429)  # no Retry-After header
+
+        gw2, _calls = make_gateway(handler)
+        text = ""
+        async for delta in gw2.stream([{"role": "user", "content": "x"}], model="m"):
+            if delta.text:
+                text += delta.text
+        assert text == "alt ok"
+
+    async def test_empty_upstream_body_is_llmerror(self, monkeypatch):
+        gw, _ = make_gateway(
+            lambda r: httpx.Response(200, text="", headers={"content-type": "application/json"})
+        )
+        with pytest.raises(LLMError, match="malformed JSON"):
+            async for _ in gw.stream([{"role": "user", "content": "x"}], model="m"):
+                pass
