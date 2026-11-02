@@ -217,6 +217,28 @@ version tuân theo [SemVer](https://semver.org/).
 ### Added
 - **DuckDuckGo adapter (keyless)**, **SQLite persistence (Lite profile)**, **In-process fallbacks giữ chất lượng khi không Redis**, **Jina Reader keyless**.
 
+## [0.6.1] — 2026-11-03 — Readiness: WP-07..WP-16 (deep review program)
+
+### Fixed
+- **WP-07** Deadlines, admission control, quorum fanout, early exit.
+- **WP-08** LLM gateway resilience: error classification, bounded attempts,
+  provider breakers, truncation status, prompt injection guard.
+- **WP-11** Startup guard, tenancy isolation, surface hardening.
+- **WP-12** Observability: metrics expansion, alert rules, cache labels.
+- **WP-13** PersistQueue, stable chunk ID, sqlite pragmas, retention.
+- **WP-14** readyz 3-state, compose pins, windows lite scripts.
+- **WP-15** Empty-vs-error contract split, python client.
+- **WP-16** Blocking pip-audit, gitleaks, npm ci.
+
+### Breaking
+- `POST /v1/search` returns 200 with `results: []` when all engines return
+  zero results but are healthy (was 503). Use error `no_results` with 503
+  only when all engines actually failed. Affects every integration.
+- `GET /v1/meta` returns only `name` + `version`; full config requires
+  `GET /v1/meta/full` with an admin key.
+- `GET /metrics` requires an admin key when `AUTH_ENABLED=true`, or
+  loopback when auth is off.
+
 ## [0.5.0] — 2026-10-31 — Phase 3: Deep Research & MCP + Phase 4 lõi
 
 ### Added
