@@ -4,6 +4,19 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [1.3.0] — 2026-11-02 — DeepSeek Super-Agent Architecture (Router-Worker, Observe Mode, Quiet Autonomy & Watchdog Supervisor)
+
+### Added
+- **Kiến Trúc Autonomous Super-Agent Engine (`app.orchestration.superagent`)**:
+  - Tích hợp nguyên mẫu tự trị từ **`deepseek-ai/dsh-superagent-prototype`** (bài báo *"Exploring Super-agent Design: Towards a More Autonomous Agent System"*), giải phóng điểm nghẽn giới hạn chú ý của con người.
+  - **Router - Worker Decoupling (`SuperAgentRouter`, `IsolatedSuperAgentWorker`)**: Tách biệt tầng điều phối trung tâm khỏi các phiên làm việc độc lập; Router nhận diện sự kiện, phân rã mục tiêu thành các **SuperAgent Tickets** theo độ ưu tiên (`CRITICAL`, `HIGH`, `NORMAL`, `LOW`).
+  - **Triết Lý "Quiet Autonomy" & Escalation Queue**: Agent thực thi tự trị đa bước ReAct mà không làm phiền nhóm; chỉ lên tiếng khi có thành phẩm (`SuperAgentArtifact`) kèm trích dẫn `[n]` hoặc khi phát sinh rủi ro cao cần con người phê duyệt (`EscalationRequest`).
+  - **Observe Mode (Shadow Evaluation)**: Chế độ shadow plan thẩm định mục tiêu và phân tích rủi ro mà không tiêu tốn quota live API.
+  - **Proactive Event Ingestion (`EventIngestionEngine`, `POST /v1/superagent/events/ingest`)**: Tự động kích hoạt tickets từ các luồng sự kiện thời gian thực (BCTC kiểm toán, thông báo chứng khoán, CVE bảo mật).
+  - **Watchdog Supervisor & Circuit Breaker (`WatchdogSupervisor`, `GET /v1/superagent/watchdog/status`)**: Giám sát nhịp tim worker, tự động ngắt mạch (trip circuit) khi vượt ngưỡng thời gian (120s) hoặc bùng nổ token (`TOKEN_BURST`).
+  - **Giao Diện Super-Agent UI**: Tab giao diện mới trên Web UI Next.js cho phép submit mục tiêu tự trị, theo dõi tickets, giám sát Watchdog và phê duyệt Escalation trực quan.
+  - **Bộ Kiểm Thử Toàn Diện (`api/tests/test_superagent_engine.py`)**: 8 bài kiểm thử chuyên sâu cho Router, Worker, Observe Mode, Quiet Autonomy, Watchdog và REST API (tổng 383+ tests xanh 100%).
+
 ## [1.2.1] — 2026-11-02 — Multi-Platform Matrix CI (Windows, macOS, Linux), 3-Round Deep Audit & Hardened Council
 
 ### Added

@@ -18,12 +18,18 @@ import {
   LLMTestResult,
   SearchHit,
   SourceItem,
+  SuperAgentTicket,
+  SuperAgentWatchdogStatus,
+  createSuperAgentTicket,
   getDigest,
   getDomains,
   getLLMProviders,
+  getSuperAgentWatchdogStatus,
   listDigests,
   listEngines,
+  listSuperAgentTickets,
   resetLLMConfig,
+  resolveSuperAgentEscalation,
   search,
   streamAnswer,
   testLLMConnection,
@@ -33,7 +39,7 @@ import {
 } from "../lib/api";
 
 type Mode = "answer" | "raw";
-type AppTab = "search" | "blog" | "llm";
+type AppTab = "search" | "blog" | "superagent" | "llm";
 
 const CATEGORY_CHIPS = [
   { id: "auto", label: "⚡ Tự động (Universal Domain Intelligence)" },
@@ -107,6 +113,30 @@ export default function HomePage() {
   const [llmTesting, setLlmTesting] = useState<boolean>(false);
   const [llmStatusMsg, setLlmStatusMsg] = useState<string>("");
   const [llmTestResult, setLlmTestResult] = useState<LLMTestResult | null>(null);
+
+  // Super-Agent state
+  const [superagentTickets, setSuperagentTickets] = useState<SuperAgentTicket[]>([]);
+  const [watchdogStatus, setWatchdogStatus] = useState<SuperAgentWatchdogStatus | null>(null);
+  const [agentGoalTitle, setAgentGoalTitle] = useState("");
+  const [agentGoalObjective, setAgentGoalObjective] = useState("");
+  const [agentGoalDomain, setAgentGoalDomain] = useState("auto");
+  const [agentExecutionMode, setAgentExecutionMode] = useState<"live" | "observe">("live");
+  const [agentPriority, setAgentPriority] = useState<number>(3);
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [selectedTicket, setSelectedTicket] = useState<SuperAgentTicket | null>(null);
+
+  const loadSuperAgentData = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const [tkts, wd] = await Promise.all([
+        listSuperAgentTickets(undefined, signal),
+        getSuperAgentWatchdogStatus(signal),
+      ]);
+      setSuperagentTickets(tkts);
+      setWatchdogStatus(wd);
+    } catch {
+      // Ignore background errors
+    }
+  }, []);
 
   const loadLLMState = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -260,7 +290,46 @@ export default function HomePage() {
     if (activeTab === "blog") {
       loadBlogPosts(blogTopic);
     }
-  }, [activeTab, blogTopic, loadBlogPosts]);
+    if (activeTab === "superagent") {
+      loadSuperAgentData();
+    }
+  }, [activeTab, blogTopic, loadBlogPosts, loadSuperAgentData]);
+
+  const handleCreateAgentTicket = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!agentGoalTitle.trim() || !agentGoalObjective.trim()) return;
+    setAgentLoading(true);
+    try {
+      await createSuperAgentTicket({
+        title: agentGoalTitle.trim(),
+        objective: agentGoalObjective.trim(),
+        domain: agentGoalDomain,
+        priority: agentPriority,
+        execution_mode: agentExecutionMode,
+        run_immediately: true,
+      });
+      setAgentGoalTitle("");
+      setAgentGoalObjective("");
+      await loadSuperAgentData();
+    } catch (err: unknown) {
+      alert("Lỗi tạo Ticket: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setAgentLoading(false);
+    }
+  };
+
+  const handleResolveEscalation = async (
+    ticketId: string,
+    escalationId: string,
+    option: string
+  ) => {
+    try {
+      await resolveSuperAgentEscalation(ticketId, escalationId, option);
+      await loadSuperAgentData();
+    } catch (err: unknown) {
+      alert("Lỗi phê duyệt: " + (err instanceof Error ? err.message : String(err)));
+    }
+  };
 
   const handleTriggerScan = async () => {
     setScanning(true);
@@ -417,6 +486,12 @@ export default function HomePage() {
             onClick={() => setActiveTab("blog")}
           >
             📰 Bản Tin & Blog Chuyên Sâu
+          </button>
+          <button
+            className={`nav-tab ${activeTab === "superagent" ? "active" : ""}`}
+            onClick={() => setActiveTab("superagent")}
+          >
+            ⚡ Super-Agent (DeepSeek Proactive)
           </button>
           <button
             className={`nav-tab ${activeTab === "llm" ? "active" : ""}`}
@@ -1162,6 +1237,328 @@ POST ${API_BASE_URL}/v1/citations/validate
                 </pre>
               </div>
             </div>
+          </div>
+        </section>
+      )}
+
+      {/* --- TAB 3: SUPER-AGENT (DEEPSEEK PROACTIVE ROUTER & WORKERS) --- */}
+      {activeTab === "superagent" && (
+        <section style={{ display: "grid", gap: "1.2rem" }}>
+          <div className="card">
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "0.5rem",
+              }}
+            >
+              <div>
+                <h2 style={{ margin: "0 0 0.4rem", fontSize: "1.25rem" }}>
+                  ⚡ MetaSearch Autonomous Super-Agent Engine
+                </h2>
+                <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.88rem" }}>
+                  Kiến trúc Router-Worker phân tán, Triết lý <strong>Quiet Autonomy</strong> (im
+                  lặng làm việc, chỉ báo cáo khi có kết quả hoàn chỉnh hoặc cần phê duyệt), Chế
+                  độ <strong>Observe/Shadow Mode</strong> và <strong>Watchdog Circuit Breaker</strong>{" "}
+                  giám sát ổn định.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="chip chip-toggle on"
+                onClick={() => loadSuperAgentData()}
+              >
+                🔄 Làm mới Tickets
+              </button>
+            </div>
+
+            {/* Watchdog Status Summary */}
+            {watchdogStatus && (
+              <div
+                style={{
+                  marginTop: "1rem",
+                  padding: "0.8rem",
+                  background: "var(--bg-subtle, #f8fafc)",
+                  borderRadius: "6px",
+                  display: "flex",
+                  gap: "1.5rem",
+                  fontSize: "0.85rem",
+                  flexWrap: "wrap",
+                }}
+              >
+                <div>
+                  <strong>Workers đang chạy:</strong> {watchdogStatus.monitored_workers_count}
+                </div>
+                <div>
+                  <strong>Max Latency:</strong> {watchdogStatus.max_duration_sec}s
+                </div>
+                <div>
+                  <strong>Max Token Burn:</strong> {watchdogStatus.max_token_budget.toLocaleString()}
+                </div>
+                <div>
+                  <strong>Circuits đã ngắt:</strong>{" "}
+                  <span
+                    style={{
+                      color: watchdogStatus.tripped_circuits.length > 0 ? "red" : "green",
+                    }}
+                  >
+                    {watchdogStatus.tripped_circuits.length}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Create Goal Form */}
+          <div className="card">
+            <h3 style={{ margin: "0 0 0.8rem", fontSize: "1.05rem" }}>
+              🎯 Giao Mục Tiêu Mới (Submit Autonomous Goal)
+            </h3>
+            <form onSubmit={handleCreateAgentTicket} style={{ display: "grid", gap: "0.8rem" }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 200px 160px",
+                  gap: "0.8rem",
+                }}
+              >
+                <input
+                  type="text"
+                  placeholder="Tiêu đề mục tiêu (VD: Phân tích toàn diện BCTC HPG 2024)"
+                  value={agentGoalTitle}
+                  onChange={(e) => setAgentGoalTitle(e.target.value)}
+                  required
+                />
+                <select
+                  value={agentGoalDomain}
+                  onChange={(e) => setAgentGoalDomain(e.target.value)}
+                >
+                  <option value="auto">Auto Domain</option>
+                  <option value="financial">Tài chính & BCTC</option>
+                  <option value="technology_ai">Công nghệ & AI</option>
+                  <option value="biomedical_health">Y sinh & Dược học</option>
+                  <option value="general_discovery">Tổng hợp đa chiều</option>
+                </select>
+                <select
+                  value={agentExecutionMode}
+                  onChange={(e) =>
+                    setAgentExecutionMode(e.target.value as "live" | "observe")
+                  }
+                >
+                  <option value="live">🔴 Live Execution</option>
+                  <option value="observe">🟡 Observe (Shadow)</option>
+                </select>
+              </div>
+              <textarea
+                rows={3}
+                placeholder="Mô tả mục tiêu cụ thể, yêu cầu bóc tách và tiêu chuẩn thẩm định..."
+                value={agentGoalObjective}
+                onChange={(e) => setAgentGoalObjective(e.target.value)}
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.6rem",
+                  borderRadius: "6px",
+                  border: "1px solid var(--border)",
+                }}
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button type="submit" disabled={agentLoading || !agentGoalTitle.trim()}>
+                  {agentLoading ? "Đang điều phối Router..." : "⚡ Submit to SuperAgent Router"}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Tickets List */}
+          <div className="card">
+            <h3 style={{ margin: "0 0 0.8rem", fontSize: "1.05rem" }}>
+              📋 Danh Sách Super-Agent Tickets ({superagentTickets.length})
+            </h3>
+            {superagentTickets.length === 0 ? (
+              <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
+                Chưa có ticket nào. Hãy tạo mục tiêu mới ở trên hoặc kích hoạt từ webhook sự kiện.
+              </p>
+            ) : (
+              <div style={{ display: "grid", gap: "0.8rem" }}>
+                {superagentTickets.map((t) => (
+                  <div
+                    key={t.ticket_id}
+                    style={{
+                      padding: "0.8rem",
+                      border: "1px solid var(--border)",
+                      borderRadius: "6px",
+                      background:
+                        selectedTicket?.ticket_id === t.ticket_id
+                          ? "var(--bg-subtle, #f8fafc)"
+                          : "transparent",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                        flexWrap: "wrap",
+                        gap: "0.5rem",
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <span
+                            className="chip"
+                            style={{
+                              fontSize: "0.75rem",
+                              fontWeight: 600,
+                              background:
+                                t.status === "completed"
+                                  ? "#dcfce7"
+                                  : t.status === "observed"
+                                  ? "#fef9c3"
+                                  : t.status === "waiting_human"
+                                  ? "#fed7aa"
+                                  : "#e2e8f0",
+                              color:
+                                t.status === "completed"
+                                  ? "#166534"
+                                  : t.status === "observed"
+                                  ? "#854d0e"
+                                  : t.status === "waiting_human"
+                                  ? "#9a3412"
+                                  : "#334155",
+                            }}
+                          >
+                            {t.status.toUpperCase()}
+                          </span>
+                          <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
+                            {t.execution_mode === "observe" ? "🟡 Shadow" : "🔴 Live"} |{" "}
+                            {t.domain} | Prio {t.priority_name}
+                          </span>
+                        </div>
+                        <h4 style={{ margin: "0.4rem 0 0.2rem", fontSize: "1rem" }}>{t.title}</h4>
+                        <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--muted)" }}>
+                          {t.objective}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="chip chip-toggle"
+                        onClick={() =>
+                          setSelectedTicket(
+                            selectedTicket?.ticket_id === t.ticket_id ? null : t
+                          )
+                        }
+                      >
+                        {selectedTicket?.ticket_id === t.ticket_id
+                          ? "Đóng chi tiết"
+                          : "Xem kết quả & vết"}
+                      </button>
+                    </div>
+
+                    {/* Quiet Autonomy Human Escalation if waiting */}
+                    {t.status === "waiting_human" && t.escalations.length > 0 && (
+                      <div
+                        style={{
+                          marginTop: "0.8rem",
+                          padding: "0.8rem",
+                          background: "#fff7ed",
+                          border: "1px solid #fdba74",
+                          borderRadius: "6px",
+                        }}
+                      >
+                        <strong style={{ color: "#c2410c", fontSize: "0.88rem" }}>
+                          ⚠️ Yêu cầu phê duyệt từ con người (Quiet Autonomy Escalation):
+                        </strong>
+                        <p style={{ margin: "0.3rem 0 0.6rem", fontSize: "0.85rem" }}>
+                          {t.escalations[0].reason}
+                        </p>
+                        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                          {t.escalations[0].proposed_options.map((opt, oIdx) => (
+                            <button
+                              key={oIdx}
+                              type="button"
+                              onClick={() =>
+                                handleResolveEscalation(
+                                  t.ticket_id,
+                                  t.escalations[0].escalation_id,
+                                  opt
+                                )
+                              }
+                              style={{
+                                padding: "0.3rem 0.7rem",
+                                fontSize: "0.8rem",
+                                borderRadius: "4px",
+                                background: oIdx === 0 ? "#ea580c" : "#e2e8f0",
+                                color: oIdx === 0 ? "white" : "black",
+                                border: "none",
+                                cursor: "pointer",
+                              }}
+                            >
+                              {opt}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Ticket Details & Deliverables */}
+                    {selectedTicket?.ticket_id === t.ticket_id && (
+                      <div
+                        style={{
+                          marginTop: "1rem",
+                          borderTop: "1px dashed var(--border)",
+                          paddingTop: "0.8rem",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: "0.82rem",
+                            color: "var(--muted)",
+                            marginBottom: "0.8rem",
+                          }}
+                        >
+                          Worker: <code>{t.assigned_worker_id || "Chưa gán"}</code> | Steps:{" "}
+                          {t.current_step}/{t.max_steps} | Tokens:{" "}
+                          {t.consumed_tokens.toLocaleString()}
+                        </div>
+
+                        {t.artifacts.length > 0 ? (
+                          <div>
+                            <h5 style={{ margin: "0 0 0.4rem", fontSize: "0.95rem" }}>
+                              📦 Thành Phẩm Đầu Ra ({t.artifacts[0].artifact_type}):
+                            </h5>
+                            <div
+                              style={{
+                                background: "var(--bg)",
+                                padding: "0.8rem",
+                                borderRadius: "6px",
+                                border: "1px solid var(--border)",
+                              }}
+                            >
+                              <AnswerMarkdown
+                                text={t.artifacts[0].content_md}
+                                citationByUrl={
+                                  new Map(
+                                    (t.artifacts[0].citations || []).map((c) => [c.n, c])
+                                  )
+                                }
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <p style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
+                            Đang xử lý hoặc chưa phát sinh thành phẩm.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
       )}

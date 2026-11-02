@@ -13,8 +13,15 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-02 — v1.2.1 Multi-Platform Matrix CI, Multi-Free-Endpoint Council, Dream-RSI & Universal Intelligence)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-02 — v1.3.0 DeepSeek Super-Agent Architecture, Multi-Platform Matrix CI & Universal Intelligence)
 
+- ✅ **DeepSeek Super-Agent Architecture (Router-Worker, Observe Mode, Quiet Autonomy & Watchdog Supervisor) (v1.3.0)**:
+  - Tích hợp nguyên mẫu tự trị từ **`deepseek-ai/dsh-superagent-prototype`** giải quyết nút thắt chú ý của con người.
+  - Phân tách **Router - Worker Decoupling**: Router trung tâm (`SuperAgentRouter`) tiếp nhận và phân rã mục tiêu thành tickets độc lập giao cho các workers cách ly (`IsolatedSuperAgentWorker`).
+  - Triết lý **"Quiet Autonomy" & Escalation Queue**: Agent im lặng thực thi ReAct, chỉ thông báo khi có thành phẩm (`SuperAgentArtifact`) hoặc đưa vào `EscalationRequest` khi cần con người phê duyệt.
+  - **Observe Mode (Shadow Evaluation)**: Chế độ shadow plan thẩm định không tiêu tốn quota live.
+  - **Proactive Event Ingestion**: Tự động kích hoạt tickets từ luồng sự kiện (BCTC mới, CVE, market feed).
+  - **Watchdog Supervisor & Circuit Breaker**: Giám sát heartbeat, tự ngắt mạch khi phát hiện worker bị treo hoặc token burst (`383+ unit & E2E tests pass`).
 - ✅ **Multi-Platform Matrix CI (Windows, macOS, Linux) & Pre-Commit Hardening (v1.2.1)**:
   - Cấu hình GitHub Actions CI Matrix đa nền tảng (`ubuntu-latest`, `windows-latest`, `macos-latest`) thực thi song song trên **mọi commit** và PR (4 jobs: backend matrix, frontend matrix, release pipeline gate, docker smoke).
   - Tự động hóa hook `.githooks/pre-commit` nhận diện runtime Python đa nền tảng (`.venv/Scripts/python.exe`, `.venv/bin/python3`, PATH `python3`), tự động cấp quyền `chmod +x` trên Unix, cưỡng chế 7 Quality Gates.

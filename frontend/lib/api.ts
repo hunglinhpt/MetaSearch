@@ -528,3 +528,161 @@ export async function triggerScan(
   if (!resp.ok) throw await parseError(resp);
   return (await resp.json()) as BlogPostSummary[];
 }
+
+export type SuperAgentArtifact = {
+  artifact_id: string;
+  artifact_type: string;
+  title: string;
+  content_md: string;
+  citations: Citation[];
+  metadata?: Record<string, unknown>;
+  created_at: number;
+};
+
+export type SuperAgentEscalation = {
+  escalation_id: string;
+  ticket_id: string;
+  reason: string;
+  proposed_options: string[];
+  context_summary: string;
+  created_at: number;
+  resolved: boolean;
+  chosen_option?: string | null;
+  resolved_by?: string | null;
+  resolved_at?: number | null;
+};
+
+export type SuperAgentTicket = {
+  ticket_id: string;
+  title: string;
+  objective: string;
+  domain: string;
+  priority: number;
+  priority_name: string;
+  status:
+    | "pending"
+    | "observed"
+    | "running"
+    | "waiting_human"
+    | "completed"
+    | "failed"
+    | "cancelled";
+  execution_mode: "live" | "observe";
+  originating_event_id?: string | null;
+  created_at: number;
+  started_at?: number | null;
+  finished_at?: number | null;
+  assigned_worker_id?: string | null;
+  step_history: Array<{ step: number; action: string; timestamp: number; [key: string]: unknown }>;
+  current_step: number;
+  max_steps: number;
+  consumed_tokens: number;
+  error_message?: string | null;
+  artifacts: SuperAgentArtifact[];
+  escalations: SuperAgentEscalation[];
+};
+
+export type SuperAgentWatchdogStatus = {
+  monitored_workers_count: number;
+  max_duration_sec: number;
+  max_token_budget: number;
+  active_metrics: Array<{
+    worker_id: string;
+    ticket_id: string;
+    elapsed_ms: number;
+    step_count: number;
+    token_burn: number;
+    is_healthy: boolean;
+    anomalies: string[];
+  }>;
+  tripped_circuits: Array<{
+    worker_id: string;
+    ticket_id: string;
+    timestamp: number;
+    anomalies: string[];
+  }>;
+};
+
+export async function createSuperAgentTicket(
+  req: {
+    title: string;
+    objective: string;
+    domain?: string;
+    priority?: number;
+    execution_mode?: "live" | "observe";
+    run_immediately?: boolean;
+  },
+  signal?: AbortSignal
+): Promise<SuperAgentTicket> {
+  const resp = await fetch(`${API_BASE_URL}/v1/superagent/tickets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  const data = await resp.json();
+  return data.ticket as SuperAgentTicket;
+}
+
+export async function listSuperAgentTickets(
+  filters?: { status?: string; domain?: string },
+  signal?: AbortSignal
+): Promise<SuperAgentTicket[]> {
+  const params = new URLSearchParams();
+  if (filters?.status) params.set("status", filters.status);
+  if (filters?.domain) params.set("domain", filters.domain);
+
+  const resp = await fetch(`${API_BASE_URL}/v1/superagent/tickets?${params.toString()}`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  const data = await resp.json();
+  return (data.tickets || []) as SuperAgentTicket[];
+}
+
+export async function getSuperAgentTicket(
+  ticketId: string,
+  signal?: AbortSignal
+): Promise<SuperAgentTicket> {
+  const resp = await fetch(`${API_BASE_URL}/v1/superagent/tickets/${encodeURIComponent(ticketId)}`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  const data = await resp.json();
+  return data.ticket as SuperAgentTicket;
+}
+
+export async function resolveSuperAgentEscalation(
+  ticketId: string,
+  escalationId: string,
+  chosenOption: string,
+  resolvedBy: string = "human_operator",
+  signal?: AbortSignal
+): Promise<SuperAgentTicket> {
+  const resp = await fetch(
+    `${API_BASE_URL}/v1/superagent/tickets/${encodeURIComponent(ticketId)}/escalate/${encodeURIComponent(escalationId)}/resolve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ chosen_option: chosenOption, resolved_by: resolvedBy }),
+      signal,
+    }
+  );
+  if (!resp.ok) throw await parseError(resp);
+  const data = await resp.json();
+  return data.ticket as SuperAgentTicket;
+}
+
+export async function getSuperAgentWatchdogStatus(
+  signal?: AbortSignal
+): Promise<SuperAgentWatchdogStatus> {
+  const resp = await fetch(`${API_BASE_URL}/v1/superagent/watchdog/status`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return (await resp.json()) as SuperAgentWatchdogStatus;
+}
