@@ -91,7 +91,13 @@ async def _event_stream(job) -> AsyncIterator[dict]:
             yield {"event": name, "data": json.dumps(data, ensure_ascii=False)}
             if name in ("done", "error"):
                 return
-        # periodic keepalive handled by sse-starlette pings on idle loops
+        else:
+            if job.finished:
+                if job.terminal is not None and index < job.terminal[0]:
+                    _t_seq, t_event = job.terminal
+                    yield {"event": t_event[0], "data": json.dumps(t_event[1], ensure_ascii=False)}
+                return
+        await asyncio.sleep(0)
 
 
 def _log_task(task: asyncio.Task) -> None:

@@ -35,45 +35,119 @@ class ResearchJob:
     status: str = "queued"  # queued | running | done | failed
     created_at: float = field(default_factory=time.monotonic)
     progress: dict[str, int] = field(default_factory=lambda: {"iteration": 0, "max_iterations": 0})
-    events: deque = field(default_factory=lambda: deque(maxlen=2000))
+    events: deque[tuple[int, tuple[str, dict]]] = field(default_factory=lambda: deque(maxlen=2000))
+    next_seq: int = 1
+    terminal: tuple[int, tuple[str, dict]] | None = None  # retained forever, never evicted
+    _event_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    _token_batch: list[str] = field(default_factory=list)
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
     result: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     finished: bool = False
 
+    def _flush_token_batch(self) -> None:
+        if self._token_batch:
+            batched_t = "".join(self._token_batch)
+            self._token_batch.clear()
+            seq = self.next_seq
+            self.next_seq += 1
+            self.events.append((seq, ("report_token", {"t": batched_t})))
+
     def push(self, event: tuple[str, dict]) -> None:
-        """Buffer an event; terminal events finalize the job."""
-        self.events.append(event)
-        if event[0] == "iteration_start":
-            self.progress["iteration"] = int(event[1].get("iteration", 0))
-            self.progress["max_iterations"] = int(event[1].get("max_iterations", 0))
-        if event[0] in _TERMINAL_EVENTS:
+        """Buffer an event with a monotonically increasing sequence.
+
+        Terminal events finalize the job.
+        """
+        name, data = event
+        if name == "iteration_start":
+            self.progress["iteration"] = int(data.get("iteration", 0))
+            self.progress["max_iterations"] = int(data.get("max_iterations", 0))
+
+        if name == "report_token":
+            # When deque is near capacity (>= 1600 events), batch tokens in groups of 16
+            if len(self.events) >= 1600:
+                self._token_batch.append(data.get("t", ""))
+                if len(self._token_batch) >= 16:
+                    self._flush_token_batch()
+                return
+        else:
+            # Flush any pending batched tokens before pushing non-token events
+            self._flush_token_batch()
+
+        seq = self.next_seq
+        self.next_seq += 1
+        item = (seq, event)
+        self.events.append(item)
+
+        if name in _TERMINAL_EVENTS:
             self.finished = True
-            self.status = "done" if event[0] == "done" else "failed"
-            if event[0] == "error":
-                self.error = str(event[1].get("message", "unknown"))
+            self.terminal = item
+            self.status = "done" if name == "done" else "failed"
+            if name == "error":
+                self.error = str(data.get("message", "unknown"))
+
+    def notify_sync(self) -> None:
+        """Synchronously signal all event listeners without spawning unbounded tasks."""
+        self._event_ready.set()
 
     async def notify(self) -> None:
+        """Async compatibility wrapper."""
+        self.notify_sync()
         async with self.condition:
             self.condition.notify_all()
 
     async def wait_event(
-        self, after_index: int, poll_after_s: float
+        self, after_seq: int, poll_after_s: float
     ) -> tuple[int, tuple[str, dict] | None]:
-        """Wait for the next event past ``after_index`` (or job end).
+        """Wait for the next event past ``after_seq`` (or job end).
 
-        Callers must hold no locks; ``condition.wait`` releases the condition
-        while parked and reacquires before returning.
+        If ``after_seq`` was evicted from the deque, returns ("gap", {"dropped": n}).
+        If all events up to terminal were seen and job is finished, returns (after_seq, None).
         """
-        async with self.condition:
+        deadline = time.monotonic() + poll_after_s
+
+        while True:
+            # 1. If deque has items, check if after_seq was evicted from history
+            if self.events:
+                oldest_seq = self.events[0][0]
+                newest_seq = self.events[-1][0]
+
+                if after_seq < oldest_seq - 1:
+                    # Subscriber fell behind and missed events due to deque cap
+                    dropped = (oldest_seq - 1) - max(0, after_seq)
+                    gap_seq = oldest_seq - 1
+                    return gap_seq, ("gap", {"dropped": dropped})
+
+                # Check if there is an event with seq > after_seq in deque
+                if after_seq < newest_seq:
+                    for s, ev in self.events:
+                        if s > after_seq:
+                            return s, ev
+
+            # 2. Check terminal event if no more events in deque
+            if self.terminal is not None and after_seq < self.terminal[0]:
+                return self.terminal[0], self.terminal[1]
+
+            # 3. If job is finished and no more events exist past after_seq
+            if self.finished:
+                return after_seq, None
+
+            # 4. Wait for new events
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return after_seq, None
+
+            self._event_ready.clear()
+            # Double check in case an event arrived just before clearing
+            if self.finished or (self.events and self.events[-1][0] > after_seq) or self.terminal:
+                continue
+
             try:
-                while len(self.events) <= after_index and not self.finished:
-                    await asyncio.wait_for(self.condition.wait(), timeout=poll_after_s)
+                await asyncio.wait_for(
+                    self._event_ready.wait(), timeout=min(remaining, poll_after_s)
+                )
             except TimeoutError:
-                return after_index, None
-            if after_index < len(self.events):
-                return after_index + 1, self.events[after_index]
-            return after_index, None
+                return after_seq, None
 
 
 class ResearchJobStore:
@@ -189,7 +263,7 @@ class ResearchJobStore:
                         "cost_usd": float(answer_row.cost_usd or 0.0),
                     },
                 )
-                job.events.append(
+                job.push(
                     (
                         "done",
                         {
@@ -221,9 +295,9 @@ def reset_job_store() -> None:
 
 
 def push_event(job: ResearchJob, event: tuple[str, dict]) -> None:
-    """Pipeline on_event callback: buffer + wake SSE subscribers."""
+    """Pipeline on_event callback: buffer + wake SSE subscribers synchronously."""
     job.push(event)
-    asyncio.get_running_loop().create_task(job.notify())
+    job.notify_sync()
 
 
 async def run_job(job: ResearchJob, params) -> None:
@@ -276,9 +350,9 @@ async def run_job(job: ResearchJob, params) -> None:
         logger.info("research_job_done", research_id=str(job.id), status=job.status)
     except asyncio.CancelledError:
         job.push(("error", {"code": "internal", "message": "research cancelled"}))
-        await job.notify()
+        job.notify_sync()
         raise
     except Exception as exc:
         logger.warning("research_job_failed", error=type(exc).__name__)
         job.push(("error", {"code": "internal", "message": f"{type(exc).__name__}: {exc}"[:200]}))
-        await job.notify()
+        job.notify_sync()
