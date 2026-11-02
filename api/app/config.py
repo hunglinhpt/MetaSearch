@@ -172,6 +172,8 @@ class Settings(BaseSettings):
     cache_news_ttl_s: int = 900
     cache_answer_ttl_s: int = 7200  # docs/03 §7: 1-6h
     cache_page_ttl_s: int = 43200  # docs/03 §7: 6-24h
+    cache_local_max_bytes: int = 64 * 1024 * 1024
+    cache_partial_ttl_s: int = 120
     # pgvector semantic cache similarity threshold (answer only).
     semantic_cache_threshold: float = 0.92
     # Engines table is polled this often so PATCH lands without restart.

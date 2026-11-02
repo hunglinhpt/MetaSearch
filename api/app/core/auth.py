@@ -27,7 +27,7 @@ from typing import Any
 from fastapi import Request
 from sqlalchemy import select
 
-from app.cache import get_redis
+from app.cache import get_redis, mark_redis_down
 from app.config import get_settings
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
@@ -213,6 +213,7 @@ async def check_rate_limit(ctx: AuthContext, *, window_s: int = 60) -> dict[str,
     except MetaSearchError:
         raise
     except Exception as exc:
+        mark_redis_down()
         if not _window_warned:
             logger.warning("rate_limit_redis_unavailable", error=type(exc).__name__)
             _window_warned = True

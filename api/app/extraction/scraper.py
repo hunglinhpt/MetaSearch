@@ -25,6 +25,7 @@ import httpx
 from app.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.offload import run_cpu
+from app.core.singleflight import SingleFlight
 from app.extraction import ssrf
 from app.extraction.pinning import build_pinned_request
 from app.extraction.robots import RobotsCache
@@ -120,6 +121,7 @@ class Scraper:
         # Process-local negative cache: fallback when Redis is unavailable and
         # a fast path when it is up (multi-worker installs share via Redis).
         self._negative: dict[str, float] = {}
+        self._single_flight = SingleFlight()
         self._lock = asyncio.Lock()
         self._global_sem = asyncio.Semaphore(self._settings.scrape_global_concurrency)
         self._domain_sems: dict[str, asyncio.Semaphore] = {}
@@ -158,6 +160,13 @@ class Scraper:
     async def scrape(
         self, url: str, *, timeout_s: float | None = None
     ) -> PageContent | PageFailure:
+        return await self._single_flight.run(
+            url, lambda: self._scrape_guarded(url, timeout_s=timeout_s)
+        )
+
+    async def _scrape_guarded(
+        self, url: str, *, timeout_s: float | None = None
+    ) -> PageContent | PageFailure:
         timeout = self._settings.scrape_timeout_s if timeout_s is None else timeout_s
         domain = (urlsplit(url).hostname or "").lower()
         domain_sem = await self._get_domain_sem(domain)
@@ -170,11 +179,28 @@ class Scraper:
                 page = await self._scrape_uncached(url, timeout)
             except ssrf.SSRFViolation as exc:
                 logger.info("scrape_blocked_ssrf", url=url, reason=str(exc))
+                await self._mark_failed(url, ttl_s=3600.0)
                 return PageFailure(url=url, status="blocked", error=str(exc))
+            except (httpx.PoolTimeout, asyncio.CancelledError) as exc:
+                # P17: Local overload, pool exhaustion or cancellation MUST NOT be negative cached!
+                logger.info(
+                    "scrape_local_overload_not_negative_cached", url=url, error=type(exc).__name__
+                )
+                return PageFailure(url=url, status="failed", error=type(exc).__name__)
             except Exception as exc:
                 logger.info("scrape_failed", url=url, error=type(exc).__name__)
-                await self._mark_failed(url)
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if (
+                    status_code in (404, 410)
+                    or "robots" in str(exc).lower()
+                    or "too large" in str(exc).lower()
+                ):
+                    ttl_s = 3600.0
+                else:
+                    ttl_s = 300.0
+                await self._mark_failed(url, ttl_s=ttl_s)
                 return PageFailure(url=url, status="failed", error=type(exc).__name__)
+
             if (
                 isinstance(page, PageContent)
                 and len(page.markdown) > self._settings.max_page_markdown_chars
@@ -456,9 +482,10 @@ class Scraper:
             return False
         return True
 
-    async def _mark_failed(self, url: str) -> None:
+    async def _mark_failed(self, url: str, *, ttl_s: float | None = None) -> None:
         from app.cache import negative_cache_key
 
+        effective_ttl = ttl_s if ttl_s is not None else self._settings.negative_cache_ttl_s
         now = time.monotonic()
         async with self._lock:
             if len(self._negative) >= _NEGATIVE_CACHE_MAX:
@@ -473,9 +500,7 @@ class Scraper:
                     self._negative.pop(next(iter(self._negative)), None)
             self._negative[url] = now
         if self._cache is not None:
-            await self._cache.set_flag(
-                negative_cache_key(url), ttl_s=int(self._settings.negative_cache_ttl_s)
-            )
+            await self._cache.set_flag(negative_cache_key(url), ttl_s=int(effective_ttl))
 
     async def _load_page_cache(self, url: str) -> PageContent | None:
         from app.cache import page_cache_key

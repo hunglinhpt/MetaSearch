@@ -27,19 +27,22 @@ FAKE_SEARXNG_PORT = 18766
 DEFAULT_HOST = "127.0.0.1"
 API = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
 
-os.environ["ENVIRONMENT"] = "dev"
-os.environ["LOG_LEVEL"] = "WARNING"
-os.environ["SEARXNG_URL"] = f"http://127.0.0.1:{FAKE_SEARXNG_PORT}"
-os.environ["CACHE_ENABLED"] = "false"
-# Nothing listens here: connect is refused in milliseconds, exercising the
-# same fallback paths a dead-DB production box would take.
-os.environ["DATABASE_URL"] = "postgresql+asyncpg://x:x@127.0.0.1:5432/x"
-os.environ["REDIS_URL"] = "redis://127.0.0.1:6399/0"
-# Perf run measures the pipeline, not the resilience policy: bursts against
-# the overloaded fake engine must not trip auto-disable mid-test.
-os.environ["ENGINE_AUTO_DISABLE_THRESHOLD"] = "999"
-# Pure pipeline numbers: skip the Postgres-backed engine store entirely.
-os.environ["ENGINE_STORE_BACKEND"] = "memory"
+
+def configure_perf_environment(searxng_port: int = FAKE_SEARXNG_PORT) -> None:
+    os.environ["ENVIRONMENT"] = "dev"
+    os.environ["LOG_LEVEL"] = "WARNING"
+    os.environ["SEARXNG_URL"] = f"http://127.0.0.1:{searxng_port}"
+    os.environ["CACHE_ENABLED"] = "false"
+    # Nothing listens here: connect is refused in milliseconds, exercising the
+    # same fallback paths a dead-DB production box would take.
+    os.environ["DATABASE_URL"] = "postgresql+asyncpg://x:x@127.0.0.1:5432/x"
+    os.environ["REDIS_URL"] = "redis://127.0.0.1:6399/0"
+    # Perf run measures the pipeline, not the resilience policy: bursts against
+    # the overloaded fake engine must not trip auto-disable mid-test.
+    os.environ["ENGINE_AUTO_DISABLE_THRESHOLD"] = "999"
+    # Pure pipeline numbers: skip the Postgres-backed engine store entirely.
+    os.environ["ENGINE_STORE_BACKEND"] = "memory"
+
 
 FAKE_RESULTS = [
     {
@@ -279,6 +282,7 @@ async def main() -> int:
     print("MetaSearch performance check (no Docker needed)")
     print("=" * 72)
 
+    configure_perf_environment(args.searxng_port)
     # 1. Assert ports are free BEFORE touching network
     assert_port_available(args.host, args.port)
     assert_port_available(args.host, args.searxng_port)

@@ -1,18 +1,20 @@
 """Two-tier cache (docs/03-search-pipeline.md §7) + negative cache.
 
-    L1 Redis exact:  sr: search results · an: answers · pg: scraped pages
+    L1 Redis exact:  v2:sr: search results · v2:an: answers · v2:pg: scraped pages
     L2 pgvector:     semantic answer cache, cosine > 0.92 (answer only)
-    negative cache:  nc: recently-failed URLs (Redis, local dict as fallback)
+    negative cache:  v2:nc: recently-failed URLs (Redis, local LRU as fallback)
 
-Every cache operation degrades gracefully: Redis down -> miss, no crash.
-Writes happen fire-and-forget from the pipelines.
+Every cache operation degrades gracefully: Redis down -> circuit breaker trips 30s,
+immediate in-process fallback with zero stall. Writes happen safely from the pipelines.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import time
+from collections import OrderedDict
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -31,22 +33,47 @@ def sha1_key(*parts: Any) -> str:
 
 
 _redis_client: aioredis.Redis | None = None
+_redis_down_until: float = 0.0
+
+
+def is_redis_available() -> bool:
+    """Return True if Redis is not in circuit-breaker open state."""
+    global _redis_down_until
+    return time.monotonic() >= _redis_down_until
+
+
+def mark_redis_down(duration_s: float = 30.0) -> None:
+    """Trip the Redis circuit breaker for duration_s seconds."""
+    global _redis_down_until
+    _redis_down_until = time.monotonic() + duration_s
+    logger.warning("redis_circuit_breaker_tripped", duration_s=duration_s)
+
+
+def reset_redis_breaker() -> None:
+    """Reset the Redis circuit breaker (for tests)."""
+    global _redis_down_until
+    _redis_down_until = 0.0
 
 
 def get_redis() -> aioredis.Redis | None:
-    """Shared Redis client, or None when unavailable (never raises)."""
+    """Shared Redis client, or None when unavailable or down (never raises)."""
     global _redis_client
+    if not is_redis_available():
+        return None
+    url = (get_settings().redis_url or "").strip()
+    if not url:
+        return None
     if _redis_client is None:
-        settings = get_settings()
         try:
             _redis_client = aioredis.from_url(
-                settings.redis_url,
+                url,
                 decode_responses=True,
-                socket_connect_timeout=1.0,
-                socket_timeout=1.0,
+                socket_connect_timeout=0.25,
+                socket_timeout=0.5,
             )
-        except Exception as exc:  # pragma: no cover - bad URL shape only
+        except Exception as exc:  # pragma: no cover
             logger.warning("redis_init_failed", error=type(exc).__name__)
+            mark_redis_down()
             return None
     return _redis_client
 
@@ -54,52 +81,80 @@ def get_redis() -> aioredis.Redis | None:
 async def dispose_redis() -> None:
     global _redis_client
     if _redis_client is not None:
-        await _redis_client.aclose()
+        with contextlib.suppress(Exception):
+            await _redis_client.aclose()
     _redis_client = None
+    reset_redis_breaker()
 
 
 class _LocalTTLCache:
-    """Bounded in-process TTL cache — the Lite-profile L1 when Redis is down."""
+    """Bounded in-process TTL + LRU cache with byte-level eviction."""
 
-    def __init__(self, max_entries: int = 512) -> None:
-        self._data: dict[str, tuple[float, Any]] = {}
-        self._max = max_entries
+    def __init__(self, max_bytes: int = 64 * 1024 * 1024) -> None:
+        self._data: OrderedDict[str, tuple[float, int, Any]] = OrderedDict()
+        self._max_bytes = max_bytes
+        self._curr_bytes = 0
+
+    def _estimate_size(self, key: str, value: Any) -> int:
+        size = len(key.encode("utf-8")) + 64
+        if isinstance(value, (str, bytes)):
+            size += len(value)
+        elif isinstance(value, (int, float, bool)):
+            size += 16
+        else:
+            try:
+                size += len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+            except Exception:
+                size += 512
+        return size
 
     def get(self, key: str) -> Any | None:
         entry = self._data.get(key)
         if entry is None:
             return None
-        expires, value = entry
-        if time.monotonic() > expires:
+        expires_at, size_bytes, value = entry
+        if time.monotonic() > expires_at:
+            self._curr_bytes -= size_bytes
             self._data.pop(key, None)
             return None
+        self._data.move_to_end(key)
         return value
 
-    def set(self, key: str, value: Any, ttl_s: int) -> None:
-        if len(self._data) >= self._max:
-            # Drop expired first, then oldest — good enough for a fallback.
-            now = time.monotonic()
-            expired = [k for k, (exp, _) in self._data.items() if now > exp]
-            for k in expired:
-                self._data.pop(k, None)
-            while len(self._data) >= self._max:
-                self._data.pop(next(iter(self._data)))
-        self._data[key] = (time.monotonic() + ttl_s, value)
+    def set(self, key: str, value: Any, ttl_s: int | float) -> None:
+        if key in self._data:
+            _, old_size, _ = self._data.pop(key)
+            self._curr_bytes -= old_size
+
+        entry_size = self._estimate_size(key, value)
+        if entry_size > self._max_bytes:
+            return
+
+        now = time.monotonic()
+        expired_keys = [k for k, (exp, size, _) in self._data.items() if now > exp]
+        for k in expired_keys:
+            _, sz, _ = self._data.pop(k)
+            self._curr_bytes -= sz
+
+        while self._data and (self._curr_bytes + entry_size > self._max_bytes):
+            _, (_, sz, _) = self._data.popitem(last=False)
+            self._curr_bytes -= sz
+
+        self._data[key] = (now + ttl_s, entry_size, value)
+        self._curr_bytes += entry_size
 
     def exists(self, key: str) -> bool:
         return self.get(key) is not None
+
+    def clear(self) -> None:
+        self._data.clear()
+        self._curr_bytes = 0
 
 
 _local_cache = _LocalTTLCache()
 
 
 class CacheClient:
-    """Thin JSON/flag wrapper: Redis first, in-process TTL cache fallback.
-
-    A dead Redis on the Lite profile no longer means "no caching" — values
-    live in-process (per worker) with the same TTLs. Multi-worker deployments
-    should still run Redis for shared hits.
-    """
+    """Thin JSON/flag wrapper: Redis first, in-process TTL cache fallback."""
 
     def __init__(self, client: Any = None, *, enabled: bool = True) -> None:
         self._client = client
@@ -107,28 +162,46 @@ class CacheClient:
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> CacheClient:
-        settings = settings or get_settings()
-        if not settings.cache_enabled:
+        s = settings or get_settings()
+        if not s.cache_enabled:
             return cls(None, enabled=False)
+        url = (s.redis_url or "").strip()
+        if not url:
+            return cls(None)
+        if settings is not None:
+            try:
+                c = aioredis.from_url(
+                    url,
+                    decode_responses=True,
+                    socket_connect_timeout=0.25,
+                    socket_timeout=0.5,
+                )
+                return cls(c)
+            except Exception:
+                mark_redis_down()
+                return cls(None)
         return cls(get_redis())
+
+    async def aclose(self) -> None:
+        if self._client is not None and hasattr(self._client, "aclose"):
+            with contextlib.suppress(Exception):
+                await self._client.aclose()
 
     async def get_json(self, key: str) -> Any | None:
         if not self.enabled:
             return None
-        if self._client is not None:
+        if self._client is not None and is_redis_available():
             try:
                 raw = await self._client.get(key)
-            except Exception:
-                raw = None
-            if raw is None:
-                CACHE_EVENTS.labels(layer="L1", outcome="miss").inc()
-                return None
-            CACHE_EVENTS.labels(layer="L1", outcome="hit").inc()
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                return None
-        # in-process fallback
+                if raw is not None:
+                    CACHE_EVENTS.labels(layer="L1", outcome="hit").inc()
+                    return json.loads(raw)
+            except Exception as exc:
+                logger.warning(
+                    "redis_get_failed_fallback_local", key=key[:24], error=type(exc).__name__
+                )
+                mark_redis_down()
+        # In-process fallback
         value = _local_cache.get(key)
         CACHE_EVENTS.labels(layer="L1", outcome="hit" if value is not None else "miss").inc()
         return value
@@ -136,41 +209,58 @@ class CacheClient:
     async def set_json(self, key: str, value: Any, *, ttl_s: int) -> None:
         if not self.enabled:
             return
-        if self._client is not None:
+        written_to_redis = False
+        if self._client is not None and is_redis_available():
             try:
                 await self._client.set(key, json.dumps(value, ensure_ascii=False), ex=ttl_s)
+                written_to_redis = True
             except Exception as exc:
-                logger.warning("cache_set_failed", key=key[:24], error=type(exc).__name__)
-        else:
+                logger.warning(
+                    "redis_set_failed_fallback_local", key=key[:24], error=type(exc).__name__
+                )
+                mark_redis_down()
+        if not written_to_redis:
             _local_cache.set(key, value, ttl_s)
 
     async def has_flag(self, key: str) -> bool:
         if not self.enabled:
             return False
-        if self._client is not None:
+        if self._client is not None and is_redis_available():
             try:
                 return bool(await self._client.exists(key))
             except Exception:
-                return False
+                mark_redis_down()
         return _local_cache.exists(key)
 
     async def set_flag(self, key: str, *, ttl_s: int) -> None:
         if not self.enabled:
             return
-        if self._client is not None:
+        written = False
+        if self._client is not None and is_redis_available():
             try:
                 await self._client.set(key, "1", ex=ttl_s)
-            except Exception as exc:
-                logger.warning("cache_flag_failed", key=key[:24], error=type(exc).__name__)
-        else:
+                written = True
+            except Exception:
+                mark_redis_down()
+        if not written:
             _local_cache.set(key, 1, ttl_s)
 
 
-# --- key builders -----------------------------------------------------------
+# --- key builders (v2 with complete feature coverage) -----------------------
 
 
-def search_cache_key(query: str, params: Any) -> str:
-    return f"sr:{sha1_key(query, params.lang, params.k, sorted(params.categories), params.freshness_days, params.engines)}"  # noqa: E501
+def search_cache_key(query: str, params: Any, *, news: bool = False) -> str:
+    engines_part = sorted(params.engines) if getattr(params, "engines", None) else []
+    h = sha1_key(
+        query,
+        params.lang,
+        params.k,
+        sorted(params.categories),
+        params.freshness_days,
+        engines_part,
+        news,
+    )
+    return f"sr:v2:{h}"
 
 
 def answer_cache_key(
@@ -181,17 +271,32 @@ def answer_cache_key(
     k: int = 10,
     categories: list[str] | None = None,
     freshness_days: int | None = None,
+    engines: list[str] | None = None,
+    news: bool = False,
+    domain: str | None = None,
 ) -> str:
     """Answer key covers the search params that shape the context (docs/03 §7)."""
-    return f"an:{sha1_key(query, model, lang, k, sorted(categories or []), freshness_days)}"
+    engines_part = sorted(engines) if engines else []
+    h = sha1_key(
+        query,
+        model,
+        lang,
+        k,
+        sorted(categories or []),
+        freshness_days,
+        engines_part,
+        news,
+        domain,
+    )
+    return f"an:v2:{h}"
 
 
 def page_cache_key(url: str) -> str:
-    return f"pg:{sha1_key(url)}"
+    return f"pg:v2:{sha1_key(url)}"
 
 
 def negative_cache_key(url: str) -> str:
-    return f"nc:{sha1_key(url)}"
+    return f"nc:v2:{sha1_key(url)}"
 
 
 def search_ttl_s(settings: Settings, *, news: bool) -> int:

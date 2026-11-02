@@ -35,6 +35,7 @@ from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
 from app.core.metrics import CACHE_EVENTS, ENGINE_CALLS, ENGINE_LATENCY
 from app.core.offload import run_cpu
+from app.core.singleflight import SingleFlight
 from app.db.base import EMBEDDING_DIM
 from app.db.models import Answer, SemanticCache
 from app.db.session import get_sessionmaker
@@ -223,8 +224,18 @@ class SearchPipeline:
             threshold=settings.engine_auto_disable_threshold
         )
         self.health_writer = health_writer
+        self._single_flight = SingleFlight()
 
     async def run(self, params: SearchParams, on_event: OnEvent = None) -> SearchOutcome:
+        if on_event is None:
+            normalized = normalize_query(params.query)
+            cache_key = search_cache_key(normalized, params, news=params.news)
+            return await self._single_flight.run(
+                cache_key, lambda: self._run_search(params, on_event=None)
+            )
+        return await self._run_search(params, on_event=on_event)
+
+    async def _run_search(self, params: SearchParams, on_event: OnEvent = None) -> SearchOutcome:
         started = time.perf_counter()
         query_id = uuid.uuid4()
         query = normalize_query(params.query)
@@ -274,7 +285,7 @@ class SearchPipeline:
     async def _cache_lookup(self, query: str, params: SearchParams) -> dict | None:
         if self.cache is None:
             return None
-        payload = await self.cache.get_json(search_cache_key(query, params))
+        payload = await self.cache.get_json(search_cache_key(query, params, news=params.news))
         if not payload or not payload.get("results"):
             return None
         return payload
@@ -289,16 +300,25 @@ class SearchPipeline:
     ) -> None:
         if self.cache is None:
             return
+        ttl_s = search_ttl_s(self.settings, news=params.news)
+        has_partial = any(
+            s.status in ("error", "timeout", "circuit_broken", "local_overload") for s in statuses
+        )
+        if has_partial:
+            ttl_s = min(ttl_s, self.settings.cache_partial_ttl_s)
+        if "financial" in params.categories:
+            ttl_s = min(ttl_s, 300)
         await self.cache.set_json(
-            search_cache_key(query, params),
+            search_cache_key(query, params, news=params.news),
             {
                 "query_id": str(query_id),
+                "cached_at": time.time(),
                 "results": serialize_results(results),
                 "statuses": [
                     {"engine": s.engine, "status": s.status, "results": s.results} for s in statuses
                 ],
             },
-            ttl_s=search_ttl_s(self.settings, news=params.news),
+            ttl_s=ttl_s,
         )
 
     async def _fanout(
@@ -644,24 +664,17 @@ class AnswerPipeline:
             "citations",
             {"citations": citations_payload, "invalid_markers": check.invalid_markers},
         )
-        yield (
-            "done",
-            {
-                "answer_id": str(answer_id),
-                "latency_ms": latency_ms,
-                "status": "complete",
-                "model": model,
-                "cached": False,
-            },
-        )
 
+        # REL-04: Cache write and DB finalize MUST be executed/scheduled before done event
+        # so if the client disconnects immediately on done, cache and storage are never lost!
         if self.cache is not None and llm_override is None:
-            await self._cache_store(
-                params, model, answer_id, check.text, citations_payload, sources
-            )
-        # DB persist (pages -> answer -> semantic cache) runs in one ordered
-        # background task so FK constraints (chunks -> citations, answers -> semantic_cache)
-        # never race and the client never waits on DB latency.
+            try:
+                await self._cache_store(
+                    params, model, answer_id, check.text, citations_payload, sources
+                )
+            except Exception as exc:
+                logger.warning("answer_cache_store_failed", error=type(exc).__name__)
+
         finalize = asyncio.create_task(
             self._finalize_answer(
                 pages=ok_pages,
@@ -678,6 +691,17 @@ class AnswerPipeline:
         )
         _background_tasks.add(finalize)
         finalize.add_done_callback(_log_background)
+
+        yield (
+            "done",
+            {
+                "answer_id": str(answer_id),
+                "latency_ms": latency_ms,
+                "status": "complete",
+                "model": model,
+                "cached": False,
+            },
+        )
 
     async def prepare_context(
         self,
@@ -823,6 +847,8 @@ class AnswerPipeline:
                     k=params.k,
                     categories=params.categories,
                     freshness_days=params.freshness_days,
+                    engines=params.engines,
+                    news=params.news,
                 )
             )
             if payload and payload.get("answer_md"):
@@ -869,6 +895,9 @@ class AnswerPipeline:
     ) -> None:
         if self.cache is None or not answer_md:
             return
+        if "financial" in params.categories and getattr(params, "max_age_s", None) is None:
+            # DAT-10: Dynamic financial answers must not be cached without max_age_s
+            return
         await self.cache.set_json(
             answer_cache_key(
                 normalize_query(params.query),
@@ -877,9 +906,12 @@ class AnswerPipeline:
                 k=params.k,
                 categories=params.categories,
                 freshness_days=params.freshness_days,
+                engines=params.engines,
+                news=params.news,
             ),
             {
                 "answer_id": str(answer_id),
+                "cached_at": time.time(),
                 "answer_md": answer_md,
                 "citations": citations,
                 "sources": sources,
