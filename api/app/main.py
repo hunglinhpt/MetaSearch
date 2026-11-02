@@ -26,6 +26,22 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging()
+    from app.core.auth import validate_startup_auth
+
+    problems = validate_startup_auth(
+        api_host=settings.api_host,
+        auth_enabled=settings.auth_enabled,
+        environment=settings.environment,
+        dev_anon_admin=settings.dev_anon_admin,
+    )
+    if problems:
+        for problem in problems:
+            logger.error("startup_auth_guard", problem=problem)
+        raise SystemExit(
+            "Refusing to start: "
+            + " | ".join(problems)
+            + " (bind 127.0.0.1 or set AUTH_ENABLED=true)"
+        )
     if settings.database_url.startswith("sqlite"):
         from app.db.bootstrap import ensure_schema
 
@@ -73,8 +89,8 @@ def create_app() -> FastAPI:
             "crawl4ai/trafilatura (extraction)."
         ),
         lifespan=lifespan,
-        docs_url="/docs",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if settings.environment != "prod" else None,
+        openapi_url="/openapi.json" if settings.environment != "prod" else None,
     )
     from app.core.tracing import setup_tracing
 

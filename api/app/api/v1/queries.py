@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from sqlalchemy import func, select
 
 from app.api import deps
+from app.core.auth import current_api_key_id, current_role
 from app.core.errors import ErrorCode, MetaSearchError
 from app.db.models import Answer, Citation, Query, SearchResult
 
@@ -25,13 +26,23 @@ async def list_queries(limit: int = 20, offset: int = 0) -> dict[str, Any]:
     """Recent queries with per-query result/answer counts (management view)."""
     limit = max(1, min(limit, 100))
     offset = max(0, offset)
+    # SEC-04: admin sees everything; a key sees only its own queries;
+    # anonymous (auth off, single-operator Lite) sees all.
+    owner: str | None = current_api_key_id.get()
+    if owner == "anonymous" or current_role.get() == "admin":
+        owner = None  # no filter
     try:
         async with deps.get_session_factory()() as session:
-            total = (await session.execute(select(func.count()).select_from(Query))).scalar_one()
+            base = select(Query)
+            count_base = select(func.count()).select_from(Query)
+            if owner is not None:
+                base = base.where(Query.api_key_id == owner)
+                count_base = count_base.where(Query.api_key_id == owner)
+            total = (await session.execute(count_base)).scalar_one()
             rows = (
                 (
                     await session.execute(
-                        select(Query).order_by(Query.created_at.desc()).offset(offset).limit(limit)
+                        base.order_by(Query.created_at.desc()).offset(offset).limit(limit)
                     )
                 )
                 .scalars()
@@ -93,6 +104,15 @@ async def get_query(query_id: str) -> dict[str, Any]:
             query = (
                 await session.execute(select(Query).where(Query.id == qid))
             ).scalar_one_or_none()
+            # SEC-04: wrong owner -> 404 (never 403, to avoid revealing the
+            # existence of another system's data). Admin bypasses.
+            owner = current_api_key_id.get()
+            if current_role.get() != "admin" and (
+                owner not in (None, "anonymous")
+                and query is not None
+                and query.api_key_id not in (None, owner)
+            ):
+                query = None
             if query is None:
                 raise MetaSearchError(ErrorCode.INVALID_REQUEST, "query not found", status_code=404)
             results = (

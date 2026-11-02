@@ -43,7 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument("name")
     p_create.add_argument("--role", default="user", choices=["user", "admin"])
     p_create.add_argument("--rate-limit", type=int, default=60, help="requests per minute")
+    p_create.add_argument("--max-concurrent", type=int, default=5, help="concurrent research jobs")
+    p_create.add_argument("--expires", default=None, help="e.g. 365d, 30d, 12h")
     keys_sub.add_parser("list", help="List existing API keys")
+    p_revoke = keys_sub.add_parser("revoke", help="Disable a key by prefix")
+    p_revoke.add_argument("prefix")
     return parser
 
 
@@ -79,16 +83,41 @@ def _cmd_keys(args: argparse.Namespace) -> int:
 
     async def _run() -> int:
         if args.keys_command == "create":
+            from datetime import UTC, datetime, timedelta
+
+            expires_at = None
+            if args.expires:
+                unit = args.expires[-1]
+                value = int(args.expires[:-1])
+                delta = {"d": timedelta(days=value), "h": timedelta(hours=value)}[unit]
+                expires_at = datetime.now(UTC) + delta
             plaintext, prefix = await create_key(
-                args.name, role=args.role, rate_limit_rpm=args.rate_limit
+                args.name,
+                role=args.role,
+                rate_limit_rpm=args.rate_limit,
+                max_concurrent=args.max_concurrent,
+                expires_at=expires_at,
             )
             print(f"key:     {plaintext}")
             print(f"prefix:  {prefix}")
-            print(f"role:    {args.role}  rate_limit: {args.rate_limit}/min")
+            print(
+                f"role:    {args.role}  rate_limit: {args.rate_limit}/min  "
+                f"max_concurrent: {args.max_concurrent}"
+            )
             print("store it now - the plaintext is not shown again.")
             return 0
 
         async with get_sessionmaker()() as session:
+            if args.keys_command == "revoke":
+                from sqlalchemy import update
+
+                await session.execute(
+                    update(ApiKey).where(ApiKey.key_prefix == args.prefix).values(enabled=False)
+                )
+                await session.commit()
+                print(f"revoked: {args.prefix} (effective within 60s key-cache TTL)")
+                return 0
+
             rows = (
                 (await session.execute(select(ApiKey).order_by(ApiKey.created_at.desc())))
                 .scalars()

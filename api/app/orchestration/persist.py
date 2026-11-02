@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from app.core.auth import current_api_key_id
 from app.core.logging import get_logger
 from app.db.models import Answer, Citation, Document, Query, SearchResult
 from app.db.models import Chunk as ChunkRow
@@ -255,6 +256,7 @@ async def _persist_answer(
         session.add(
             Answer(
                 id=answer_id,
+                api_key_id=current_api_key_id.get(),
                 query_id=query_id,
                 kind="quick",
                 content_md=content_md,

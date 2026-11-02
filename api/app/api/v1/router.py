@@ -31,8 +31,16 @@ _auth: list = [Depends(require_api_key)]
 router = APIRouter(prefix="/v1", tags=["v1"])
 
 
-@router.get("/meta", summary="Service metadata and giants configuration")
+@router.get("/meta", summary="Service metadata")
 async def meta() -> dict:
+    # SEC-06: public payload is name+version only; full giants/limits config
+    # requires admin (same key rules as the rest of /v1).
+    settings = get_settings()
+    return {"name": settings.app_name, "version": __version__}
+
+
+@router.get("/meta/full", summary="Full service configuration (admin)")
+async def meta_full() -> dict:
     settings = get_settings()
     return {
         "name": settings.app_name,

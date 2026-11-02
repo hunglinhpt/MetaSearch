@@ -21,6 +21,7 @@ import hashlib
 import secrets
 import time
 from collections import deque
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,6 +39,33 @@ logger = get_logger(__name__)
 
 _KEY_PREFIX_LEN = 12  # "msk_" + 8 hex
 _window_warned = False
+
+
+# WP-11 SEC-04: the owner key id for the current request, read by persist
+# layers so data is stamped with its creator and filtered by it.
+current_api_key_id: ContextVar[str | None] = ContextVar("current_api_key_id", default=None)
+current_role: ContextVar[str] = ContextVar("current_role", default="user")
+
+
+def validate_startup_auth(
+    *, api_host: str, auth_enabled: bool, environment: str, dev_anon_admin: bool
+) -> list[str]:
+    """SEC-03: refuse unsafe bind/auth combinations at startup.
+
+    Returns a list of human-readable problems; empty means safe to start.
+    """
+    problems: list[str] = []
+    loopback = api_host in ("127.0.0.1", "localhost", "::1")
+    if not loopback and not auth_enabled:
+        problems.append(
+            f"API_HOST={api_host} exposes the service beyond loopback while "
+            "AUTH_ENABLED=false. Set AUTH_ENABLED=true or bind 127.0.0.1."
+        )
+    if environment == "prod" and not auth_enabled:
+        problems.append("ENVIRONMENT=prod requires AUTH_ENABLED=true.")
+    if dev_anon_admin and not loopback:
+        problems.append("DEV_ANON_ADMIN=true is only allowed on loopback binds.")
+    return problems
 
 
 @dataclass(slots=True)
@@ -58,8 +86,15 @@ def hash_key(plaintext: str) -> str:
     return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()  # nosec B324
 
 
-async def create_key(name: str, *, role: str = "user", rate_limit_rpm: int = 60) -> tuple[str, str]:
-    """Create an API key; returns (plaintext, key_id)."""
+async def create_key(
+    name: str,
+    *,
+    role: str = "user",
+    rate_limit_rpm: int = 60,
+    max_concurrent: int = 5,
+    expires_at=None,
+) -> tuple[str, str]:
+    """Create an API key; returns (plaintext, key_prefix)."""
     plaintext, key_hash, key_prefix = generate_key()
     async with get_sessionmaker()() as session:
         session.add(
@@ -69,6 +104,8 @@ async def create_key(name: str, *, role: str = "user", rate_limit_rpm: int = 60)
                 name=name,
                 role=role,
                 rate_limit_rpm=rate_limit_rpm,
+                max_concurrent=max_concurrent,
+                expires_at=expires_at,
                 enabled=True,
             )
         )
@@ -106,9 +143,14 @@ async def authenticate(bearer: str | None) -> AuthContext:
                 )
             ).scalar_one_or_none()
     except Exception as exc:
-        # Auth enabled + DB unavailable -> fail closed, never open.
+        # Auth enabled + DB unavailable -> fail closed AND signal a server
+        # problem (503), not a bad key (401).
         logger.warning("auth_db_unavailable", error=type(exc).__name__)
-        raise _unauthorized("authentication backend unavailable") from exc
+        raise MetaSearchError(
+            ErrorCode.INTERNAL,
+            "authentication backend unavailable",
+            status_code=503,
+        ) from exc
 
     if row is None:
         await _cache_put(key_hash, None)
@@ -273,7 +315,13 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
     """
     settings = get_settings()
     if not settings.auth_enabled:
-        return AuthContext(key_id="anonymous", name=None, role="admin", rate_limit_rpm=0)
+        # Anonymous callers get role "user" (SEC-03): admin endpoints require a
+        # real key or DEV_ANON_ADMIN=true on a loopback bind.
+        if settings.dev_anon_admin:
+            current_role.set("admin")
+            return AuthContext(key_id="anonymous", name=None, role="admin", rate_limit_rpm=0)
+        current_role.set("user")
+        return AuthContext(key_id="anonymous", name=None, role="user", rate_limit_rpm=0)
 
     if cost is None:
         path = request.url.path.rstrip("/")
