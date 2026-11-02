@@ -30,6 +30,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.db.bootstrap import ensure_schema
 
         await ensure_schema()
+
+    from app.api.deps import get_health_writer
+    from app.orchestration.engine_store import clear_legacy_auto_disabled
+
+    await clear_legacy_auto_disabled()
+    health_writer = get_health_writer()
+    if not settings.is_test:
+        health_writer.start()
+
     logger.info(
         "service_starting",
         version=__version__,
@@ -47,6 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from app.api.deps import get_scanner
 
             get_scanner().stop_background_loop()
+        await health_writer.stop()
         await dispose_engine()
         await dispose_redis()
         await dispose_http_client()

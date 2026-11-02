@@ -25,8 +25,10 @@ class FakeAdapter:
         self.id = engine_id
         self.results = results
         self.fail = fail
+        self.calls = 0
 
     async def search(self, query, **kwargs) -> list[RawResult]:
+        self.calls += 1
         if self.fail:
             raise RuntimeError("engine exploded")
         return self.results
@@ -408,11 +410,13 @@ class TestSearchPipelineFanout:
             outcome = await pipeline.run(SearchParams(query="postgres"))
             assert outcome.results == []
         snapshot = await registry.store.snapshot()
-        assert snapshot["bad"].enabled is False
-        assert "auto:" in (snapshot["bad"].disabled_reason or "")
-        # With the only engine auto-disabled the next fan-out raises no_results.
-        with pytest.raises(MetaSearchError):
-            await pipeline.run(SearchParams(query="postgres"))
+        # WP-03: admin enabled is decoupled from failures; breaker is open
+        assert snapshot["bad"].enabled is True
+        assert pipeline.health_registry.get("bad").state == "open"
+        # With the only engine tripped, fail-open retries bad rather than failing request
+        outcome = await pipeline.run(SearchParams(query="postgres"))
+        assert outcome.statuses[0].engine == "bad"
+        assert outcome.statuses[0].status == "error"
 
     async def test_auto_disabled_engine_not_fanned_out(self):
         bad = FakeAdapter("bad", [], fail=True)
@@ -421,7 +425,11 @@ class TestSearchPipelineFanout:
         pipeline = SearchPipeline(get_settings(), registry)
         for _ in range(3):
             await pipeline.run(SearchParams(query="postgres"))
-        # bad is now auto-disabled; the next search only fans out to ok.
+        assert bad.calls == 3
+        # bad breaker is now open; the next search fans out to ok and skips bad with skipped_breaker
         outcome = await pipeline.run(SearchParams(query="postgres"))
         assert [r.url for r in outcome.results] == ["https://a.com/1"]
-        assert all(s.engine != "bad" for s in outcome.statuses)
+        statuses = {s.engine: s.status for s in outcome.statuses}
+        assert statuses.get("ok") == "ok"
+        assert statuses.get("bad") == "skipped_breaker"
+        assert bad.calls == 3  # not fanned out

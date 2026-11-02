@@ -33,8 +33,10 @@ async def ops_status() -> dict[str, Any]:
         health, snapshot, adapters_by_id = {}, {}, {}
 
     engines = []
+    health_reg = deps.get_health_registry()
     for engine_id, cfg in snapshot.items():
         summary = health.get(engine_id)
+        breaker = health_reg.get(engine_id)
         engines.append(
             {
                 "id": engine_id,
@@ -44,6 +46,7 @@ async def ops_status() -> dict[str, Any]:
                 "calls": summary.calls if summary else 0,
                 "failures": summary.failures if summary else 0,
                 "consecutive_failures": (summary.consecutive_failures if summary else 0),
+                "breaker_state": breaker.state,
             }
         )
 

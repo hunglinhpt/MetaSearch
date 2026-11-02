@@ -21,7 +21,12 @@ class EnginePatchRequest(BaseModel):
     max_results: int | None = Field(default=None, ge=1, le=100)
 
 
-def _config_payload(cfg: Any, adapter_ready: bool, failures: int) -> dict[str, Any]:
+def _config_payload(
+    cfg: Any,
+    adapter_ready: bool,
+    failures: int,
+    breaker_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "id": cfg.id,
         "name": cfg.name,
@@ -34,6 +39,12 @@ def _config_payload(cfg: Any, adapter_ready: bool, failures: int) -> dict[str, A
         "adapter_ready": adapter_ready,
         "disabled_reason": cfg.disabled_reason,
         "consecutive_failures": failures,
+        "breaker": breaker_info
+        or {
+            "state": "closed",
+            "retry_at": None,
+            "consecutive_failures": failures,
+        },
     }
 
 
@@ -41,17 +52,32 @@ def _config_payload(cfg: Any, adapter_ready: bool, failures: int) -> dict[str, A
 async def engines() -> list[dict[str, Any]]:
     registry = deps.get_registry()
     store = deps.get_engine_store()
+    health_reg = deps.get_health_registry()
     snapshot = await store.snapshot()
     health = await store.health()
     adapters = {cfg.id: adapter for cfg, adapter in await registry.all_entries()}
-    return [
-        _config_payload(
-            cfg,
-            adapter_ready=adapters.get(cfg.id) is not None,
-            failures=health[cfg.id].consecutive_failures if cfg.id in health else 0,
+    items = []
+    for cfg in snapshot.values():
+        breaker = health_reg.get(cfg.id)
+        failures = (
+            health[cfg.id].consecutive_failures
+            if cfg.id in health
+            else breaker.consecutive_failures
         )
-        for cfg in snapshot.values()
-    ]
+        breaker_info = {
+            "state": breaker.state,
+            "retry_at": breaker.retry_at if breaker.state != "closed" else None,
+            "consecutive_failures": breaker.consecutive_failures,
+        }
+        items.append(
+            _config_payload(
+                cfg,
+                adapter_ready=adapters.get(cfg.id) is not None,
+                failures=failures,
+                breaker_info=breaker_info,
+            )
+        )
+    return items
 
 
 @router.get("/engines/health")
@@ -98,8 +124,16 @@ async def patch_engine(engine_id: str, request: EnginePatchRequest) -> dict[str,
     adapters = {cfg.id: adapter for cfg, adapter in await deps.get_registry().all_entries()}
     health = await store.health()
     summary = health.get(engine_id)
+    health_reg = deps.get_health_registry()
+    breaker = health_reg.get(engine_id)
+    breaker_info = {
+        "state": breaker.state,
+        "retry_at": breaker.retry_at if breaker.state != "closed" else None,
+        "consecutive_failures": breaker.consecutive_failures,
+    }
     return _config_payload(
         updated,
         adapter_ready=adapters.get(engine_id) is not None,
         failures=summary.consecutive_failures if summary else 0,
+        breaker_info=breaker_info,
     )

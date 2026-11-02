@@ -297,6 +297,22 @@ def _clear_auto_state(cfg: EngineConfig) -> EngineConfig:
     return replace(cfg, enabled=True, disabled_reason=None)
 
 
+async def clear_legacy_auto_disabled(sessionmaker_provider=None) -> int:
+    sm = sessionmaker_provider or get_sessionmaker()
+    try:
+        async with sm() as session:
+            result = await session.execute(
+                update(EngineRow)
+                .where(EngineRow.disabled_reason.like("auto:%"))
+                .values(enabled=True, disabled_reason=None)
+            )
+            await session.commit()
+            return int(getattr(result, "rowcount", 0) or 0)
+    except Exception as exc:
+        logger.warning("clear_legacy_auto_disabled_failed", error=str(exc))
+        return 0
+
+
 class InMemoryEngineStore:
     """Process-local store; doubles as the fallback backend of DbEngineStore."""
 
@@ -312,6 +328,14 @@ class InMemoryEngineStore:
     async def snapshot(self) -> dict[str, EngineConfig]:
         return dict(self._configs)
 
+    def clear_legacy_auto_disabled(self) -> int:
+        count = 0
+        for eid, cfg in list(self._configs.items()):
+            if cfg.disabled_reason and cfg.disabled_reason.startswith("auto:"):
+                self._configs[eid] = replace(cfg, enabled=True, disabled_reason=None)
+                count += 1
+        return count
+
     async def update(self, engine_id: str, fields: dict[str, Any]) -> EngineConfig | None:
         cfg = self._configs.get(engine_id)
         if cfg is None:
@@ -326,23 +350,12 @@ class InMemoryEngineStore:
         return updated
 
     async def record_result(self, engine_id: str, *, ok: bool, latency_ms: int) -> None:
-        settings = get_settings()
         window = self._windows.setdefault(engine_id, {"calls": 0, "successes": 0, "failures": 0})
         window["calls"] += 1
         window["successes" if ok else "failures"] += 1
 
         consecutive = 0 if ok else self._failures.get(engine_id, 0) + 1
         self._failures[engine_id] = consecutive
-        cfg = self._configs.get(engine_id)
-        if (
-            consecutive >= settings.engine_auto_disable_threshold
-            and cfg is not None
-            and cfg.enabled
-        ):
-            self._configs[engine_id] = replace(
-                cfg, enabled=False, disabled_reason=f"auto: {consecutive} consecutive failures"
-            )
-            logger.warning("engine_auto_disabled", engine=engine_id, failures=consecutive)
 
     async def health(self) -> dict[str, EngineHealthSummary]:
         out: dict[str, EngineHealthSummary] = {}
@@ -382,6 +395,7 @@ class DbEngineStore:
         fallback: InMemoryEngineStore | None = None,
         *,
         refresh_s: float | None = None,
+        session_factory: Any | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._fallback = fallback or InMemoryEngineStore.from_settings(self._settings)
@@ -390,6 +404,12 @@ class DbEngineStore:
         self._cache: dict[str, EngineConfig] | None = None
         self._cache_at = 0.0
         self._db_warned = False
+        self._session_factory = session_factory
+        self._db_error_until = 0.0
+        self._refresh_task: asyncio.Task[None] | None = None
+
+    def _get_sm(self):
+        return self._session_factory if self._session_factory is not None else get_sessionmaker()
 
     async def _guarded(self, coro):
         """Bound one DB operation; fall back to memory when it stalls."""
@@ -404,24 +424,52 @@ class DbEngineStore:
     # -- snapshot ----------------------------------------------------------
 
     async def snapshot(self) -> dict[str, EngineConfig]:
-        if self._cache is not None and time.monotonic() - self._cache_at < self._refresh_s:
-            return self._cache
+        now = time.monotonic()
+        if self._cache is None:
+            if now < self._db_error_until:
+                return await self._fallback.snapshot()
+            try:
+                rows = await self._guarded(self._load_rows())
+                if not rows:
+                    await self._guarded(self._seed_rows())
+                    rows = await self._guarded(self._load_rows())
+                self._cache = rows
+                self._cache_at = time.monotonic()
+                self._db_error_until = 0.0
+                return dict(rows)
+            except Exception as exc:
+                if not self._db_warned:
+                    logger.warning("engine_store_db_unavailable", error=type(exc).__name__)
+                    self._db_warned = True
+                self._db_error_until = time.monotonic() + 30.0
+                fb = await self._fallback.snapshot()
+                self._cache = fb
+                self._cache_at = time.monotonic()
+                return dict(fb)
+
+        # Stale-while-revalidate: return cache immediately and refresh in background
+        if (
+            now - self._cache_at >= self._refresh_s
+            and now >= self._db_error_until
+            and (self._refresh_task is None or self._refresh_task.done())
+        ):
+            self._refresh_task = asyncio.create_task(self._revalidate_background())
+
+        return dict(self._cache)
+
+    async def _revalidate_background(self) -> None:
         try:
             rows = await self._guarded(self._load_rows())
-            if not rows:
-                await self._guarded(self._seed_rows())
-                rows = await self._guarded(self._load_rows())
-            self._cache = rows
+            if rows:
+                self._cache = rows
+                self._cache_at = time.monotonic()
+                self._db_error_until = 0.0
+        except Exception:
+            self._db_error_until = time.monotonic() + 30.0
             self._cache_at = time.monotonic()
-            return rows
-        except Exception as exc:
-            if not self._db_warned:
-                logger.warning("engine_store_db_unavailable", error=type(exc).__name__)
-                self._db_warned = True
-            return await self._fallback.snapshot()
 
     async def _load_rows(self) -> dict[str, EngineConfig]:
-        async with get_sessionmaker()() as session:
+        async with self._get_sm()() as session:
             rows = (await session.execute(select(EngineRow))).scalars().all()
         return {
             row.id: EngineConfig(
@@ -440,7 +488,9 @@ class DbEngineStore:
         }
 
     async def _seed_rows(self) -> None:
-        async with get_sessionmaker()() as session:
+        sm = self._get_sm()
+        await clear_legacy_auto_disabled(sm)
+        async with sm() as session:
             insert = _dialect_insert(session)
             for cfg in default_configs(self._settings).values():
                 await session.execute(
@@ -476,7 +526,7 @@ class DbEngineStore:
             changes["consecutive_failures"] = 0
 
         async def _do_update() -> None:
-            async with get_sessionmaker()() as session:
+            async with self._get_sm()() as session:
                 await session.execute(
                     _dialect_insert(session)(EngineRow)
                     .values(id=engine_id, **self._row_values(engine_id, changes))
@@ -510,19 +560,11 @@ class DbEngineStore:
 
     async def record_result(self, engine_id: str, *, ok: bool, latency_ms: int) -> None:
         await self._fallback.record_result(engine_id, ok=ok, latency_ms=latency_ms)
-        try:
-            state_changed = await self._guarded(self._record_db(engine_id, ok=ok))
-        except Exception as exc:
-            logger.warning("engine_health_db_failed", error=type(exc).__name__)
-            return
-        if state_changed:
-            self._cache = None
 
     async def _record_db(self, engine_id: str, *, ok: bool) -> bool:
-        settings = get_settings()
         window_start = _window_start()
         state_changed = False
-        async with get_sessionmaker()() as session:
+        async with self._get_sm()() as session:
             row = (
                 await session.execute(
                     select(EngineRow.consecutive_failures, EngineRow.enabled).where(
@@ -553,7 +595,6 @@ class DbEngineStore:
                     row = (0, defaults.enabled)
 
             prev_consecutive = int((row[0] if row else 0) or 0)
-            is_enabled = bool(row[1]) if row is not None else True
             consecutive = 0 if ok else prev_consecutive + 1
 
             await session.execute(
@@ -576,19 +617,7 @@ class DbEngineStore:
                     },
                 )
             )
-            if consecutive >= settings.engine_auto_disable_threshold and is_enabled:
-                await session.execute(
-                    update(EngineRow)
-                    .where(EngineRow.id == engine_id)
-                    .values(
-                        enabled=False,
-                        disabled_reason=f"auto: {consecutive} consecutive failures",
-                        consecutive_failures=consecutive,
-                    )
-                )
-                state_changed = True
-                logger.warning("engine_auto_disabled", engine=engine_id, failures=consecutive)
-            elif consecutive != prev_consecutive:
+            if consecutive != prev_consecutive:
                 await session.execute(
                     update(EngineRow)
                     .where(EngineRow.id == engine_id)
@@ -598,7 +627,7 @@ class DbEngineStore:
         return state_changed
 
     async def _load_health(self):
-        async with get_sessionmaker()() as session:
+        async with self._get_sm()() as session:
             engines = (await session.execute(select(EngineRow))).scalars().all()
             windows = (
                 (
@@ -635,7 +664,7 @@ class DbEngineStore:
         return out
 
     async def _load_auto_disabled(self) -> list[str]:
-        async with get_sessionmaker()() as session:
+        async with self._get_sm()() as session:
             result = await session.execute(
                 select(EngineRow.id).where(
                     EngineRow.enabled.is_(False),
