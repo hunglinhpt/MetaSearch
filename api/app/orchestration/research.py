@@ -786,10 +786,17 @@ class ResearchPipeline:
             messages = _report_messages(
                 question, pack.learnings, _render_pack(included), harness=harness
             )
-            async for delta in gateway.stream(messages, model=report_model):
+            report_truncated = False
+            async for delta in gateway.stream(
+                messages,
+                model=report_model,
+                max_tokens=self.settings.research_report_max_tokens,
+            ):
                 if delta.text:
                     answer_parts.append(delta.text)
                     yield ("report_token", {"t": delta.text})
+                if delta.finish_reason == "length":
+                    report_truncated = True  # DAT-07: cut-off is not "complete"
                 if delta.usage:
                     usage_total.input_tokens += delta.usage.input_tokens
                     usage_total.output_tokens += delta.usage.output_tokens
@@ -814,9 +821,9 @@ class ResearchPipeline:
             {
                 "research_id": str(report_id),
                 "latency_ms": latency_ms,
-                "status": "complete",
-                "truncated": truncated,
-                "iterations": depth if truncated else None,
+                "status": "truncated" if (truncated or report_truncated) else "complete",
+                "truncated": truncated or report_truncated,
+                "iterations": depth if (truncated or report_truncated) else None,
                 "model": report_model,
                 "profile": harness.profile,
                 "usage": {
@@ -838,7 +845,7 @@ class ResearchPipeline:
             cost_usd=usage_total.cost_usd(report_model),
             latency_ms=latency_ms,
             citations=[(c.n, c.url, c.title, c.chunk_id) for c in check.citations],
-            truncated=truncated,
+            truncated=truncated or report_truncated,
         )
 
     # -- stages --------------------------------------------------------------

@@ -627,9 +627,33 @@ class DreamRSICouncilEngine:
                     error="Endpoint call timed out after 40s",
                 )
 
-        return list(
-            await asyncio.gather(*(_call_with_timeout(i, ov) for i, ov in enumerate(panel)))
-        )
+        return await self._collect_panel(panel, _call_with_timeout)
+
+    async def _collect_panel(self, panel, call_with_timeout) -> list:
+        """WP-08: overall wall-clock budget (``council_budget_s``) with partial
+        results kept — a slow or failed panelist never blocks the council.
+        Provider breakers are enforced inside ``gateway.stream`` itself."""
+        budget_s = max(getattr(self.settings, "council_budget_s", 90.0), 10.0)
+        tasks = [asyncio.create_task(call_with_timeout(i, ov)) for i, ov in enumerate(panel)]
+        done, pending = await asyncio.wait(tasks, timeout=budget_s)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+            logger.warning("council_budget_exceeded", budget_s=budget_s, pending=len(pending))
+
+        drafts = []
+        for task in tasks:
+            if task in done and not task.cancelled():
+                exc = task.exception()
+                if exc is None:
+                    result = task.result()
+                    if result is not None:  # a late cancel can resolve to None
+                        drafts.append(result)
+                else:  # unexpected crash in bookkeeping — degrade, don't block
+                    logger.warning("council_panelist_crashed", error=type(exc).__name__)
+        drafts.sort(key=lambda d: d.candidate_id)
+        return drafts
 
     async def _run_anonymous_cross_review(
         self,

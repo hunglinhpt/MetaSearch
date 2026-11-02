@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     llm_report_model: str = "gpt-4o"
     llm_temperature: float = 0.2
     llm_answer_max_tokens: int = 1024
+    # WP-08: total upstream LLM calls per request (failover candidates included).
+    llm_max_attempts: int = 3
+    # WP-08: Deep Research report streaming token cap (DAT-07: was 1024 silently).
+    research_report_max_tokens: int = 4096
+    # WP-08: overall council wall-clock budget per run (seconds).
+    council_budget_s: float = 90.0
     # Context budget for /v1/answer: units depend on CONTEXT_TOKENIZER
     # (words by default; real tokens with CONTEXT_TOKENIZER=tiktoken).
     answer_context_budget: int = 6000

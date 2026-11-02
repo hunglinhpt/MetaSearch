@@ -11,12 +11,23 @@ Supports:
 
 Streaming yields ``StreamDelta`` so SSE can forward tokens as they arrive and
 still record token usage + estimated cost afterwards.
+
+WP-08 resilience (docs/14-readiness/03-work-packages.md):
+- Errors are classified: 400/401/403/404 are **non-retryable** and never
+  fail over (same key would fail the same way); 429 honors ``Retry-After``;
+  5xx/timeout/transport fail over to the next candidate.
+- Total upstream calls per request are bounded by ``llm_max_attempts``.
+- A per-provider circuit breaker (reusing ``EngineBreaker``) skips providers
+  that are failing; open panelists are skipped in the council too.
+- ``StreamDelta.finish_reason`` carries the upstream stop reason so
+  ``length`` becomes ``status="truncated"`` downstream.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -33,6 +44,7 @@ from app.llm.providers import (
     get_runtime_llm_store,
     resolve_llm_target,
 )
+from app.retrieval.health import EngineBreakerRegistry, Outcome
 
 logger = get_logger(__name__)
 
@@ -50,9 +62,34 @@ _PRICE_TABLE: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-5": (3.00, 15.00),
 }
 
+# Cap for reading error/JSON bodies so a hostile upstream cannot balloon memory.
+_MAX_BODY_BYTES = 1_000_000
+
+_NON_RETRYABLE_STATUSES = {400, 401, 403, 404}
+
+# Breakers keyed "llm:{provider}" — shared per process, council included.
+llm_breakers = EngineBreakerRegistry(threshold=3, timeout_threshold=5)
+
 
 class LLMError(Exception):
     """Raised when the upstream LLM fails or is not configured."""
+
+
+class LLMStatusError(LLMError):
+    """Upstream returned an HTTP status; carries retry classification."""
+
+    def __init__(
+        self,
+        provider: str,
+        status_code: int,
+        *,
+        retry_after_s: float | None = None,
+    ) -> None:
+        self.provider = provider
+        self.status_code = status_code
+        self.retry_after_s = retry_after_s
+        self.retryable = status_code not in _NON_RETRYABLE_STATUSES
+        super().__init__(f"LLM provider '{provider}' returned HTTP {status_code}")
 
 
 @dataclass(slots=True)
@@ -78,6 +115,7 @@ class Usage:
 class StreamDelta:
     text: str | None = None
     usage: Usage | None = None  # set on the final delta only
+    finish_reason: str | None = None  # "stop" | "length" | provider-specific
 
 
 async def _sse_payloads(lines: AsyncIterator[str]) -> AsyncIterator[dict[str, Any]]:
@@ -93,6 +131,18 @@ async def _sse_payloads(lines: AsyncIterator[str]) -> AsyncIterator[dict[str, An
             yield json.loads(data)
         except json.JSONDecodeError:
             logger.warning("llm_sse_bad_json", preview=data[:120])
+
+
+async def _read_limited(resp: httpx.Response, limit: int = _MAX_BODY_BYTES) -> str:
+    """Read a response body with a hard byte cap (REL-10: unbounded aread)."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in resp.aiter_bytes(65536):
+        total += len(chunk)
+        chunks.append(chunk)
+        if total >= limit:
+            break
+    return b"".join(chunks).decode(errors="replace")
 
 
 class LLMGateway:
@@ -226,6 +276,37 @@ class LLMGateway:
             return f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
         return f"{base}/chat/completions"
 
+    def _candidates(
+        self,
+        target: ResolvedLLMTarget,
+        messages: list[dict[str, str]],
+        eff_model: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        task: str,
+    ) -> list[tuple[ResolvedLLMTarget, str]]:
+        """Ordered failover candidates: primary -> openrouter models -> fallback provider."""
+        candidates: list[tuple[ResolvedLLMTarget, str]] = [(target, eff_model)]
+        if target.provider == "openrouter" and target.api_key and target.fallback_models:
+            for alt_model in target.fallback_models:
+                if alt_model != eff_model:
+                    candidates.append((target, alt_model))
+        if (
+            target.fallback_provider
+            and target.fallback_provider != "none"
+            and target.fallback_provider != target.provider
+        ):
+            try:
+                fb_target = resolve_llm_target(
+                    self._settings,
+                    request_override=LLMOverride(provider=target.fallback_provider),  # type: ignore[arg-type]
+                )
+                candidates.append((fb_target, self._effective_model(None, fb_target, task=task)))
+            except Exception as exc:  # bad fallback config must not kill the request
+                logger.warning("llm_fallback_target_unresolvable", error=str(exc)[:120])
+        return candidates
+
     async def stream(
         self,
         messages: list[dict[str, str]],
@@ -235,7 +316,15 @@ class LLMGateway:
         temperature: float | None = None,
         task: str = "answer",
     ) -> AsyncIterator[StreamDelta]:
-        """Stream answer deltas; supports OpenRouter free model failover & fallback provider."""
+        """Stream answer deltas with classified errors and a bounded attempt budget.
+
+        REL-10: every upstream call consumes one attempt from
+        ``llm_max_attempts`` (default 3), regardless of how many fallback
+        candidates exist. Non-retryable statuses (400/401/403/404) raise
+        immediately. 429 sleeps ``Retry-After`` before consuming the next
+        attempt on the same candidate. Open panelist breakers are skipped
+        without consuming attempts.
+        """
         target = self.resolve_target()
         if target.provider == "none" or target.protocol == "none":
             if target.fallback_provider and target.fallback_provider != "none":
@@ -251,65 +340,85 @@ class LLMGateway:
         eff_model = self._effective_model(model, target, task=task)
         max_tok = max_tokens or self._settings.llm_answer_max_tokens
         temp = self._settings.llm_temperature if temperature is None else temperature
+        budget = max(int(self._settings.llm_max_attempts), 1)
         emitted_any = False
 
-        try:
-            async for delta in self._stream_once(
-                target, messages, eff_model, max_tokens=max_tok, temperature=temp
-            ):
-                if delta.text:
-                    emitted_any = True
-                yield delta
-            return
-        except LLMError as primary_exc:
-            if emitted_any:
-                raise
-            # 1) OpenRouter free model failover chain when primary free model is rate-limited
-            if target.provider == "openrouter" and target.api_key and target.fallback_models:
-                for alt_model in target.fallback_models:
-                    if alt_model == eff_model:
-                        continue
-                    try:
-                        logger.info(
-                            "openrouter_free_model_fallback",
-                            failed_model=eff_model,
-                            fallback_model=alt_model,
-                        )
-                        async for delta in self._stream_once(
-                            target, messages, alt_model, max_tokens=max_tok, temperature=temp
-                        ):
-                            yield delta
-                        return
-                    except LLMError:
-                        continue
+        candidates = self._candidates(
+            target, messages, eff_model, max_tokens=max_tok, temperature=temp, task=task
+        )
+        attempts = 0
+        last_error: LLMError | None = None
+        seen_pairs: set[tuple[str, str]] = set()
 
-            # 2) Cross-provider fallback (e.g. Pollinations keyless free or secondary provider)
-            if (
-                target.fallback_provider
-                and target.fallback_provider != "none"
-                and target.fallback_provider != target.provider
-            ):
-                try:
-                    fb_target = resolve_llm_target(
-                        self._settings,
-                        request_override=LLMOverride(provider=target.fallback_provider),  # type: ignore[arg-type]
+        while candidates and attempts < budget:
+            cand_target, cand_model = candidates.pop(0)
+            pair = (cand_target.provider, cand_model)
+            breaker = llm_breakers.get(f"llm:{cand_target.provider}")
+            if pair in seen_pairs or not breaker.allow():
+                logger.info(
+                    "llm_candidate_skipped", provider=cand_target.provider, model=cand_model
+                )
+                continue
+            seen_pairs.add(pair)
+
+            attempts += 1
+            try:
+                async for delta in self._stream_once(
+                    cand_target, messages, cand_model, max_tokens=max_tok, temperature=temp
+                ):
+                    if delta.text:
+                        emitted_any = True
+                    yield delta
+                breaker.record(Outcome.OK)
+                return
+            except LLMStatusError as exc:
+                breaker.record(
+                    Outcome.RATE_LIMITED if exc.status_code == 429 else Outcome.UPSTREAM_ERROR,
+                    retry_after_s=exc.retry_after_s,
+                )
+                last_error = exc
+                if not exc.retryable:
+                    # 400/401/403/404: same key, same result — no retry, no failover.
+                    logger.warning(
+                        "llm_non_retryable",
+                        provider=exc.provider,
+                        status_code=exc.status_code,
+                        attempts=attempts,
                     )
-                    fb_model = self._effective_model(None, fb_target, task=task)
-                    logger.info(
-                        "llm_provider_fallback",
-                        primary_provider=target.provider,
-                        fallback_provider=fb_target.provider,
-                        fallback_model=fb_model,
-                        reason=str(primary_exc)[:120],
-                    )
-                    async for delta in self._stream_once(
-                        fb_target, messages, fb_model, max_tokens=max_tok, temperature=temp
-                    ):
-                        yield delta
-                    return
-                except LLMError:
-                    pass
-            raise primary_exc
+                    if emitted_any:
+                        raise
+                    raise exc from None
+                logger.warning(
+                    "llm_retryable_error",
+                    provider=exc.provider,
+                    status_code=exc.status_code,
+                    attempts=attempts,
+                    retry_after_s=exc.retry_after_s,
+                )
+                # 429: the same candidate may recover after Retry-After —
+                # re-queue it (still bounded by the global attempt budget).
+                if exc.retry_after_s is not None:
+                    seen_pairs.discard(pair)  # allow the same pair again
+                    candidates.insert(0, (cand_target, cand_model))
+                await asyncio.sleep(min(exc.retry_after_s or 0.5, 30.0))
+            except LLMError as exc:
+                breaker.record(
+                    Outcome.TIMEOUT if isinstance(exc, TimeoutError) else Outcome.UPSTREAM_ERROR
+                )
+                last_error = exc
+                logger.warning(
+                    "llm_candidate_failed",
+                    provider=cand_target.provider,
+                    attempts=attempts,
+                    error=str(exc)[:120],
+                )
+                if emitted_any:
+                    raise
+                continue
+
+        if emitted_any and last_error is not None:
+            raise last_error
+        raise last_error or LLMError("LLM call failed: attempt budget exhausted")
 
     async def _stream_once(
         self,
@@ -342,27 +451,40 @@ class LLMGateway:
                 timeout=self._settings.request_timeout_s,
             ) as resp:
                 if resp.status_code >= 400:
-                    detail = (await resp.aread()).decode(errors="replace")[:500]
+                    detail = await _read_limited(resp)
                     logger.warning(
                         "llm_upstream_error",
                         provider=target.provider,
                         status_code=resp.status_code,
-                        detail=detail,
+                        detail=detail[:500],
                     )
-                    raise LLMError(
-                        f"LLM provider '{target.provider}' returned HTTP {resp.status_code}"
+                    retry_after = resp.headers.get("retry-after")
+                    retry_after_s = (
+                        float(retry_after)
+                        if (retry_after or "").replace(".", "").isdigit()
+                        else None
+                    )
+                    raise LLMStatusError(
+                        target.provider, resp.status_code, retry_after_s=retry_after_s
                     )
                 content_type = resp.headers.get("content-type", "").lower()
                 # Support non-streaming JSON responses from lightweight OpenAI-compatible proxies
                 if "application/json" in content_type and "event-stream" not in content_type:
-                    raw_bytes = await resp.aread()
-                    payload = json.loads(raw_bytes.decode("utf-8", errors="replace"))
+                    raw = await _read_limited(resp)
+                    try:
+                        payload = json.loads(raw)
+                    except json.JSONDecodeError as exc:
+                        # REL-10: invalid JSON upstream must be an LLMError, not a crash.
+                        raise LLMError(f"{target.provider} returned malformed JSON: {exc}") from exc
                     choices = payload.get("choices") or []
                     if choices:
                         msg = choices[0].get("message") or choices[0].get("delta") or {}
                         content = msg.get("content")
                         if content:
-                            yield StreamDelta(text=str(content))
+                            yield StreamDelta(
+                                text=str(content),
+                                finish_reason=choices[0].get("finish_reason"),
+                            )
                     if payload.get("usage"):
                         u = payload["usage"]
                         yield StreamDelta(
@@ -374,9 +496,9 @@ class LLMGateway:
                     return
 
                 async for payload in _sse_payloads(resp.aiter_lines()):
-                    delta, usage = _parse_delta(payload, target.protocol)
-                    if delta is not None or usage is not None:
-                        yield StreamDelta(text=delta, usage=usage)
+                    delta, usage, finish = _parse_delta(payload, target.protocol)
+                    if delta is not None or usage is not None or finish is not None:
+                        yield StreamDelta(text=delta, usage=usage, finish_reason=finish)
         except httpx.HTTPError as exc:
             raise LLMError(f"{target.provider} transport error: {type(exc).__name__}") from exc
 
@@ -390,39 +512,30 @@ class LLMGateway:
     ) -> tuple[str, Usage]:
         """Non-streaming completion for the research agents (planner/extractor).
 
-        Retries twice with exponential backoff on transient errors
-        (docs/04 §4); usage is metered per ``task`` so a research job can
-        total its spend.
+        RET-10 budget: retries live inside :meth:`stream` (bounded by
+        ``llm_max_attempts``); this wrapper makes exactly one bounded call
+        instead of multiplying the budget (old code: 3 x up-to-21 calls).
         """
         target = self.resolve_target()
         eff_model = self._effective_model(model, target, task=task)
         text_parts: list[str] = []
         usage = Usage()
-        delay = 0.5
-        last_error: LLMError | None = None
-        for attempt in range(3):
-            text_parts.clear()
-            usage = Usage()
-            try:
-                async for delta in self.stream(
-                    messages, model=eff_model, max_tokens=max_tokens, task=task
-                ):
-                    if delta.text:
-                        text_parts.append(delta.text)
-                    if delta.usage:
-                        usage.input_tokens += delta.usage.input_tokens
-                        usage.output_tokens += delta.usage.output_tokens
-                output = "".join(text_parts)
-                self._schedule_trace_complete(task, messages, eff_model, output, usage)
-                return output, usage
-            except LLMError as exc:
-                last_error = exc
-                logger.warning(
-                    "llm_complete_retry", task=task, attempt=attempt + 1, error=str(exc)[:120]
-                )
-                await asyncio.sleep(delay)
-                delay *= 2
-        raise last_error or LLMError("LLM call failed")
+        try:
+            async for delta in self.stream(
+                messages, model=eff_model, max_tokens=max_tokens, task=task
+            ):
+                if delta.text:
+                    text_parts.append(delta.text)
+                if delta.usage:
+                    usage.input_tokens += delta.usage.input_tokens
+                    usage.output_tokens += delta.usage.output_tokens
+            output = "".join(text_parts)
+            self._schedule_trace_complete(task, messages, eff_model, output, usage)
+            return output, usage
+        except LLMError:
+            # complete() has no emitted stream to protect; one bounded pass is
+            # the whole budget. Re-raise for the caller to degrade gracefully.
+            raise
 
     def _schedule_trace_complete(
         self, task: str, messages: list[dict[str, str]], model: str, output: str, usage: Usage
@@ -453,14 +566,16 @@ class LLMGateway:
         )
 
 
-def _parse_delta(payload: dict[str, Any], protocol: str) -> tuple[str | None, Usage | None]:
-    """Extract (text, usage) from one SSE payload; either side may be absent."""
+def _parse_delta(
+    payload: dict[str, Any], protocol: str
+) -> tuple[str | None, Usage | None, str | None]:
+    """Extract (text, usage, finish_reason) from one SSE payload; any may be absent."""
     if protocol == "anthropic":
         return _parse_anthropic(payload)
     return _parse_openai(payload)
 
 
-def _parse_openai(payload: dict[str, Any]) -> tuple[str | None, Usage | None]:
+def _parse_openai(payload: dict[str, Any]) -> tuple[str | None, Usage | None, str | None]:
     usage = None
     if payload.get("usage"):
         u = payload["usage"]
@@ -470,24 +585,31 @@ def _parse_openai(payload: dict[str, Any]) -> tuple[str | None, Usage | None]:
         )
     choices = payload.get("choices") or []
     text = None
+    finish = None
     if choices:
         delta = choices[0].get("delta") or {}
         text = delta.get("content")
-    return text, usage
+        finish = choices[0].get("finish_reason")
+    return text, usage, finish
 
 
-def _parse_anthropic(payload: dict[str, Any]) -> tuple[str | None, Usage | None]:
+def _parse_anthropic(payload: dict[str, Any]) -> tuple[str | None, Usage | None, str | None]:
     event_type = payload.get("type")
     if event_type == "content_block_delta":
         text = (payload.get("delta") or {}).get("text")
-        return text, None
+        return text, None, None
     if event_type == "message_start":
         u = (payload.get("message") or {}).get("usage") or {}
-        return None, Usage(input_tokens=int(u.get("input_tokens") or 0), output_tokens=0)
+        return None, Usage(input_tokens=int(u.get("input_tokens") or 0), output_tokens=0), None
     if event_type == "message_delta":
         u = payload.get("usage") or {}
-        return None, Usage(input_tokens=0, output_tokens=int(u.get("output_tokens") or 0))
-    return None, None
+        stop_reason = payload.get("delta", {}).get("stop_reason")
+        return (
+            None,
+            Usage(input_tokens=0, output_tokens=int(u.get("output_tokens") or 0)),
+            stop_reason,
+        )
+    return None, None, None
 
 
 def record_usage(model: str, usage: Usage) -> None:
@@ -497,3 +619,6 @@ def record_usage(model: str, usage: Usage) -> None:
     cost = usage.cost_usd(model)
     if cost > 0:
         LLM_COST.labels(model=model).inc(cost)
+
+
+_ = time  # referenced via breaker internals; keep import surface stable
