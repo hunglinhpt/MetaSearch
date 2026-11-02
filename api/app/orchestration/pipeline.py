@@ -11,6 +11,7 @@ stage and cached-answer replay.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 import unicodedata
@@ -40,7 +41,7 @@ from app.db.base import EMBEDDING_DIM
 from app.db.models import Answer, SemanticCache
 from app.db.session import get_sessionmaker
 from app.extraction.chunker import Chunk, chunk_markdown
-from app.extraction.scraper import PageContent, Scraper
+from app.extraction.scraper import PageContent, PageFailure, Scraper
 from app.llm.citations import validate_citations
 from app.llm.embeddings import EmbeddingClient, EmbeddingError
 from app.llm.gateway import LLMError, LLMGateway, Usage, record_usage
@@ -187,6 +188,7 @@ class SearchParams:
     freshness_days: int | None = None
     include_snippets: bool = True
     news: bool = False
+    timeout_ms: int | None = None
 
 
 @dataclass(slots=True)
@@ -196,6 +198,7 @@ class SearchOutcome:
     statuses: list[EngineStatus]
     latency_ms: int
     cached: bool = False
+    complete: bool = True
 
 
 def normalize_query(raw: str) -> str:
@@ -278,8 +281,13 @@ class SearchPipeline:
             },
             results=results,
         )
+        is_complete = not any(s.status in ("timeout", "circuit_broken", "error") for s in statuses)
         return SearchOutcome(
-            query_id=query_id, results=results, statuses=statuses, latency_ms=latency_ms
+            query_id=query_id,
+            results=results,
+            statuses=statuses,
+            latency_ms=latency_ms,
+            complete=is_complete,
         )
 
     async def _cache_lookup(self, query: str, params: SearchParams) -> dict | None:
@@ -418,7 +426,43 @@ class SearchPipeline:
             asyncio.create_task(call_engine(cfg, adapter)): cfg.id
             for cfg, adapter in active_candidates
         }
-        done, pending = await asyncio.wait(tasks, timeout=self.settings.search_fanout_budget_s)
+        from app.core.budget import get_current_budget
+
+        budget = get_current_budget()
+        hard_timeout = (
+            budget.stage("search", self.settings.search_fanout_budget_s)
+            if budget
+            else self.settings.search_fanout_budget_s
+        )
+        soft_timeout = min(self.settings.search_soft_budget_s, hard_timeout)
+        min_engines = self.settings.search_quorum_min_engines
+
+        done: set[asyncio.Task[Any]] = set()
+        pending = set(tasks.keys())
+        successful_engines = 0
+        start_mono = time.monotonic()
+
+        while pending:
+            elapsed = time.monotonic() - start_mono
+            remaining_hard = hard_timeout - elapsed
+            if remaining_hard <= 0.0:
+                break
+            if elapsed >= soft_timeout and successful_engines >= min_engines:
+                break
+
+            step_timeout = min(
+                remaining_hard,
+                max(0.01, soft_timeout - elapsed) if successful_engines < min_engines else 0.05,
+            )
+            step_done, pending = await asyncio.wait(
+                pending, timeout=step_timeout, return_when=asyncio.FIRST_COMPLETED
+            )
+            for t in step_done:
+                done.add(t)
+                with contextlib.suppress(Exception):
+                    res = t.result()
+                    if res and len(res) > 0:
+                        successful_engines += 1
         if pending:
             from app.retrieval.health import Outcome
 
@@ -555,7 +599,20 @@ class AnswerPipeline:
         yield ("sources", {"sources": sources})
 
         yield ("status", {"stage": "scraping", "detail": f"{len(outcome.results)} pages"})
-        pages = await self.scraper.scrape_many([r.url for r in outcome.results])
+        from app.core.budget import get_current_budget
+
+        budget_ctx = get_current_budget()
+        scrape_timeout = (
+            budget_ctx.stage("scrape", 5.0) if budget_ctx else self.settings.scrape_timeout_s
+        )
+        try:
+            async with asyncio.timeout(scrape_timeout):
+                pages = await self.scraper.scrape_many([r.url for r in outcome.results])
+        except TimeoutError:
+            pages = [
+                PageFailure(url=r.url, status="failed", error="scrape stage deadline exceeded")
+                for r in outcome.results
+            ]
         ok_pages = [p for p in pages if isinstance(p, PageContent)]
 
         scored_chunks = await self._score_chunks(
@@ -626,6 +683,7 @@ class AnswerPipeline:
                 {
                     "answer_id": str(answer_id),
                     "latency_ms": latency_ms,
+                    "complete": outcome.complete and bool(ok_pages),
                     "status": "complete",
                     "model": str(verdict.get("chairman_model") or model),
                     "cached": False,
@@ -697,6 +755,7 @@ class AnswerPipeline:
             {
                 "answer_id": str(answer_id),
                 "latency_ms": latency_ms,
+                "complete": outcome.complete and bool(ok_pages),
                 "status": "complete",
                 "model": model,
                 "cached": False,
@@ -733,7 +792,20 @@ class AnswerPipeline:
             {"url": r.url, "title": r.title, "domain": r.domain, "score": round(r.score, 4)}
             for r in outcome.results
         ]
-        pages = await self.scraper.scrape_many([r.url for r in outcome.results])
+        from app.core.budget import get_current_budget
+
+        budget_ctx = get_current_budget()
+        scrape_timeout = (
+            budget_ctx.stage("scrape", 6.0) if budget_ctx else self.settings.scrape_timeout_s
+        )
+        try:
+            async with asyncio.timeout(scrape_timeout):
+                pages = await self.scraper.scrape_many([r.url for r in outcome.results])
+        except TimeoutError:
+            pages = [
+                PageFailure(url=r.url, status="failed", error="scrape stage deadline exceeded")
+                for r in outcome.results
+            ]
         ok_pages = [p for p in pages if isinstance(p, PageContent)]
 
         scored_chunks = await self._score_chunks(normalized, outcome.results, ok_pages)
@@ -787,6 +859,7 @@ class AnswerPipeline:
                 for s in outcome.statuses
             ],
             "latency_ms": latency_ms,
+            "complete": outcome.complete and bool(ok_pages),
         }
 
     async def _finalize_answer(

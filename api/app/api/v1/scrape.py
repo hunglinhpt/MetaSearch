@@ -12,7 +12,18 @@ router = APIRouter(tags=["scrape"])
 
 @router.post("/scrape", response_model=list[ScrapeItem], response_model_exclude_none=True)
 async def scrape(request: ScrapeRequest) -> list[ScrapeItem]:
-    pages = await deps.get_scraper().scrape_many(request.urls, timeout_s=request.timeout_s)
+    from app.core.admission import admit
+    from app.core.budget import create_budget_for_route, use_budget
+
+    budget = create_budget_for_route("scrape", timeout_ms=request.timeout_ms)
+    effective_timeout = (
+        request.timeout_s
+        if request.timeout_s is not None
+        else (float(request.timeout_ms) / 1000.0 if request.timeout_ms else None)
+    )
+    async with admit("scrape"):
+        with use_budget(budget):
+            pages = await deps.get_scraper().scrape_many(request.urls, timeout_s=effective_timeout)
     items: list[ScrapeItem] = []
     for page in pages:
         if hasattr(page, "markdown"):  # PageContent

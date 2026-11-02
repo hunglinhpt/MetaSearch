@@ -22,6 +22,8 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "rate_limited"
     UPSTREAM_TIMEOUT = "upstream_timeout"
     NO_RESULTS = "no_results"
+    OVERLOADED = "overloaded"
+    DEADLINE_EXCEEDED = "deadline_exceeded"
     INTERNAL = "internal"
 
 
@@ -32,6 +34,8 @@ HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.RATE_LIMITED: 429,
     ErrorCode.UPSTREAM_TIMEOUT: 502,
     ErrorCode.NO_RESULTS: 503,
+    ErrorCode.OVERLOADED: 503,
+    ErrorCode.DEADLINE_EXCEEDED: 504,
     ErrorCode.INTERNAL: 500,
 }
 

@@ -19,6 +19,7 @@ class SearchRequest(BaseModel):
     freshness_days: int | None = Field(default=None, ge=1, le=3650)
     include_snippets: bool = True
     news: bool = False
+    timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
 
 
 class CitationItem(BaseModel):
@@ -41,6 +42,7 @@ class ScrapeRequest(BaseModel):
     urls: list[str] = Field(min_length=1, max_length=10)
     timeout_s: float = Field(default=8.0, ge=1, le=30)
     max_chars: int = Field(default=200_000, ge=1, le=1_000_000)
+    timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
 
 
 class ScrapeItem(BaseModel):
@@ -61,6 +63,7 @@ class SearchResponse(BaseModel):
     engines_status: list[dict[str, Any]] = Field(default_factory=list)
     latency_ms: int
     cached: bool = False
+    complete: bool = True
 
 
 class AnswerResponse(BaseModel):
@@ -72,6 +75,7 @@ class AnswerResponse(BaseModel):
     latency_ms: int = 0
     status: str = "complete"
     cached: bool = False
+    complete: bool = True
     council: dict[str, Any] | None = None
 
 

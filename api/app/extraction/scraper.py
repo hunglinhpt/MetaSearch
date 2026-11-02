@@ -144,18 +144,71 @@ class Scraper:
         timeout_s: float | None = None,
         progress: Any = None,
     ) -> list[PageContent | PageFailure]:
-        timeout = self._settings.scrape_timeout_s if timeout_s is None else timeout_s
+        capped_urls = urls[: self._settings.scrape_max_urls]
+        if not capped_urls:
+            return []
+
+        from app.core.budget import get_current_budget
+
+        budget = get_current_budget()
+        stage_budget = (
+            budget.stage("scrape", self._settings.scrape_timeout_s)
+            if budget
+            else (self._settings.scrape_timeout_s if timeout_s is None else timeout_s)
+        )
+        soft_budget = min(self._settings.scrape_soft_budget_s, stage_budget)
+        min_pages = self._settings.scrape_min_pages
+
         sem = asyncio.Semaphore(self._settings.scrape_concurrency)
 
         async def one(url: str) -> PageContent | PageFailure:
             async with sem:
-                return await self.scrape(url, timeout_s=timeout)
+                return await self.scrape(url, timeout_s=self._settings.scrape_url_budget_s)
 
-        results = await asyncio.gather(*(one(u) for u in urls))
-        if progress is not None:
-            for r in results:
-                progress(r)
-        return list(results)
+        task_map = {asyncio.create_task(one(u)): u for u in capped_urls}
+        pending = set(task_map.keys())
+        results: list[PageContent | PageFailure] = []
+        ok_pages = 0
+        start_mono = time.monotonic()
+
+        while pending:
+            elapsed = time.monotonic() - start_mono
+            remaining_stage = stage_budget - elapsed
+            if remaining_stage <= 0.0:
+                break
+            if elapsed >= soft_budget and ok_pages >= min_pages:
+                break
+
+            step_timeout = min(
+                remaining_stage,
+                max(0.01, soft_budget - elapsed) if ok_pages < min_pages else 0.05,
+            )
+            done_batch, pending = await asyncio.wait(
+                pending, timeout=step_timeout, return_when=asyncio.FIRST_COMPLETED
+            )
+            for t in done_batch:
+                try:
+                    res = t.result()
+                    results.append(res)
+                    if isinstance(res, PageContent) and bool(res.markdown):
+                        ok_pages += 1
+                    if progress is not None:
+                        progress(res)
+                except Exception as exc:
+                    results.append(PageFailure(url=task_map[t], status="failed", error=str(exc)))
+
+        if pending:
+            for t in pending:
+                t.cancel()
+                u = task_map[t]
+                results.append(
+                    PageFailure(
+                        url=u, status="failed", error="scrape cancelled (early exit / budget)"
+                    )
+                )
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        return results
 
     async def scrape(
         self, url: str, *, timeout_s: float | None = None
@@ -223,49 +276,66 @@ class Scraper:
         if cached is not None:
             return cached
 
-        body: bytes | None = None
-        final_url = url
-        try:
-            body, final_url = await self._guarded_fetch(url, timeout_s)
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in (403, 429, 503):
-                # Anti-bot challenge / Cloudflare WAF: escalate to proxy tier
-                logger.info(
-                    "direct_fetch_challenge_escalating", url=url, status=exc.response.status_code
-                )
-            else:
-                raise
-        except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
-            # Network-level bot drop or TLS reset: escalate to proxy tier
-            logger.info("direct_fetch_network_drop_escalating", url=url, error=type(exc).__name__)
+        from app.core.budget import get_current_budget
 
-        if body:
-            if is_challenge_page(body):
-                logger.info("direct_fetch_captcha_detected_escalating", url=url)
-            else:
-                if len(body) > self._settings.max_extract_bytes:
+        budget = get_current_budget()
+        url_budget = min(self._settings.scrape_url_budget_s, timeout_s)
+        if budget is not None:
+            url_budget = min(url_budget, budget.remaining())
+        url_budget = max(0.1, url_budget)
+
+        async with asyncio.timeout(url_budget):
+            body: bytes | None = None
+            final_url = url
+            try:
+                body, final_url = await self._guarded_fetch(url, url_budget)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code in (403, 429, 503):
+                    # Anti-bot challenge / Cloudflare WAF: escalate to proxy tier
                     logger.info(
-                        "direct_fetch_body_too_large_truncating",
+                        "direct_fetch_challenge_escalating",
                         url=url,
-                        size=len(body),
-                        max_bytes=self._settings.max_extract_bytes,
+                        status=exc.response.status_code,
                     )
-                    body = body[: self._settings.max_extract_bytes]
-                markdown, title, extractor = await run_cpu(extract_static, body)
-                if markdown:
-                    if len(markdown) > self._settings.max_page_markdown_chars:
-                        markdown = markdown[: self._settings.max_page_markdown_chars]
-                    return PageContent(
-                        url=url,
-                        final_url=final_url,
-                        title=title or url,
-                        markdown=markdown,
-                        extractor_used=extractor,
-                        fetched_at=_utcnow(),
-                    )
+                else:
+                    raise
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+                # Network-level bot drop or TLS reset: escalate to proxy tier
+                logger.info(
+                    "direct_fetch_network_drop_escalating", url=url, error=type(exc).__name__
+                )
 
-        # Ensure the target URL passed to service extractors passed SSRF check
-        target_url = final_url or url
+            if body:
+                if is_challenge_page(body):
+                    logger.info("direct_fetch_captcha_detected_escalating", url=url)
+                else:
+                    if len(body) > self._settings.max_extract_bytes:
+                        logger.info(
+                            "direct_fetch_body_too_large_truncating",
+                            url=url,
+                            size=len(body),
+                            max_bytes=self._settings.max_extract_bytes,
+                        )
+                        body = body[: self._settings.max_extract_bytes]
+                    markdown, title, extractor = await run_cpu(extract_static, body)
+                    if markdown:
+                        if len(markdown) > self._settings.max_page_markdown_chars:
+                            markdown = markdown[: self._settings.max_page_markdown_chars]
+                        return PageContent(
+                            url=url,
+                            final_url=final_url,
+                            title=title or url,
+                            markdown=markdown,
+                            extractor_used=extractor,
+                            fetched_at=_utcnow(),
+                        )
+
+            # Check remaining budget before escalating to crawl4ai / Jina
+            if budget is not None and budget.remaining() <= 0.5:
+                raise TimeoutError("exhausted budget before extractor escalation")
+
+            # Ensure the target URL passed to service extractors passed SSRF check
+            target_url = final_url or url
         await ssrf.resolve_and_check(target_url)
 
         page = await self._crawl4ai(target_url, timeout_s, original_url=url)

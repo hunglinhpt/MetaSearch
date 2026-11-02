@@ -434,19 +434,26 @@ async def test_llm_connection(request: LLMTestRequest, raw_request: Request) -> 
     summary="Prepare deduplicated, scraped, reranked RAG context for an external system's LLM",
 )
 async def build_external_llm_context(request: ContextRequest) -> dict[str, Any]:
-    params = SearchParams(
-        query=request.query,
-        lang=request.lang,
-        k=request.k,
-        engines=request.engines,
-        categories=request.categories,
-        freshness_days=request.freshness_days,
-        include_snippets=request.include_snippets,
-        news=request.news,
-    )
-    return await deps.get_answer_pipeline().prepare_context(
-        params, budget=request.budget, domain=request.domain
-    )
+    from app.core.admission import admit
+    from app.core.budget import create_budget_for_route, use_budget
+
+    budget = create_budget_for_route("context", timeout_ms=request.timeout_ms)
+    async with admit("context"):
+        with use_budget(budget):
+            params = SearchParams(
+                query=request.query,
+                lang=request.lang,
+                k=request.k,
+                engines=request.engines,
+                categories=request.categories,
+                freshness_days=request.freshness_days,
+                include_snippets=request.include_snippets,
+                news=request.news,
+                timeout_ms=request.timeout_ms,
+            )
+            return await deps.get_answer_pipeline().prepare_context(
+                params, budget=request.budget, domain=request.domain
+            )
 
 
 @router.post(

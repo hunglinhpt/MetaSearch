@@ -195,6 +195,12 @@ class Settings(BaseSettings):
     searxng_timeout_s: float = 3.0
     # Overall budget for the fan-out stage before falling back to partial results.
     search_fanout_budget_s: float = 5.0
+    search_soft_budget_s: float = 1.5
+    search_quorum_min_engines: int = 2
+    scrape_min_pages: int = 3
+    scrape_soft_budget_s: float = 2.5
+    scrape_url_budget_s: float = 4.0
+    scrape_max_urls: int = 8
     scrape_timeout_s: float = 8.0
     scrape_concurrency: int = 6
     scrape_global_concurrency: int = 24

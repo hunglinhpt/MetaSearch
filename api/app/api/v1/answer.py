@@ -30,6 +30,7 @@ def _params(request: AnswerRequest) -> SearchParams:
         freshness_days=request.freshness_days,
         include_snippets=request.include_snippets,
         news=request.news,
+        timeout_ms=request.timeout_ms,
     )
 
 
@@ -48,9 +49,30 @@ def _extra_run_kwargs(request: AnswerRequest) -> dict[str, Any]:
 
 @router.post("/answer", response_model=AnswerResponse, response_model_exclude_none=True)
 async def answer(request: AnswerRequest):
-    if request.stream:
-        return EventSourceResponse(_sse(_params(request), _extra_run_kwargs(request)))
-    return await _json(_params(request), _extra_run_kwargs(request))
+    settings = deps.get_settings()
+    gateway = deps.get_gateway()
+    effective_provider = getattr(gateway, "provider", settings.llm_provider)
+    has_override = request.llm is not None
+    is_council = (
+        request.council_mode or bool(request.council_endpoints) or settings.llm_council_enabled
+    )
+    if not has_override and not is_council and effective_provider == "none":
+        raise MetaSearchError(
+            ErrorCode.INTERNAL,
+            "No LLM provider configured. Set LLM_PROVIDER in environment "
+            "or supply 'llm' override in request.",
+            status_code=500,
+        )
+
+    from app.core.admission import admit
+    from app.core.budget import create_budget_for_route, use_budget
+
+    budget = create_budget_for_route("answer", timeout_ms=request.timeout_ms)
+    async with admit("answer"):
+        with use_budget(budget):
+            if request.stream:
+                return EventSourceResponse(_sse(_params(request), _extra_run_kwargs(request)))
+            return await _json(_params(request), _extra_run_kwargs(request))
 
 
 async def _json(
@@ -100,6 +122,7 @@ async def _json(
         latency_ms=meta.get("latency_ms", 0),
         status=meta.get("status", "complete"),
         cached=bool(meta.get("cached", False)),
+        complete=bool(meta.get("complete", True)),
         council=council_data,
     )
 
