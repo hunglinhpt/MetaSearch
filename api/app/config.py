@@ -30,7 +30,9 @@ class Settings(BaseSettings):
 
     # Binds all interfaces inside the container; docker-compose publishes the
     # port on 127.0.0.1 only, so the host is not exposed.
-    api_host: str = "0.0.0.0"  # nosec B104
+    # SEC-03: loopback by default; 0.0.0.0 now requires AUTH_ENABLED=true
+    # (startup guard in main.py).
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     # Comma-separated origins allowed to call the API from a browser (Web UI).
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -236,6 +238,9 @@ class Settings(BaseSettings):
     # exposed deployments; then every /v1 request needs
     # `Authorization: Bearer msk_...` (create keys: metasearch keys create).
     auth_enabled: bool = False
+    # Local-only escape hatch to reach admin endpoints without a key; startup
+    # guard refuses it on non-loopback binds.
+    dev_anon_admin: bool = False
 
     # --- Phase 4: optional observability + MCP ------------------------------
     # OTel needs `pip install '.[otel]'` plus standard OTEL_* env vars.

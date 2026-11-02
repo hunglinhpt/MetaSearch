@@ -44,6 +44,7 @@ class ResearchJob:
     result: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     finished: bool = False
+    owner_key_id: str | None = None
 
     def _flush_token_batch(self) -> None:
         if self._token_batch:

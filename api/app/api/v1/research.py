@@ -17,6 +17,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from app.core.auth import current_api_key_id
 from app.llm.providers import LLMOverride
 from app.orchestration.research import ResearchParams
 from app.orchestration.research_jobs import get_job_store, run_job
@@ -43,6 +44,7 @@ class ResearchRequest(BaseModel):
 async def create_research(request: ResearchRequest) -> dict[str, Any]:
     store = get_job_store()
     job = await store.create(request.query)
+    job.owner_key_id = current_api_key_id.get()
     params = ResearchParams(
         query=request.query,
         lang=request.lang,

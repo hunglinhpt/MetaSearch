@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 from redis.asyncio import Redis
 from sqlalchemy import text
 
@@ -86,5 +86,24 @@ async def readyz(response: Response) -> dict[str, Any]:
 
 
 @router.get("/metrics", summary="Prometheus metrics", include_in_schema=False)
-async def metrics() -> Response:
+async def metrics(request: Request) -> Response:
+    settings = get_settings()
+    if settings.auth_enabled:
+        from app.core.auth import current_role
+
+        if current_role.get() != "admin":
+            from app.core.errors import ErrorCode, MetaSearchError
+
+            raise MetaSearchError(
+                ErrorCode.UNAUTHORIZED, "metrics require an admin key", status_code=403
+            )
+    else:
+        # No-auth deployments keep metrics loopback-only.
+        client_host = request.client.host if request.client else "?"
+        if client_host not in ("127.0.0.1", "::1", "testclient"):
+            from app.core.errors import ErrorCode, MetaSearchError
+
+            raise MetaSearchError(
+                ErrorCode.UNAUTHORIZED, "metrics restricted to loopback", status_code=403
+            )
     return Response(content=render_metrics(), media_type="text/plain; version=0.0.4")

@@ -36,7 +36,16 @@ class RequestContextMiddleware:
         status_code = 500
 
         incoming = dict(scope.get("headers") or []).get(REQUEST_ID_HEADER)
-        request_id = incoming.decode("latin-1") if incoming else uuid.uuid4().hex
+        request_id = uuid.uuid4().hex
+        if incoming:
+            candidate = incoming.decode("latin-1")
+            # SEC-09: bounded charset; anything else gets a fresh id.
+            if (
+                candidate
+                and len(candidate) <= 128
+                and all(c.isalnum() or c in "-_" for c in candidate)
+            ):
+                request_id = candidate
         token = request_id_var.set(request_id)
         structlog.contextvars.bind_contextvars(request_id=request_id)
         scope.setdefault("state", {})["request_id"] = request_id

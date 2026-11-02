@@ -47,6 +47,8 @@ class ApiKey(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     name: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str] = mapped_column(Text, server_default="user")
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, server_default="60")
+    max_concurrent: Mapped[int] = mapped_column(Integer, server_default="5")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enabled: Mapped[bool] = mapped_column(Boolean, server_default="true")
 
 

@@ -333,3 +333,60 @@ class TestLangfuseTracing:
         )
         assert sent["url"].endswith("/api/public/traces")
         assert sent["auth"].startswith("Basic ")
+
+
+class TestWP11StartupGuardAndTenancy:
+    """WP-11: startup guard, owner isolation, admin surface, sanitization."""
+
+    def test_refuses_public_bind_without_auth(self):
+        from app.core.auth import validate_startup_auth
+
+        problems = validate_startup_auth(
+            api_host="0.0.0.0", auth_enabled=False, environment="dev", dev_anon_admin=False
+        )
+        assert problems, "0.0.0.0 + auth off must be flagged"
+        ok = validate_startup_auth(
+            api_host="127.0.0.1", auth_enabled=False, environment="dev", dev_anon_admin=False
+        )
+        assert ok == []
+
+    def test_refuses_prod_without_auth(self):
+        from app.core.auth import validate_startup_auth
+
+        problems = validate_startup_auth(
+            api_host="127.0.0.1", auth_enabled=False, environment="prod", dev_anon_admin=False
+        )
+        assert any("prod" in p for p in problems)
+
+    def test_dev_anon_admin_refused_off_loopback(self):
+        from app.core.auth import validate_startup_auth
+
+        problems = validate_startup_auth(
+            api_host="0.0.0.0", auth_enabled=False, environment="dev", dev_anon_admin=True
+        )
+        assert any("DEV_ANON_ADMIN" in p for p in problems)
+
+    def test_anonymous_is_not_admin_without_escape(self, monkeypatch, client):
+        from app.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "dev_anon_admin", False)
+        resp = client.patch("/v1/engines/searxng", json={"enabled": False})
+        assert resp.status_code == 403
+
+    def test_request_id_sanitized(self, client):
+        bad_id = "x" * 300 + "<script>"
+        resp = client.get("/healthz", headers={"x-request-id": bad_id})
+        assert resp.status_code == 200
+        returned = resp.headers.get("x-request-id", "")
+        assert returned != bad_id
+        assert len(returned) <= 128
+        assert all(c.isalnum() or c in "-_" for c in returned)
+
+    def test_metrics_loopback_allowed(self, client):
+        # TestClient connects from loopback: allowed when auth is off.
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+
+    def test_meta_public_payload_shrunk(self, client):
+        data = client.get("/v1/meta").json()
+        assert set(data.keys()) <= {"name", "version"}

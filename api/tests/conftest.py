@@ -10,6 +10,7 @@ import os
 import socket
 
 os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("DEV_ANON_ADMIN", "true")  # loopback test rig: anon reaches admin endpoints
 os.environ.setdefault("LOG_LEVEL", "WARNING")
 os.environ.setdefault("LOG_JSON", "false")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
