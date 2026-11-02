@@ -30,7 +30,7 @@ def test_expected_metric_families_are_registered() -> None:
 
 def test_metric_objects_are_usable() -> None:
     ENGINE_CALLS.labels(engine="searxng", outcome="success").inc()
-    CACHE_EVENTS.labels(layer="l1", outcome="hit").inc()
+    CACHE_EVENTS.labels(kind="search", outcome="hit").inc()
     LLM_TOKENS.labels(model="gpt-4o-mini", direction="input").inc(10)
     READINESS.set(1)
     assert "metasearch_readiness 1.0" in render_metrics().decode()
