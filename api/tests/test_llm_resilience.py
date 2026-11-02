@@ -14,7 +14,8 @@ import httpx
 import pytest
 
 from app.config import get_settings
-from app.core import auth as auth_mod  # noqa: F401 - keeps conftest ordering stable
+from app.core import auth as auth_mod
+from app.core.errors import MetaSearchError
 from app.extraction.chunker import Chunk
 from app.llm.gateway import (
     LLMError,
@@ -542,3 +543,73 @@ class TestWPObservability:
 
         names = [c.name for c in REGISTRY.collect()]
         assert "metasearch_event_loop_lag_seconds" in names
+
+
+class TestExpiredKey:
+    async def test_expired_key_rejected(self, monkeypatch):
+        """SEC fix: a key past its expires_at must be rejected, not accepted."""
+        from datetime import UTC, datetime, timedelta
+
+        class FakeRow:
+            id = "kid"
+            name = "expired"
+            role = "user"
+            rate_limit_rpm = 60
+            enabled = True
+            expires_at = datetime.now(UTC) - timedelta(hours=1)  # expired
+
+        class FakeResult:
+            def scalar_one_or_none(self):
+                return FakeRow()
+
+        class FakeSession:
+            async def execute(self, stmt):
+                return FakeResult()
+
+        class FakeMaker:
+            def __call__(self):
+                return self
+
+            async def __aenter__(self):
+                return FakeSession()
+
+            async def __aexit__(self, *a):
+                return False
+
+        monkeypatch.setattr(auth_mod, "get_sessionmaker", FakeMaker())
+        with pytest.raises(MetaSearchError) as excinfo:
+            await auth_mod.authenticate("msk_expired_key")
+        assert excinfo.value.status_code == 401
+
+    async def test_valid_future_expiry_accepted(self, monkeypatch):
+        from datetime import UTC, datetime, timedelta
+
+        class FakeRow:
+            id = "kid"
+            name = "valid"
+            role = "user"
+            rate_limit_rpm = 60
+            enabled = True
+            expires_at = datetime.now(UTC) + timedelta(days=365)
+
+        class FakeResult:
+            def scalar_one_or_none(self):
+                return FakeRow()
+
+        class FakeSession:
+            async def execute(self, stmt):
+                return FakeResult()
+
+        class FakeMaker:
+            def __call__(self):
+                return self
+
+            async def __aenter__(self):
+                return FakeSession()
+
+            async def __aexit__(self, *a):
+                return False
+
+        monkeypatch.setattr(auth_mod, "get_sessionmaker", FakeMaker())
+        ctx = await auth_mod.authenticate("msk_valid_future")
+        assert ctx.role == "user"

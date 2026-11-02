@@ -23,6 +23,7 @@ import time
 from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import Request
@@ -134,11 +135,15 @@ async def authenticate(bearer: str | None) -> AuthContext:
         return cached[0]
 
     try:
+        now_utc = datetime.now(UTC)
         async with get_sessionmaker()() as session:
             row = (
                 await session.execute(
                     select(ApiKeyRow).where(
-                        ApiKeyRow.key_hash == key_hash, ApiKeyRow.enabled.is_(True)
+                        ApiKeyRow.key_hash == key_hash,
+                        ApiKeyRow.enabled.is_(True),
+                        # SEC fix: expired keys must be rejected at the DB level.
+                        (ApiKeyRow.expires_at.is_(None)) | (ApiKeyRow.expires_at > now_utc),
                     )
                 )
             ).scalar_one_or_none()
