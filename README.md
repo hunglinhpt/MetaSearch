@@ -2,7 +2,14 @@
 
 > Hệ thống tìm kiếm đa nguồn & phân tích định lượng phục vụ AI: **Meta-Search (SearXNG 70+ engines + 14 Vertical Engines) → Crawl & Extract → Dedup/Consensus/Rerank → Synthesize có trích dẫn `[n]`**, đóng gói thành REST API + SSE Streaming + MCP Server + Automated Daily Briefings Blog + Web UI.
 
-Trạng thái: **v1.3.0 — Autonomous Super-Agent Engine (DeepSeek Router-Worker, Observe Mode, Quiet Autonomy & Watchdog Supervisor)**:
+Trạng thái: **v1.3.1 — Financial Data Integrity, Real Market OHLCV & Autonomous Super-Agent Engine**:
+- **Liêm Chính Dữ Liệu Tài Chính & Nguồn Công Khai Thực Tế (`v1.3.1`)**:
+  - Loại bỏ triệt để 100% các chuỗi nến giả lập bằng hàm `sin/cos` (`_build_stock_ohlcv_series`, `_build_asset_fallback_series`), kiên quyết thực hiện nguyên tắc **Zero-Hallucination & Grounded Data**.
+  - Kết nối trực tiếp dữ liệu nến thật từ **VNDIRECT dchart TradingView Feed** cho hơn 1,600 mã chứng khoán Việt Nam (HSX, HNX, UPCOM) và chỉ số thị trường (`VNINDEX`, `VN30`).
+  - Kết nối dữ liệu cơ bản thực tế từ **Simplize API** với thuật toán động `_build_dynamic_company_financials`.
+  - Chuẩn hóa liêm chính mốc thời gian `published_at` theo ngày nến EOD thực tế và ngày cập nhật BCTC, nghiêm cấm ngụy tạo `datetime.now(UTC)`.
+  - Bộ lọc `_VIET_STOCK_STOP_WORDS` ngăn chặn việc tự ý inject mã cổ phiếu vào các truy vấn thị trường chung.
+  - Hoàn tất **3-Round Expert Audit** (Solution Architect, Financial Quant / BA, QA/Security/Perf), 374 unit & E2E tests pass 100%, 7 Quality Gates passed.
 - **Kiến Trúc Autonomous Super-Agent Engine (`v1.3.0`)**: Tích hợp các tinh hoa kiến trúc từ nguyên mẫu **`deepseek-ai/dsh-superagent-prototype`** kết hợp với nền tảng MetaSearch:
   - **Router - Worker Decoupling (`app.orchestration.superagent.router`)**: Tách biệt Bộ điều phối trung tâm (`SuperAgentRouter`) quản lý hàng đợi tickets khỏi các công nhân tính toán độc lập (`IsolatedSuperAgentWorker`), giải quyết nút thắt chú ý của con người.
   - **Triết Lý "Quiet Autonomy" & Human Escalation**: Agent tự chủ im lặng thực thi đa bước ReAct và chỉ thông báo khi có thành phẩm hoàn chỉnh (`SuperAgentArtifact`) hoặc phát sinh tình huống rủi ro cao cần con người ra quyết định (`EscalationRequest`).

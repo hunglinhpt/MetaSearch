@@ -2,11 +2,72 @@
 
 from __future__ import annotations
 
+import httpx
+import pytest
+
 from app.orchestration.research import detect_profile
 from app.retrieval.adapters.viet_stock import (
     VietStockAdapter,
     _extract_tickers,
 )
+
+
+@pytest.fixture
+def mock_viet_stock_network(monkeypatch):
+    """Provides grounded mocked responses for VNDIRECT and Simplize APIs."""
+    original = httpx.AsyncClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        # VNDIRECT dchart API mock
+        if "dchart-api.vndirect.com.vn" in url_str:
+            t_base = 1730000000
+            t_list = [t_base + i * 86400 for i in range(60)]
+            c_list = [120.0 + (i * 0.15) for i in range(60)]
+            return httpx.Response(
+                200,
+                json={
+                    "s": "ok",
+                    "t": t_list,
+                    "o": [c * 0.995 for c in c_list],
+                    "h": [c * 1.015 for c in c_list],
+                    "l": [c * 0.985 for c in c_list],
+                    "c": c_list,
+                    "v": [2_500_000.0] * 60,
+                },
+            )
+        # Simplize API mock
+        if "api.simplize.vn" in url_str:
+            sym = url_str.split("/")[-1].upper()
+            return httpx.Response(
+                200,
+                json={
+                    "status": 200,
+                    "data": {
+                        "ticker": sym,
+                        "nameVi": f"Công ty Cổ phần {sym}",
+                        "industryActivity": "Công nghệ thông tin",
+                        "stockExchange": "HSX",
+                        "marketCap": 185_500_000_000_000.0,
+                        "outstandingSharesValue": 1_460_400_000.0,
+                        "priceClose": 127000.0,
+                        "peRatio": 24.5,
+                        "pbRatio": 5.8,
+                        "epsRatio": 5180.0,
+                        "roe": 28.2,
+                        "roa": 14.1,
+                        "freeFloatRate": 49.0,
+                        "analysisUpdated": "31/10/2024",
+                    },
+                },
+            )
+        return httpx.Response(404, json={})
+
+    def make_client(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", make_client)
 
 
 class TestVietStockAdapter:
@@ -27,7 +88,14 @@ class TestVietStockAdapter:
         assert "PVS" in _extract_tickers("Dịch vụ kỹ thuật dầu khí PTSC")
         assert "DGC" in _extract_tickers("Nhà máy Hóa chất Đức Giang")
 
-    async def test_search_fpt_earnings_plan(self):
+    def test_stop_words_filtering(self):
+        # Ensure common Vietnamese and financial acronyms are not matched as tickers
+        assert _extract_tickers("xem báo cáo tài chính BCTC và chỉ số ROE ROA") == []
+        assert _extract_tickers("cổ tức tiền mặt hôm nay cho người dân") == []
+        assert _extract_tickers("phân tích mô hình VCP MACD RSI") == []
+        assert _extract_tickers("thị trường chứng khoán Việt Nam hôm nay") == []
+
+    async def test_search_fpt_earnings_plan(self, mock_viet_stock_network):
         adapter = VietStockAdapter()
         results = await adapter.search("kế hoạch kinh doanh và kết quả BCTC FPT 2024")
         assert len(results) >= 2
@@ -38,17 +106,28 @@ class TestVietStockAdapter:
         assert "Công nghệ thông tin" in profile_res.snippet
         assert "P/E: 24.5" in profile_res.snippet
         assert "ROE: 28.2%" in profile_res.snippet
-        assert "Vượt kế hoạch" in profile_res.snippet
-        assert "EPS: 5,180 đ" in profile_res.snippet
-        assert "11,120/10,875" in profile_res.snippet
+        assert profile_res.published_at is not None
+        # Check published_at is properly grounded, not datetime.now()
+        assert profile_res.published_at.year in (2024, 2025, 2026)
 
         # 2. Plan & Earnings deep-dive
         plan_res = results[1]
         assert "KẾT QUẢ KINH DOANH" in plan_res.snippet
         assert "62,980" in plan_res.snippet or "61,890" in plan_res.snippet
-        assert "101.8%" in plan_res.snippet
 
-    async def test_search_hpg_dividend_history(self):
+    async def test_search_fpt_technical_analysis_with_real_candles(self, mock_viet_stock_network):
+        adapter = VietStockAdapter()
+        results = await adapter.search("phân tích kỹ thuật FPT RSI MACD")
+        tech_items = [r for r in results if "KỸ THUẬT NÂNG CAO" in r.snippet]
+        assert len(tech_items) == 1
+        t_res = tech_items[0]
+        assert "Real VNDIRECT TradingView EOD" in t_res.snippet
+        assert "Fibo Retracement" in t_res.snippet
+        assert "Mây Ichimoku" in t_res.snippet
+        assert t_res.published_at is not None
+        assert t_res.published_at.year == 2024
+
+    async def test_search_hpg_dividend_history(self, mock_viet_stock_network):
         adapter = VietStockAdapter()
         results = await adapter.search("lịch sử trả cổ tức HPG ngày GDKHQ tiền mặt cổ phiếu")
         assert len(results) >= 2
@@ -60,7 +139,7 @@ class TestVietStockAdapter:
         assert "Dung Quất 2" in div_res.snippet or "cổ tức" in div_res.snippet.lower()
         assert "HPG" in div_res.title
 
-    async def test_search_vcb_shareholders_and_deals(self):
+    async def test_search_vcb_shareholders_and_deals(self, mock_viet_stock_network):
         adapter = VietStockAdapter()
         results = await adapter.search(
             "cơ cấu cổ đông và giao dịch trao tay mua bán VCB khối ngoại"
@@ -76,7 +155,7 @@ class TestVietStockAdapter:
         assert "thỏa thuận" in d_res.snippet.lower()
         assert "room ngoại" in d_res.snippet.lower()
 
-    async def test_search_hnx_idc_restructuring_and_esop(self):
+    async def test_search_hnx_idc_restructuring_and_esop(self, mock_viet_stock_network):
         adapter = VietStockAdapter()
         results = await adapter.search("IDC sàn HNX tăng vốn quỹ đất KCN và cổ tức")
         assert len(results) >= 2
@@ -86,14 +165,31 @@ class TestVietStockAdapter:
         assert "Thủ phủ cổ tức tiền mặt sàn HNX" in top.snippet or "30-40%" in top.snippet
         assert "HNX" in top.title
 
-    async def test_general_hsx_hnx_overview_query(self):
+    async def test_general_market_query_not_hijacked(self):
         adapter = VietStockAdapter()
-        results = await adapter.search("danh sách các công ty niêm yết trên sàn hsx hnx")
-        assert len(results) >= 5
-        titles = [r.title for r in results]
-        assert any("FPT" in t for t in titles)
-        assert any("HPG" in t for t in titles)
-        assert any("VCB" in t for t in titles)
+        # General queries without specific ticker must NOT be hijacked with arbitrary stocks
+        assert await adapter.search("danh sách các công ty niêm yết trên sàn hsx hnx") == []
+        assert await adapter.search("thị trường chứng khoán hôm nay thế nào") == []
+        assert await adapter.search("hướng dẫn đầu tư cổ phiếu cho người mới") == []
+
+    async def test_offline_graceful_degradation_no_synthetic_candles(self, monkeypatch):
+        # Simulate network failure / 500 error on all APIs
+        def fail_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, json={"error": "offline"})
+
+        original = httpx.AsyncClient
+
+        def make_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(fail_handler)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+
+        adapter = VietStockAdapter()
+        results = await adapter.search("phân tích kỹ thuật FPT")
+        # Should NOT contain synthetic sin/cos technical series when offline
+        tech_items = [r for r in results if "KỸ THUẬT NÂNG CAO" in r.snippet]
+        assert tech_items == []
 
     def test_research_profile_detection_viet_stock_keywords(self):
         assert detect_profile("Kế hoạch kinh doanh và cổ tức FPT 2025") == "financial"

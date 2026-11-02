@@ -14,7 +14,6 @@ from __future__ import annotations
 import csv
 import io
 import logging
-import math
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -106,36 +105,6 @@ _GLOBAL_SYMBOL_MAP: dict[str, str] = {
     "coinbase": "coin.us",
     "microstrategy": "mstr.us",
     "mstr": "mstr.us",
-}
-
-_ASSET_BASELINES: dict[str, float] = {
-    "^spx": 5_850.0,
-    "^dji": 43_200.0,
-    "^ndq": 20_400.0,
-    "^nkx": 38_900.0,
-    "^dax": 19_450.0,
-    "xauusd": 2_745.0,
-    "cl.f": 71.50,
-    "10yus.b": 4.25,
-    "usdvnd": 25_380.0,
-    "nvda.us": 141.50,
-    "aapl.us": 233.00,
-    "msft.us": 428.50,
-    "tsla.us": 258.00,
-    "googl.us": 181.20,
-    "goog.us": 182.50,
-    "amzn.us": 210.40,
-    "meta.us": 592.00,
-    "amd.us": 152.30,
-    "intc.us": 23.40,
-    "pltr.us": 44.80,
-    "tsm.us": 194.50,
-    "avgo.us": 178.00,
-    "nflx.us": 755.00,
-    "baba.us": 98.50,
-    "jpm.us": 228.00,
-    "coin.us": 215.00,
-    "mstr.us": 245.00,
 }
 
 _STOP_WORDS_GLOBAL = {
@@ -397,41 +366,6 @@ def _extract_stooq_symbol(query: str) -> str | None:
     return None
 
 
-def _build_asset_fallback_series(
-    symbol: str,
-) -> tuple[list[float], list[float], list[float], list[float], list[float]]:
-    """Builds a realistic 60-session OHLCV series anchored to the asset's real baseline."""
-    base_p = _ASSET_BASELINES.get(symbol.lower(), 150.0)
-    seed_val = sum((i + 1) * ord(c) for i, c in enumerate(symbol.lower()))
-    phase = (seed_val % 9) * 0.5
-    vol_pct = 0.008 if symbol.startswith("^") or symbol == "usdvnd" else 0.016
-
-    opens: list[float] = []
-    highs: list[float] = []
-    lows: list[float] = []
-    closes: list[float] = []
-    volumes: list[float] = []
-
-    for i in range(60):
-        t_off = i - 59
-        wave = math.sin(i * 0.35 + phase) * vol_pct + math.cos(i * 0.17 + phase) * (vol_pct * 0.5)
-        c_val = base_p * (1.0 + t_off * 0.0018 + wave)
-        o_val = closes[-1] if closes else c_val * 0.997
-        spread = base_p * vol_pct * (0.8 + (i % 4) * 0.15)
-        h_val = max(o_val, c_val) + spread * 0.55
-        l_val = min(o_val, c_val) - spread * 0.45
-        opens.append(round(o_val, 4))
-        highs.append(round(h_val, 4))
-        lows.append(round(l_val, 4))
-        closes.append(round(c_val, 4))
-        volumes.append(12_500_000.0 * (1.0 + 0.2 * math.sin(i)))
-
-    closes[-1] = base_p
-    highs[-1] = max(highs[-1], base_p * (1.0 + vol_pct * 0.5))
-    lows[-1] = min(lows[-1], base_p * (1.0 - vol_pct * 0.5))
-    return opens, highs, lows, closes, volumes
-
-
 class StooqFinanceAdapter:
     id = "stooq"
 
@@ -467,8 +401,7 @@ class StooqFinanceAdapter:
         lows: list[float] = []
         closes: list[float] = []
         volumes: list[float] = []
-        latest_date = "Gần nhất"
-        is_live_data = False
+        latest_date: str | None = None
 
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_s) as client:
@@ -492,24 +425,29 @@ class StooqFinanceAdapter:
                                 highs.append(h)
                                 lows.append(l_val)
                                 volumes.append(v)
-                                latest_date = r.get("Date", latest_date)
+                                latest_date = str(r.get("Date", "")).strip() or latest_date
                         except (ValueError, TypeError):
                             continue
-                    if len(closes) >= 15:
-                        is_live_data = True
         except Exception as exc:
             logger.debug("stooq_fetch_failed: %s", exc)
 
-        # Fallback asset-calibrated series if Stooq rate-limits or network partition
-        if not closes:
-            opens, highs, lows, closes, volumes = _build_asset_fallback_series(symbol)
-            latest_date = datetime.now(UTC).strftime("%Y-%m-%d")
+        # Fail gracefully without synthesizing hallucinated data
+        if not closes or len(closes) < 5:
+            logger.debug("stooq_insufficient_or_missing_data for %s (bars=%d)", symbol, len(closes))
+            return []
+
+        pub_dt: datetime | None = None
+        if latest_date:
+            try:
+                pub_dt = datetime.strptime(latest_date, "%Y-%m-%d").replace(tzinfo=UTC)
+            except Exception:
+                pub_dt = None
 
         curr_price = closes[-1]
         prev_price = closes[-2] if len(closes) >= 2 else curr_price
         pct_change = ((curr_price - prev_price) / prev_price) * 100 if prev_price else 0.0
         sign = "+" if pct_change >= 0 else ""
-        source_mode = "Live Stooq OHLCV" if is_live_data else "Calibrated Institutional Snapshot"
+        source_mode = "Live Stooq Real EOD"
 
         # Perform quantitative computations on recent 90-session swing window
         swing_h = highs[-90:] if len(highs) >= 90 else highs
@@ -533,8 +471,9 @@ class StooqFinanceAdapter:
                 f"Hist={macd_info['histogram']:+,.2f})"
             )
 
+        date_str = latest_date or "EOD"
         tech_snippet = (
-            f"[{symbol.upper()} · {source_mode} · {latest_date}] "
+            f"[{symbol.upper()} · {source_mode} · {date_str}] "
             f"Giá: {curr_price:,.2f} ({sign}{pct_change:.2f}%) · "
             f"Xu hướng: {trendline.trend_type} ({trendline.channel_slope_deg}°, "
             f"R²={trendline.r_squared:.2f}) · "
@@ -557,7 +496,7 @@ class StooqFinanceAdapter:
                 rank=1,
                 adapter=self.id,
                 source_engines=[self.id],
-                published_at=datetime.now(UTC),
+                published_at=pub_dt,
             ),
             RawResult(
                 url=f"https://stooq.com/q/a/?s={symbol}",
@@ -566,6 +505,6 @@ class StooqFinanceAdapter:
                 rank=2,
                 adapter=self.id,
                 source_engines=[self.id],
-                published_at=datetime.now(UTC),
+                published_at=pub_dt,
             ),
         ][:max_results]

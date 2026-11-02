@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import httpx
+
 from app.extraction.chunker import Chunk
 from app.orchestration.pipeline import infer_categories_from_query
 from app.orchestration.research import ContextPack, detect_profile
@@ -313,11 +315,41 @@ class TestWave3FinancialForensicsAndTechnicals:
 
 
 class TestWave4MultiEngineAdapters:
-    async def test_viet_stock_word_boundary_and_unique_trajectories(self):
+    async def test_viet_stock_word_boundary_and_unique_trajectories(self, monkeypatch):
         # Must NOT match 'ssi' in 'discussion' or 'idc' in 'idcard'
         assert _extract_tickers("online discussion about idcard") == []
         # Must match real tickers and Vietnamese company names
         assert _extract_tickers("phân tích cổ phiếu FPT và Techcombank") == ["TCB", "FPT"]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "dchart-api.vndirect.com.vn" in url_str:
+                sym = "FPT" if "FPT" in url_str else "HPG"
+                base_p = 125.0 if sym == "FPT" else 28.0
+                t_base = 1730000000
+                t_list = [t_base + i * 86400 for i in range(60)]
+                c_list = [base_p + (i * 0.1) for i in range(60)]
+                return httpx.Response(
+                    200,
+                    json={
+                        "s": "ok",
+                        "t": t_list,
+                        "o": [c * 0.995 for c in c_list],
+                        "h": [c * 1.015 for c in c_list],
+                        "l": [c * 0.985 for c in c_list],
+                        "c": c_list,
+                        "v": [2_500_000.0] * 60,
+                    },
+                )
+            return httpx.Response(404, json={})
+
+        original = httpx.AsyncClient
+
+        def make_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", make_client)
 
         adapter = VietStockAdapter()
         fpt_res = await adapter.search("phân tích kỹ thuật FPT RSI 9")
@@ -326,7 +358,7 @@ class TestWave4MultiEngineAdapters:
         fpt_tech = next(r for r in fpt_res if "KỸ THUẬT NÂNG CAO" in r.snippet)
         hpg_tech = next(r for r in hpg_res if "KỸ THUẬT NÂNG CAO" in r.snippet)
         assert "RSI(9)" in fpt_tech.snippet
-        # Ensure FPT and HPG do not share an identical synthetic slope & Fibo support
+        # Ensure FPT and HPG do not share an identical slope & Fibo support
         assert fpt_tech.snippet != hpg_tech.snippet
 
     async def test_stooq_rejects_english_substrings_and_acronyms(self):

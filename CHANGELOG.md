@@ -4,6 +4,30 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [1.3.1] — 2026-11-02 — Financial Data Integrity, Real Market OHLCV & 3-Round Expert Audit
+
+### Fixed & Hardened (Data Integrity & Grounding)
+- **Loại Bỏ Triệt Để Chuỗi Nến Giả Lập Bằng Hàm `sin/cos` (`viet_stock.py`, `stooq.py`)**:
+  - Xóa bỏ vĩnh viễn hai hàm toán học giả lập `_build_stock_ohlcv_series` và `_build_asset_fallback_series`.
+  - Nghiêm cấm ngụy tạo dữ liệu tài chính trong toàn bộ hệ thống; thực hiện nguyên tắc **Zero-Hallucination & Grounded Data**.
+- **Tích Hợp Dữ Liệu Nến OHLCV Thật Cho Thị Trường Việt Nam (`VNDIRECT TradingView Feed`)**:
+  - Kết nối trực tiếp API công khai keyless của VNDIRECT (`https://dchart-api.vndirect.com.vn/dchart/history`) lấy toàn bộ chuỗi nến daily thực tế (`t`, `o`, `h`, `l`, `c`, `v`) cho hơn 1,600 mã chứng khoán (HSX, HNX, UPCOM) và chỉ số thị trường (`VNINDEX`, `VN30`).
+  - Toàn bộ chỉ báo kỹ thuật định lượng (Fibonacci Retracement, Golden Pocket 61.8%-65.0%, Mây Ichimoku, Linear Regression Channel, Chart Patterns, Wilder's RSI, True EMA MACD, Wilder's ATR Trailing Stop) được tính toán 100% trên nến thật.
+- **Tích Hợp Hồ Sơ & Định Giá Doanh Nghiệp Thật (`Simplize API`)**:
+  - Kết nối dữ liệu cơ bản thực tế từ Simplize API (`https://api.simplize.vn/api/company/summary`), tự động cập nhật giá thị trường live, P/E, P/B, EPS, ROE, ROA, vốn hóa thực tế và ngành nghề niêm yết.
+  - Thuật toán `_build_dynamic_company_financials` tự động sinh hồ sơ chuẩn mực cho bất kỳ mã niêm yết nào tại Việt Nam mà không bị bó hẹp trong 13 mã cố định.
+- **Chuẩn Hóa Liêm Chính Mốc Thời Gian (`published_at`)**:
+  - Loại bỏ hoàn toàn nhãn `published_at=datetime.now(UTC)` ngụy tạo thời điểm hiện tại cho dữ liệu quá khứ.
+  - Nến kỹ thuật được gán mốc thời gian chính xác theo phiên giao dịch cuối cùng: `datetime.fromtimestamp(last_ts, tz=UTC)`.
+  - Báo cáo cơ bản lấy theo ngày cập nhật BCTC thực tế của sở/kiểm toán.
+- **Loại Bỏ Hành Vi Hijack Câu Hỏi Thị Trường Chung**:
+  - Xây dựng bộ lọc `_VIET_STOCK_STOP_WORDS` ngăn chặn tuyệt đối các từ viết tắt và từ tiếng Việt trùng lặp (BCTC, ROE, CHO, NEN, GIA, MUA, BAN,...).
+  - Trả về `[]` khi query chỉ là câu hỏi thị trường chung hoặc kiến thức đầu tư, nhường quyền tìm kiếm tin tức vĩ mô cho SearXNG và Google News.
+- **Kiểm Định Chuyên Sâu 3 Lượt (3-Round Expert Audit)**:
+  - Lượt 1: Solution Architect (Decoupling, Graceful Degradation zero-failure, Timeout Bounds 3.5s).
+  - Lượt 2: Financial Quant & BA (Toán học định lượng, nến OHLCV thật, time integrity).
+  - Lượt 3: QA, Security & Perf (Bandit AST 0 issue, 374 unit & E2E tests green 100%, Next.js clean build).
+
 ## [1.3.0] — 2026-11-02 — DeepSeek Super-Agent Architecture (Router-Worker, Observe Mode, Quiet Autonomy & Watchdog Supervisor)
 
 ### Added

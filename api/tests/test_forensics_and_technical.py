@@ -235,7 +235,26 @@ class TestStooqAdapter:
         assert "Ichimoku" in res.snippet
         assert res.adapter == "stooq"
 
-    async def test_stooq_vietnamese_query_extraction(self):
+    async def test_stooq_vietnamese_query_extraction(self, monkeypatch):
+        csv_sample = """Date,Open,High,Low,Close,Volume
+2024-10-25,180.0,183.0,179.0,181.5,25000000
+2024-10-28,182.0,184.5,181.0,183.0,22000000
+2024-10-29,183.5,185.0,182.0,184.0,20000000
+2024-10-30,184.0,186.0,183.0,185.5,28000000
+2024-10-31,185.0,188.0,184.0,187.5,32000000
+"""
+
+        def mock_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text=csv_sample)
+
+        original = httpx.AsyncClient
+
+        def make_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(mock_handler)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+
         adapter = StooqFinanceAdapter()
 
         # Query with Vietnamese words before ticker
@@ -252,6 +271,22 @@ class TestStooqAdapter:
         res_us = await adapter.search("chứng khoán mỹ")
         assert len(res_us) >= 1
         assert "^SPX" in res_us[0].title
+
+    async def test_stooq_fails_gracefully_when_network_down(self, monkeypatch):
+        # Stooq 500 error must return empty list without synthesizing fake data
+        def mock_fail(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, text="Internal Server Error")
+
+        original = httpx.AsyncClient
+
+        def make_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(mock_fail)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+
+        adapter = StooqFinanceAdapter()
+        assert await adapter.search("NVDA") == []
 
     async def test_stooq_non_financial_query_ignored(self):
         adapter = StooqFinanceAdapter()
@@ -274,7 +309,35 @@ class TestVietStockDeepForensicsAndTechnicals:
         assert "DSO" in f_res.snippet
         assert "CFO" in f_res.snippet
 
-    async def test_search_viet_stock_technical_query(self):
+    async def test_search_viet_stock_technical_query(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            url_str = str(request.url)
+            if "dchart-api.vndirect.com.vn" in url_str:
+                t_base = 1730000000
+                t_list = [t_base + i * 86400 for i in range(60)]
+                c_list = [28.0 + (i * 0.05) for i in range(60)]
+                return httpx.Response(
+                    200,
+                    json={
+                        "s": "ok",
+                        "t": t_list,
+                        "o": [c * 0.995 for c in c_list],
+                        "h": [c * 1.015 for c in c_list],
+                        "l": [c * 0.985 for c in c_list],
+                        "c": c_list,
+                        "v": [35_000_000.0] * 60,
+                    },
+                )
+            return httpx.Response(404, json={})
+
+        original = httpx.AsyncClient
+
+        def make_client(*args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+
         adapter = VietStockAdapter()
         results = await adapter.search("fibonacci retracement và mây ichimoku HPG")
         assert len(results) >= 1

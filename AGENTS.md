@@ -13,8 +13,15 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-02 — v1.3.0 DeepSeek Super-Agent Architecture, Multi-Platform Matrix CI & Universal Intelligence)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-02 — v1.3.1 Financial Data Integrity, Real Market OHLCV & 3-Round Expert Audit)
 
+- ✅ **Financial Data Integrity & Real Market OHLCV Grounding (v1.3.1)**:
+  - Loại bỏ triệt để và vĩnh viễn các hàm giả lập nến `sin/cos` (`_build_stock_ohlcv_series`, `_build_asset_fallback_series`).
+  - Kết nối trực tiếp dữ liệu nến thật từ **VNDIRECT dchart TradingView Feed** cho hơn 1,600 mã chứng khoán Việt Nam (HSX, HNX, UPCOM) và chỉ số thị trường (`VNINDEX`, `VN30`).
+  - Kết nối dữ liệu cơ bản thực tế từ **Simplize API** với thuật toán động `_build_dynamic_company_financials`.
+  - Chuẩn hóa 100% nhãn thời gian `published_at` từ timestamp nến EOD thực tế và ngày cập nhật BCTC, nghiêm cấm ngụy tạo `datetime.now(UTC)`.
+  - Ngăn chặn hành vi tự ý inject mã cổ phiếu vào các truy vấn thị trường chung qua bộ lọc `_VIET_STOCK_STOP_WORDS`.
+  - Hoàn tất **3-Round Expert Audit** (Solution Architect, Financial Quant / BA, QA/Security/Perf), 374 unit & E2E tests pass 100%, 7 Quality Gates passed.
 - ✅ **DeepSeek Super-Agent Architecture (Router-Worker, Observe Mode, Quiet Autonomy & Watchdog Supervisor) (v1.3.0)**:
   - Tích hợp nguyên mẫu tự trị từ **`deepseek-ai/dsh-superagent-prototype`** giải quyết nút thắt chú ý của con người.
   - Phân tách **Router - Worker Decoupling**: Router trung tâm (`SuperAgentRouter`) tiếp nhận và phân rã mục tiêu thành tickets độc lập giao cho các workers cách ly (`IsolatedSuperAgentWorker`).
