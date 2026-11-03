@@ -32,6 +32,7 @@ from app.cache import (
     serialize_results,
 )
 from app.config import Settings
+from app.core.budget import get_current_budget
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
 from app.core.metrics import CACHE_EVENTS, ENGINE_CALLS, ENGINE_LATENCY
@@ -599,8 +600,6 @@ class AnswerPipeline:
         yield ("sources", {"sources": sources})
 
         yield ("status", {"stage": "scraping", "detail": f"{len(outcome.results)} pages"})
-        from app.core.budget import get_current_budget
-
         budget_ctx = get_current_budget()
         scrape_timeout = (
             budget_ctx.stage("scrape", 5.0) if budget_ctx else self.settings.scrape_timeout_s
@@ -798,8 +797,6 @@ class AnswerPipeline:
             {"url": r.url, "title": r.title, "domain": r.domain, "score": round(r.score, 4)}
             for r in outcome.results
         ]
-        from app.core.budget import get_current_budget
-
         budget_ctx = get_current_budget()
         scrape_timeout = (
             budget_ctx.stage("scrape", 6.0) if budget_ctx else self.settings.scrape_timeout_s
