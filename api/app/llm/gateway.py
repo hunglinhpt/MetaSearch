@@ -452,6 +452,7 @@ class LLMGateway:
             target, messages, model, max_tokens=max_tokens, temperature=temperature
         )
         client = self._client or get_http_client()
+        cancelled = False  # FIX1: tracks client disconnect for breaker
         try:
             async with client.stream(
                 "POST",
@@ -509,8 +510,18 @@ class LLMGateway:
                     delta, usage, finish = _parse_delta(payload, target.protocol)
                     if delta is not None or usage is not None or finish is not None:
                         yield StreamDelta(text=delta, usage=usage, finish_reason=finish)
+        except GeneratorExit:
+            # WP-08 FIX1: client disconnected mid-attempt. Record CANCELLED so
+            # the half-open breaker trial doesn't stay stuck in_flight=True.
+            cancelled = True
+            raise
         except httpx.HTTPError as exc:
+            if cancelled:
+                return  # already recorded CANCELLED; don't double-record
             raise LLMError(f"{target.provider} transport error: {type(exc).__name__}") from exc
+        finally:
+            if cancelled:
+                llm_breakers.get(f"llm:{target.provider}").record(Outcome.CANCELLED)
 
     async def complete(
         self,

@@ -48,6 +48,8 @@ class EngineBreaker:
     cooldown_s: float = 30.0
     max_cooldown_s: float = 900.0
     half_open_in_flight: bool = False
+    half_open_since: float = 0.0
+    half_open_deadline_s: float = 30.0
 
     def allow(self, now: float | None = None) -> bool:
         if now is None:
@@ -60,12 +62,17 @@ class EngineBreaker:
             if now >= self.retry_at:
                 self.state = "half_open"
                 self.half_open_in_flight = True
+                self.half_open_since = now
                 return True
             return False
 
         if self.state == "half_open":
+            # WP-08 FIX1: stuck trial (client disconnect) gets retried after deadline.
+            if self.half_open_in_flight and now - self.half_open_since > self.half_open_deadline_s:
+                self.half_open_in_flight = False  # allow a new trial
             if not self.half_open_in_flight:
                 self.half_open_in_flight = True
+                self.half_open_since = now
                 return True
             return False
 

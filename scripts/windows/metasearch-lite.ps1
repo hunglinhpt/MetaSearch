@@ -17,8 +17,8 @@ $Port = 8000
 
 function Get-LiteProcess {
     if (Test-Path $PidFile) {
-        $pid = Get-Content $PidFile -ErrorAction SilentlyContinue
-        $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+        $proc_pid = Get-Content $PidFile -ErrorAction SilentlyContinue
+        $proc = Get-Process -Id $proc_pid -ErrorAction SilentlyContinue
         if ($proc -and $proc.ProcessName -match "python") { return $proc }
     }
     return $null
@@ -32,7 +32,7 @@ switch ($Action) {
             exit 0
         }
         if (-not (Test-Path $Python)) {
-            Write-Error "venv not found at $Python — run: cd api && python -m venv .venv && .venv\Scripts\pip install -e '.[dev]'"
+            Write-Error "venv not found at $Python -- run: cd api && python -m venv .venv && .venv\Scripts\pip install -e '.[dev]'"
             exit 1
         }
         $env:API_HOST = "127.0.0.1"
@@ -45,7 +45,7 @@ switch ($Action) {
         Start-Sleep -Seconds 3
         try {
             $health = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/healthz" -TimeoutSec 5 -UseBasicParsing
-            Write-Host "Started (PID $($proc.Id)) — healthz: $($health.StatusCode)"
+            Write-Host "Started (PID $($proc.Id)) -- healthz: $($health.StatusCode)"
         } catch {
             Write-Warning "Started but healthz not responding yet (check $LogFile.err)"
         }
@@ -65,9 +65,9 @@ switch ($Action) {
         if ($proc) {
             try {
                 $health = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/readyz" -TimeoutSec 5 -UseBasicParsing
-                Write-Host "Running (PID $($proc.Id)) — readyz: $($health.Content)"
+                Write-Host "Running (PID $($proc.Id)) -- readyz: $($health.Content)"
             } catch {
-                Write-Host "Running (PID $($proc.Id)) — readyz unreachable"
+                Write-Host "Running (PID $($proc.Id)) -- readyz unreachable"
             }
         } else {
             Write-Host "Not running"

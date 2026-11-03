@@ -4,7 +4,7 @@ name: metasearch
 
 services:
   searxng:
-    image: searxng/searxng:2024.10.30-8e2e8f4
+    image: searxng/searxng:2026.10.30-1cd13d98d
     container_name: metasearch-searxng
     restart: unless-stopped
     ports:
@@ -23,7 +23,7 @@ services:
       start_period: 20s
 
   crawl4ai:
-    image: ghcr.io/unclecode/crawl4ai:v0.6.0
+    image: ghcr.io/unclecode/crawl4ai:0.6.0-r2
     container_name: metasearch-crawl4ai
     restart: unless-stopped
     ports:
@@ -58,7 +58,7 @@ services:
       retries: 5
 
   postgres:
-    image: pgvector/pgvector:pg16.4
+    image: pgvector/pgvector:0.8.7-pg16-trixie
     container_name: metasearch-postgres
     restart: unless-stopped
     command: ["postgres", "-c", "shared_buffers=256MB"]

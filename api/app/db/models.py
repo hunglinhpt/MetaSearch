@@ -64,6 +64,9 @@ class Query(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __table_args__ = (Index("idx_queries_normalized", "normalized_text"),)
 
     session_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("sessions.id"))
+    # FIX1: migration 0004 already created this column; the model lacked it, so
+    # persisting an answer raised TypeError and answers were silently lost.
+    api_key_id: Mapped[str | None] = mapped_column(Text)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_text: Mapped[str | None] = mapped_column(Text)
     lang: Mapped[str | None] = mapped_column(Text)
@@ -132,6 +135,8 @@ class Answer(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __tablename__ = "answers"
 
     query_id: Mapped[uuid.UUID | None] = mapped_column(UUIDType, ForeignKey("queries.id"))
+    # FIX1: see Query.api_key_id — column exists in migration 0004.
+    api_key_id: Mapped[str | None] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     content_md: Mapped[str | None] = mapped_column(Text)
     model: Mapped[str | None] = mapped_column(Text)

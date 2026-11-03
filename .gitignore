@@ -25,13 +25,16 @@ out/
 *.key
 
 # Data & caches
+!api/app/retrieval/data/
+!api/app/retrieval/data/vn_tickers.json
 data/
 *.sqlite3
 *.db
 *.db-wal
 *.db-shm
 qdrant_storage/
-searxng-data/
+searxng-!api/app/retrieval/data/
+data/
 
 # IDE / OS
 .idea/

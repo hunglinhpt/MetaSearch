@@ -71,5 +71,7 @@ def search(
                 err.get("request_id"),
             )
         except (KeyError, ValueError):
-            raise MetaSearchError("internal", f"HTTP {resp.status_code}", resp.status_code) from None
+            raise MetaSearchError(
+                "internal", f"HTTP {resp.status_code}", resp.status_code
+            ) from None
     return None

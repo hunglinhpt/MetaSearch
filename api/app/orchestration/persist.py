@@ -83,6 +83,9 @@ async def _persist_query(
                 normalized_text=normalized_text,
                 lang=lang,
                 params=params,
+                # FIX1: record the owning key (None while auth is disabled or
+                # WP-11 has not set the context yet — never fabricated).
+                api_key_id=current_api_key_id.get(),
             )
             .on_conflict_do_nothing(index_elements=["id"])
         )
@@ -124,6 +127,8 @@ async def _persist_search_all(
                 normalized_text=normalized_text,
                 lang=lang,
                 params=params,
+                # FIX1: record the owning key (same rationale as _persist_query).
+                api_key_id=current_api_key_id.get(),
             )
             .on_conflict_do_nothing(index_elements=["id"])
         )

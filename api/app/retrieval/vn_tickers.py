@@ -10,6 +10,10 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 DATA_FILE = Path(__file__).resolve().parent / "data" / "vn_tickers.json"
 
 # Common stopwords (technical, accounting terms, and common 3-letter English words)
@@ -201,6 +205,7 @@ _VIET_STOCK_STOP_WORDS: frozenset[str] = frozenset(
 def load_vn_tickers() -> dict[str, dict]:
     """Load Vietnamese stock tickers dictionary from data/vn_tickers.json."""
     if not DATA_FILE.exists():
+        logger.error("vn_tickers_file_missing", path=str(DATA_FILE))
         return {}
     with open(DATA_FILE, encoding="utf-8") as f:
         data = json.load(f)

@@ -1,5 +1,4 @@
-"""Prometheus alert rules (WP-12, docs/14 03-work-packages.md)."""
-
+# Prometheus alert rules (WP-12, docs/14 03-work-packages.md)
 groups:
   - name: metasearch
     rules:
@@ -13,7 +12,7 @@ groups:
           summary: "HTTP 5xx rate above 5% for 5 minutes"
       - alert: SlowAnswers
         expr: >
-          histogram_quantile(0.95, sum(rate(metasearch_http_request_duration_seconds_bucket{path="/v1/answer"}[5m])) by (le)) > 15
+          histogram_quantile(0.95, sum(rate(metasearch_http_request_duration_seconds_bucket{path="/answer"}[5m])) by (le)) > 15
         for: 5m
         labels: {severity: warning}
         annotations:
