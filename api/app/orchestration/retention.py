@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -93,13 +94,19 @@ async def run_if_due(*, last_run_path: str | None = None) -> dict[str, int] | No
         from pathlib import Path
 
         p = Path(last_run_path)
-        if p.exists():
-            last = float(p.read_text().strip())
-            if time.time() - last < 86400:
-                return None
+
+        def _read_last() -> float | None:
+            if p.exists():
+                return float(p.read_text().strip())
+            return None
+
+        last = await asyncio.to_thread(_read_last)
+        if last is not None and time.time() - last < 86400:
+            return None
     results = await run_retention()
     if last_run_path:
         from pathlib import Path
 
-        Path(last_run_path).write_text(str(time.time()))
+        ts = str(time.time())
+        await asyncio.to_thread(Path(last_run_path).write_text, ts)
     return results
