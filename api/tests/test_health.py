@@ -39,7 +39,7 @@ def test_readyz_reflects_dependency_state(
     # WP-14: degraded (deps down, engines usable) = 200; not_ready = 503.
     # In test rig no engines are usable (no searxng), so degraded -> 200.
     body = response.json()
-    assert response.status_code == (200 if ok else 200)  # degraded is 200
+    assert response.status_code == 200  # degraded is 200 (WP-14)
     assert body["ready"] is ok
     assert body.get("status") in ("ready", "degraded", "not_ready")
     assert set(body["checks"]) == {"postgres", "redis", "searxng"}
