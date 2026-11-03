@@ -548,14 +548,20 @@ class TestWPObservability:
 class TestExpiredKey:
     async def test_query_includes_expiry_filter(self, monkeypatch):
         """SEC fix: authenticate() SQL must filter on expires_at."""
-        import json as _json
         from datetime import UTC, datetime, timedelta
 
-        row = type("R", (), {
-            "id": "kid", "name": "valid", "role": "user",
-            "rate_limit_rpm": 60, "enabled": True,
-            "expires_at": datetime.now(UTC) + timedelta(days=365),
-        })()
+        row = type(
+            "R",
+            (),
+            {
+                "id": "kid",
+                "name": "valid",
+                "role": "user",
+                "rate_limit_rpm": 60,
+                "enabled": True,
+                "expires_at": datetime.now(UTC) + timedelta(days=365),
+            },
+        )()
 
         captured = {}
 
@@ -581,9 +587,7 @@ class TestExpiredKey:
         monkeypatch.setattr(auth_mod, "get_sessionmaker", FakeMaker())
         ctx = await auth_mod.authenticate("msk_valid")
         assert ctx.role == "user"
-        assert "expires_at" in captured["stmt"], (
-            "authenticate() SQL must include expires_at filter"
-        )
+        assert "expires_at" in captured["stmt"], "authenticate() SQL must include expires_at filter"
 
     async def test_db_returns_none_for_expired(self, monkeypatch):
         """When the DB rejects an expired key (returns None), auth gives 401."""

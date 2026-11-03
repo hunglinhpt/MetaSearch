@@ -44,8 +44,12 @@ def fake_dns(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_pipelines():
+    from app.orchestration.persist_queue import discard_persist_queue
+
+    discard_persist_queue()
     reset_pipelines()
     yield
+    discard_persist_queue()
     reset_pipelines()
 
 

@@ -129,3 +129,11 @@ async def reset_persist_queue() -> None:
     if _queue is not None:
         await _queue.stop()
     _queue = None
+
+
+def discard_persist_queue() -> None:
+    """Sync-safe: drop the singleton without awaiting stop (test cleanup)."""
+    global _queue
+    if _queue is not None and _queue._consumer_task is not None:
+        _queue._consumer_task.cancel()
+    _queue = None

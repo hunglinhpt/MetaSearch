@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -135,6 +136,9 @@ async def _sse_payloads(lines: AsyncIterator[str]) -> AsyncIterator[dict[str, An
 
 async def _read_limited(resp: httpx.Response, limit: int = _MAX_BODY_BYTES) -> str:
     """Read a response body with a hard byte cap (REL-10: unbounded aread)."""
+    content_length = resp.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > limit:
+        raise LLMError(f"upstream body {content_length}B exceeds {limit}B limit")
     chunks: list[bytes] = []
     total = 0
     async for chunk in resp.aiter_bytes(65536):
@@ -343,15 +347,17 @@ class LLMGateway:
         budget = max(int(self._settings.llm_max_attempts), 1)
         emitted_any = False
 
-        candidates = self._candidates(
-            target, messages, eff_model, max_tokens=max_tok, temperature=temp, task=task
+        candidates = deque(
+            self._candidates(
+                target, messages, eff_model, max_tokens=max_tok, temperature=temp, task=task
+            )
         )
         attempts = 0
         last_error: LLMError | None = None
         seen_pairs: set[tuple[str, str]] = set()
 
         while candidates and attempts < budget:
-            cand_target, cand_model = candidates.pop(0)
+            cand_target, cand_model = candidates.popleft()
             pair = (cand_target.provider, cand_model)
             breaker = llm_breakers.get(f"llm:{cand_target.provider}")
             if pair in seen_pairs or not breaker.allow():
@@ -403,7 +409,7 @@ class LLMGateway:
                 # re-queue it (still bounded by the global attempt budget).
                 if exc.retry_after_s is not None:
                     seen_pairs.discard(pair)  # allow the same pair again
-                    candidates.insert(0, (cand_target, cand_model))
+                    candidates.appendleft((cand_target, cand_model))
                 await asyncio.sleep(min(exc.retry_after_s or 0.5, 30.0))
             except LLMError as exc:
                 breaker.record(

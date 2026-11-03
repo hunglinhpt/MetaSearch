@@ -46,6 +46,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.db.bootstrap import ensure_schema
 
         await ensure_schema()
+    from app.orchestration.persist_queue import get_persist_queue
+
+    await get_persist_queue().start()
 
     from app.api.deps import get_health_writer
     from app.orchestration.engine_store import clear_legacy_auto_disabled
@@ -73,6 +76,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             get_scanner().stop_background_loop()
         await health_writer.stop()
+        try:
+            from app.orchestration.persist_queue import get_persist_queue
+
+            await get_persist_queue().drain(budget_s=5)
+            await get_persist_queue().stop()
+        except Exception as exc:
+            logger.warning("persist_queue_shutdown_error", error=type(exc).__name__)
         await dispose_engine()
         await dispose_redis()
         await dispose_http_client()
