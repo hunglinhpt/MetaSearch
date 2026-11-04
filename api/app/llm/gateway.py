@@ -511,13 +511,11 @@ class LLMGateway:
                     if delta is not None or usage is not None or finish is not None:
                         yield StreamDelta(text=delta, usage=usage, finish_reason=finish)
         except (GeneratorExit, asyncio.CancelledError):
-            # WP-08 FIX1 R1.5: client disconnected OR task cancelled mid-attempt.
-            # Record CANCELLED so the half-open breaker trial doesn't stay stuck.
-            cancelled = True
+            # FIX1: client disconnected OR task cancelled mid-attempt. Record
+            # CANCELLED via the finally block so the half-open breaker trial
+            # doesn't stay stuck in_flight=True.
             raise
         except httpx.HTTPError as exc:
-            if cancelled:
-                return  # already recorded CANCELLED; don't double-record
             raise LLMError(f"{target.provider} transport error: {type(exc).__name__}") from exc
         finally:
             if cancelled:
