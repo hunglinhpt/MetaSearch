@@ -33,11 +33,13 @@ def _new_chunk(
     document_url: str, position: int, heading_path: str, content: str, source_title: str = ""
 ) -> Chunk:
     words = content.split()
-    # FIX1: deterministic UUID5 seed — URL + position + content hash.
-    # Same content at same position -> same ID (stable citations).
-    # Content change at same position -> different ID (old citation invalidated).
+    # FIX1 R1.3: seed uses canonicalized URL (tracking params stripped) +
+    # position + content hash. Tracking URL and clean URL → same chunk ID.
+    from app.retrieval.canonical import canonicalize
+
+    canon = canonicalize(document_url)
     content_hash = hashlib.sha1(content.encode("utf-8")).hexdigest()[:12]  # nosec B324
-    chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document_url}:{position}:{content_hash}"))
+    chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{canon}:{position}:{content_hash}"))
     return Chunk(
         id=chunk_id,
         document_url=document_url,

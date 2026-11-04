@@ -25,16 +25,16 @@ out/
 *.key
 
 # Data & caches
-!api/app/retrieval/data/
-!api/app/retrieval/data/vn_tickers.json
-data/
 *.sqlite3
 *.db
 *.db-wal
 *.db-shm
 qdrant_storage/
-searxng-!api/app/retrieval/data/
-data/
+searxng-data/
+# Exception: vn_tickers.json is a required data file, not a cache
+!api/app/retrieval/data/
+api/app/retrieval/data/*
+!api/app/retrieval/data/vn_tickers.json
 
 # IDE / OS
 .idea/

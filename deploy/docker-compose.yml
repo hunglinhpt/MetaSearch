@@ -23,7 +23,7 @@ services:
       start_period: 20s
 
   crawl4ai:
-    image: ghcr.io/unclecode/crawl4ai:0.6.0-r2
+    image: unclecode/crawl4ai:0.6.0-r2
     container_name: metasearch-crawl4ai
     restart: unless-stopped
     ports:
@@ -50,7 +50,6 @@ services:
     mem_limit: 256m
     ports:
       - "127.0.0.1:6379:6379"
-    mem_limit: 256m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -70,7 +69,6 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-    mem_limit: 768m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-metasearch} -d ${POSTGRES_DB:-metasearch}"]
       interval: 10s
@@ -99,7 +97,6 @@ services:
         condition: service_healthy
       crawl4ai:
         condition: service_started
-    mem_limit: 512m
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/readyz"]
       interval: 15s
@@ -123,7 +120,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    mem_limit: 512m
 
   frontend:
     build: ../frontend
@@ -136,7 +132,6 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    mem_limit: 256m
 
   # Observability (prod, bật khi cần): docker compose --profile observability up -d
   prometheus:
@@ -149,7 +144,6 @@ services:
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
     ports:
       - "127.0.0.1:9090:9090"
-    mem_limit: 512m
 
   grafana:
     image: grafana/grafana:11.2.0
@@ -165,7 +159,6 @@ services:
       - "127.0.0.1:3001:3000"
     depends_on:
       - prometheus
-    mem_limit: 512m
 
 volumes:
   pgdata:
