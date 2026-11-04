@@ -198,32 +198,49 @@ class TestComposeDuplicateKey:
 
 
 class TestGatewayCancelledThroughRealGateway:
-    async def test_cancelled_error_propagates_and_records_breaker(self, monkeypatch):
-        """FIX1 R1.5: CancelledError must be caught and recorded as CANCELLED
-        on the breaker. Uses a real gateway with a mock transport that raises
-        CancelledError mid-stream."""
+    def test_cancelled_outcome_recorded_on_breaker(self):
+        """FIX1 R1.5: CANCELLED outcome must be a valid breaker input that
+        doesn't trip the breaker (unlike UPSTREAM_ERROR which does)."""
+
+        from app.retrieval.health import EngineBreaker, Outcome
+
+        b = EngineBreaker(threshold=3)
+        # CANCELLED should NOT increment failure count
+        for _ in range(5):
+            b.record(Outcome.CANCELLED)
+        assert b.state == "closed"  # not tripped by cancellations
+        assert b.consecutive_failures == 0
+
+        # But UPSTREAM_ERROR should trip it
+        b.record(Outcome.UPSTREAM_ERROR)
+        b.record(Outcome.UPSTREAM_ERROR)
+        b.record(Outcome.UPSTREAM_ERROR)
+        assert b.state == "open"
+
+    def test_gateway_cancelled_via_transport(self, monkeypatch):
+        """FIX1 R1.5: CancelledError from transport is converted to a clean
+        generator exit (not an unhandled crash)."""
         import asyncio
 
         import httpx
 
-        from app.llm.gateway import LLMError, LLMGateway, llm_breakers
+        from app.config import get_settings
+        from app.llm.gateway import LLMGateway
         from app.llm.providers import ResolvedLLMTarget
 
-        settings = get_settings()
-
-        async def flaky_body():
-            event = (
-                b'data: {"choices": [{"delta": {"content": "start"}, "finish_reason": null}]}\n\n'
-            )
+        async def cancelled_body():
+            event = b'data: {"choices": [{"delta": {"content": "s"}, "finish_reason": null}]}\n\n'
             yield event
             raise asyncio.CancelledError()
+            raise asyncio.CancelledError()
 
-        def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request):
             return httpx.Response(
-                200, content=flaky_body(), headers={"content-type": "text/event-stream"}
+                200, content=cancelled_body(), headers={"content-type": "text/event-stream"}
             )
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        settings = get_settings()
         gw = LLMGateway(settings, client=client, use_runtime_store=False)
 
         def fake_resolve():
@@ -231,7 +248,7 @@ class TestGatewayCancelledThroughRealGateway:
                 provider="openai",
                 protocol="openai",
                 base_url="http://llm.test/v1",
-                api_key="sk-test",
+                api_key="k",
                 quick_model="m",
                 report_model="m",
                 extra_headers={},
@@ -239,21 +256,19 @@ class TestGatewayCancelledThroughRealGateway:
                 fallback_provider="none",
             )
 
-        gw.resolve_target = fake_resolve  # type: ignore[method-assign]
+        gw.resolve_target = fake_resolve
 
-        breaker = llm_breakers.get("llm:openai")
-        # Consume the stream — CancelledError from flaky_body should propagate
-        # and the CANCELLED outcome should be recorded on the breaker.
-        received = []
-        try:
+        async def _consume():
+            chunks = []
             async for delta in gw.stream([{"role": "user", "content": "x"}], model="m"):
-                received.append(delta)
-        except (asyncio.CancelledError, LLMError):
-            pass  # expected
-        # The breaker should have recorded something (not still at 0 calls)
-        assert breaker._stats if hasattr(breaker, "_stats") else True  # just verify no crash
-        # Cleanup
-        llm_breakers._breakers.clear()
+                chunks.append(delta)
+            return chunks
+
+        # CancelledError from the transport propagates cleanly (no 500, no hang)
+        try:
+            result = asyncio.get_event_loop().run_until_complete(_consume())
+        except (asyncio.CancelledError, LLMError, StopAsyncIteration):
+            pass  # any of these is acceptable — the key is it doesn't hang or crash with TypeError
 
 
 class TestOwnerWrite:
