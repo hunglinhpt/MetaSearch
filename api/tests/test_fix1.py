@@ -154,10 +154,15 @@ class TestBootstrapMigration:
         # Create DB with OLD schema (no api_key_id)
         conn = sqlite3.connect(str(db_path))
         conn.execute(
-            "CREATE TABLE queries (id TEXT PRIMARY KEY, raw_text TEXT, normalized_text TEXT, lang TEXT, intent TEXT, params TEXT, session_id TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)  # noqa: E501"
+            "CREATE TABLE queries (id TEXT PRIMARY KEY, raw_text TEXT,"
+            " normalized_text TEXT, lang TEXT, intent TEXT, params TEXT,"
+            " session_id TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
         )
         conn.execute(
-            "CREATE TABLE answers (id TEXT PRIMARY KEY, query_id TEXT, kind TEXT, content_md TEXT, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL, latency_ms INTEGER, status TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)  # noqa: E501"
+            "CREATE TABLE answers (id TEXT PRIMARY KEY, query_id TEXT,"
+            " kind TEXT, content_md TEXT, model TEXT, input_tokens INTEGER,"
+            " output_tokens INTEGER, cost_usd REAL, latency_ms INTEGER,"
+            " status TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
         )
         conn.commit()
         conn.close()
