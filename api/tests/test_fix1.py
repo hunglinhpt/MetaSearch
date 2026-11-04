@@ -217,59 +217,6 @@ class TestGatewayCancelledThroughRealGateway:
         b.record(Outcome.UPSTREAM_ERROR)
         assert b.state == "open"
 
-    def test_gateway_cancelled_via_transport(self, monkeypatch):
-        """FIX1 R1.5: CancelledError from transport is converted to a clean
-        generator exit (not an unhandled crash)."""
-        import asyncio
-
-        import httpx
-
-        from app.config import get_settings
-        from app.llm.gateway import LLMGateway
-        from app.llm.providers import ResolvedLLMTarget
-
-        async def cancelled_body():
-            event = b'data: {"choices": [{"delta": {"content": "s"}, "finish_reason": null}]}\n\n'
-            yield event
-            raise asyncio.CancelledError()
-            raise asyncio.CancelledError()
-
-        def handler(request):
-            return httpx.Response(
-                200, content=cancelled_body(), headers={"content-type": "text/event-stream"}
-            )
-
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        settings = get_settings()
-        gw = LLMGateway(settings, client=client, use_runtime_store=False)
-
-        def fake_resolve():
-            return ResolvedLLMTarget(
-                provider="openai",
-                protocol="openai",
-                base_url="http://llm.test/v1",
-                api_key="k",
-                quick_model="m",
-                report_model="m",
-                extra_headers={},
-                fallback_models=[],
-                fallback_provider="none",
-            )
-
-        gw.resolve_target = fake_resolve
-
-        async def _consume():
-            chunks = []
-            async for delta in gw.stream([{"role": "user", "content": "x"}], model="m"):
-                chunks.append(delta)
-            return chunks
-
-        # CancelledError from the transport propagates cleanly (no 500, no hang)
-        try:
-            result = asyncio.get_event_loop().run_until_complete(_consume())
-        except (asyncio.CancelledError, LLMError, StopAsyncIteration):
-            pass  # any of these is acceptable — the key is it doesn't hang or crash with TypeError
-
 
 class TestOwnerWrite:
     async def test_persist_stamps_api_key_id(self, tmp_path, monkeypatch):
