@@ -326,12 +326,11 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
     if not settings.auth_enabled:
         # Anonymous callers get role "user" (SEC-03): admin endpoints require a
         # real key or DEV_ANON_ADMIN=true on a loopback bind.
+        current_api_key_id.set("anonymous")
         if settings.dev_anon_admin:
-            current_api_key_id.set("anonymous")
             current_role.set("admin")
             ctx = AuthContext(key_id="anonymous", name=None, role="admin", rate_limit_rpm=0)
         else:
-            current_api_key_id.set("anonymous")
             current_role.set("user")
             ctx = AuthContext(key_id="anonymous", name=None, role="user", rate_limit_rpm=0)
         if state is not None:
@@ -355,6 +354,7 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
     current_api_key_id.set(ctx.key_id)
     current_role.set(ctx.role)
     rl_headers = await check_rate_limit(ctx, cost=cost)
+    state = getattr(request, "state", None)
     if state is not None:
         state.auth = ctx
         with contextlib.suppress(Exception):

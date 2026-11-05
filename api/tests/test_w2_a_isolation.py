@@ -263,9 +263,13 @@ async def test_admin_not_double_counted(isolation_db):
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False, client=("127.0.0.1", 4242))
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         r1 = await client.patch("/v1/engines/fake", json={"weight": 1.0}, headers=_hdr(admin_key))
-        r2 = await client.patch("/v1/engines/fake", json={"weight": 1.0}, headers=_hdr(admin_key))
+        assert r1.status_code == 200
         rem1 = int(r1.headers["x-ratelimit-remaining"])
+        assert rem1 == 5999
+        r2 = await client.patch("/v1/engines/fake", json={"weight": 1.0}, headers=_hdr(admin_key))
+        assert r2.status_code == 200
         rem2 = int(r2.headers["x-ratelimit-remaining"])
+        assert rem2 == 5998
         assert rem1 - rem2 == 1
 
 
@@ -399,19 +403,26 @@ async def test_auth_disabled_sets_anonymous_context(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.setenv("DEV_ANON_ADMIN", "false")
     get_settings.cache_clear()
+    current_api_key_id.set("dirty_id")
+    current_role.set("dirty_role")
     req = Request({"type": "http", "method": "GET", "path": "/v1/search", "headers": []})
     ctx = await authenticate_and_rate_limit(req)
     assert ctx.key_id == "anonymous"
     assert current_api_key_id.get() == "anonymous"
     assert current_role.get() == "user"
+    assert getattr(req.state, "auth", None) is not None
 
     # With dev_anon_admin=True
+    current_api_key_id.set("dirty_id2")
+    current_role.set("dirty_role2")
     monkeypatch.setenv("DEV_ANON_ADMIN", "true")
     get_settings.cache_clear()
     req2 = Request({"type": "http", "method": "GET", "path": "/v1/search", "headers": []})
     ctx_admin = await authenticate_and_rate_limit(req2)
     assert ctx_admin.role == "admin"
+    assert current_api_key_id.get() == "anonymous"
     assert current_role.get() == "admin"
+    assert getattr(req2.state, "auth", None) is not None
 
 
 @pytest.mark.asyncio
@@ -428,8 +439,9 @@ async def test_authenticate_sets_contextvars(isolation_db):
             "headers": [(b"authorization", f"Bearer {key_val}".encode())],
         }
     )
-    current_api_key_id.set(None)
-    current_role.set("user")
+    current_api_key_id.set("dirty_key_id")
+    current_role.set("dirty_role")
     ctx = await authenticate_and_rate_limit(req)
     assert current_api_key_id.get() == ctx.key_id
+    assert current_api_key_id.get() != "dirty_key_id"
     assert current_role.get() == "admin"
