@@ -373,6 +373,7 @@ async def _persist_report(
                 normalized_text=question,
                 lang=lang,
                 params={"kind": "research", "truncated": truncated},
+                api_key_id=current_api_key_id.get(),
             )
             .on_conflict_do_nothing(index_elements=["id"])
         )
@@ -381,6 +382,7 @@ async def _persist_report(
         session.add(
             Answer(
                 id=answer_id,
+                api_key_id=current_api_key_id.get(),
                 query_id=research_id,
                 kind="research",
                 content_md=content_md,

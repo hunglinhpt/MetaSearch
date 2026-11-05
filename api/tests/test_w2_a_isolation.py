@@ -531,10 +531,9 @@ async def test_unowned_research_job_access(isolation_db, monkeypatch):
 @pytest.mark.asyncio
 async def test_restored_research_job_retains_owner(isolation_db):
     """Restored job from DB preserves owner_key_id after job store memory eviction."""
-    from app.db.models import Answer as AnswerRow
-    from app.db.models import Query as QueryRow
-    from app.db.session import get_sessionmaker
+    from app.core.auth import current_api_key_id
     from app.main import app
+    from app.orchestration import persist
     from app.orchestration.research_jobs import get_job_store
 
     user_a, _ = await create_key("user_a_restore", role="user")
@@ -543,37 +542,49 @@ async def test_restored_research_job_retains_owner(isolation_db):
     ctx_a = await authenticate(user_a)
 
     job_id = uuid.uuid4()
-    async with get_sessionmaker()() as session:
-        q_row = QueryRow(
-            id=job_id,
-            raw_text="RESTORED-RESEARCH-QUERY",
-            api_key_id=ctx_a.key_id,
+    # Persist via _persist_report under key A's identity (as ResearchPipeline does)
+    token = current_api_key_id.set(ctx_a.key_id)
+    try:
+        await persist._persist_report(
+            job_id,
+            "RESTORED-RESEARCH-QUERY",
+            None,
+            "# Restored Research Report",
+            "test-model",
+            1,
+            1,
+            0.0,
+            1,
+            [],
+            False,
         )
-        ans_row = AnswerRow(
-            query_id=job_id,
-            kind="research",
-            content_md="# Restored Research Report",
-            model="test-model",
-            status="complete",
-        )
-        session.add(q_row)
-        session.add(ans_row)
-        await session.commit()
+    finally:
+        current_api_key_id.reset(token)
 
     # Clear in-memory job cache to force DB reload
     store = get_job_store()
-    store._jobs.pop(job_id, None)
+    store._jobs.clear()
 
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False, client=("127.0.0.1", 4242))
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        # Owner A calls -> restores from DB and returns 200
+        # Owner A calls -> restores from DB and returns 200 with report
         r_a = await client.get(f"/v1/research/{job_id}", headers=_hdr(user_a))
         assert r_a.status_code == 200
         assert r_a.json()["report_md"] == "# Restored Research Report"
 
+        # Owner A sees research in /v1/queries
+        r_queries_a = await client.get("/v1/queries", headers=_hdr(user_a))
+        assert r_queries_a.status_code == 200
+        assert "RESTORED-RESEARCH-QUERY" in r_queries_a.text
+
         # Key B calls -> 404
         r_b = await client.get(f"/v1/research/{job_id}", headers=_hdr(user_b))
         assert r_b.status_code == 404
+
+        # Key B does not see it in /v1/queries
+        r_queries_b = await client.get("/v1/queries", headers=_hdr(user_b))
+        assert r_queries_b.status_code == 200
+        assert "RESTORED-RESEARCH-QUERY" not in r_queries_b.text
 
         # Admin calls -> 200
         r_admin = await client.get(f"/v1/research/{job_id}", headers=_hdr(admin_key))
