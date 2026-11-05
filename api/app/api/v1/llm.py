@@ -187,7 +187,11 @@ async def list_llm_providers() -> dict[str, Any]:
     }
 
 
-@router.get("/llm/config", summary="Get active LLM configuration")
+@router.get(
+    "/llm/config",
+    dependencies=[Depends(require_admin)],
+    summary="Get active LLM configuration",
+)
 async def get_llm_config() -> dict[str, Any]:
     return _active_config_summary()
 
@@ -227,6 +231,7 @@ async def patch_council_endpoints(request: CouncilEndpointsPatchRequest) -> dict
 
 @router.get(
     "/llm/dream-rsi/state",
+    dependencies=[Depends(require_admin)],
     summary="Inspect Dream-RSI Replay World trajectories, UCB scores, and evolved domain policies",
 )
 async def get_dream_rsi_state(domain: str | None = None) -> dict[str, Any]:

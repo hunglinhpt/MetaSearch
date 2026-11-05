@@ -87,6 +87,7 @@ services:
       - CRAWL4AI_URL=http://crawl4ai:11222
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-metasearch}:${POSTGRES_PASSWORD:-metasearch}@postgres:5432/${POSTGRES_DB:-metasearch}
       - REDIS_URL=redis://redis:6379/0
+      - AUTH_ENABLED=true
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

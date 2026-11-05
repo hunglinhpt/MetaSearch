@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
@@ -24,12 +24,23 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    import sys
+
     settings = get_settings()
     configure_logging()
     from app.core.auth import validate_startup_auth
 
+    bound_host = settings.api_host
+    for i, arg in enumerate(sys.argv):
+        if arg == "--host" and i + 1 < len(sys.argv):
+            bound_host = sys.argv[i + 1]
+            break
+        elif arg.startswith("--host="):
+            bound_host = arg.split("=", 1)[1]
+            break
+
     problems = validate_startup_auth(
-        api_host=settings.api_host,
+        api_host=bound_host,
         auth_enabled=settings.auth_enabled,
         environment=settings.environment,
         dev_anon_admin=settings.dev_anon_admin,
@@ -99,12 +110,53 @@ def create_app() -> FastAPI:
             "crawl4ai/trafilatura (extraction)."
         ),
         lifespan=lifespan,
-        docs_url="/docs" if settings.environment != "prod" else None,
-        openapi_url="/openapi.json" if settings.environment != "prod" else None,
+        docs_url=None,
+        openapi_url=None,
     )
     from app.core.tracing import setup_tracing
 
     setup_tracing(app)
+
+    async def _check_docs_access(request: Request) -> None:
+        client_host = request.client.host if request.client else ""
+        if client_host in ("127.0.0.1", "::1", "localhost", "testclient"):
+            return
+        from app.core.auth import authenticate
+        from app.core.errors import ErrorCode, MetaSearchError
+
+        raw_auth = request.headers.get("authorization", "").strip()
+        bearer = raw_auth[7:].strip() if raw_auth[:7].lower() == "bearer " else raw_auth
+        if not bearer:
+            raise MetaSearchError(ErrorCode.UNAUTHORIZED, "admin key required", status_code=403)
+        try:
+            ctx = await authenticate(bearer)
+        except Exception as exc:
+            raise MetaSearchError(
+                ErrorCode.UNAUTHORIZED, "admin key required", status_code=403
+            ) from exc
+        if ctx.role != "admin":
+            raise MetaSearchError(ErrorCode.UNAUTHORIZED, "admin role required", status_code=403)
+
+    if settings.environment != "prod":
+        from fastapi.openapi.docs import get_swagger_ui_html
+        from fastapi.openapi.utils import get_openapi
+
+        @app.get("/openapi.json", include_in_schema=False)
+        async def openapi_endpoint(request: Request):
+            await _check_docs_access(request)
+            return get_openapi(
+                title=app.title,
+                version=app.version,
+                description=app.description,
+                routes=app.routes,
+            )
+
+        @app.get("/docs", include_in_schema=False)
+        async def docs_endpoint(request: Request):
+            await _check_docs_access(request)
+            return get_swagger_ui_html(
+                openapi_url="/openapi.json", title=f"{app.title} - Swagger UI"
+            )
 
     app.add_middleware(RequestContextMiddleware)
     # Browser clients (Web UI on :3000) call this API cross-origin; without

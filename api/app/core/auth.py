@@ -318,15 +318,25 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
     If cost is not explicitly provided, applies route weights per WP-07:
     answer=5, context=3, research=20, search/default=1.
     """
+    state = getattr(request, "state", None)
+    if state is not None and getattr(state, "auth", None) is not None:
+        return state.auth
+
     settings = get_settings()
     if not settings.auth_enabled:
         # Anonymous callers get role "user" (SEC-03): admin endpoints require a
         # real key or DEV_ANON_ADMIN=true on a loopback bind.
         if settings.dev_anon_admin:
+            current_api_key_id.set("anonymous")
             current_role.set("admin")
-            return AuthContext(key_id="anonymous", name=None, role="admin", rate_limit_rpm=0)
-        current_role.set("user")
-        return AuthContext(key_id="anonymous", name=None, role="user", rate_limit_rpm=0)
+            ctx = AuthContext(key_id="anonymous", name=None, role="admin", rate_limit_rpm=0)
+        else:
+            current_api_key_id.set("anonymous")
+            current_role.set("user")
+            ctx = AuthContext(key_id="anonymous", name=None, role="user", rate_limit_rpm=0)
+        if state is not None:
+            state.auth = ctx
+        return ctx
 
     if cost is None:
         path = request.url.path.rstrip("/")
@@ -342,9 +352,11 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
     raw_auth = request.headers.get("authorization", "").strip()
     bearer = raw_auth[7:].strip() if raw_auth[:7].lower() == "bearer " else raw_auth
     ctx = await authenticate(bearer)
+    current_api_key_id.set(ctx.key_id)
+    current_role.set(ctx.role)
     rl_headers = await check_rate_limit(ctx, cost=cost)
-    state = getattr(request, "state", None)
     if state is not None:
+        state.auth = ctx
         with contextlib.suppress(Exception):
             state.rate_limit_headers = rl_headers
     return ctx
@@ -366,7 +378,9 @@ def require_weighted_key(cost: int):
 
 async def require_admin(request: Request) -> AuthContext:
     """FastAPI dependency: require an admin role when AUTH_ENABLED=true."""
-    ctx = await require_api_key(request)
+    ctx = getattr(request.state, "auth", None) if hasattr(request, "state") else None
+    if ctx is None:
+        ctx = await require_api_key(request)
     if ctx.role != "admin":
         raise MetaSearchError(
             ErrorCode.UNAUTHORIZED,

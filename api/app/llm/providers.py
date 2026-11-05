@@ -613,6 +613,7 @@ def validate_llm_base_url(
     allow_private: bool = False,
     allowed_hosts: str = "",
     private_hosts: str = "127.0.0.1,localhost,ollama",
+    is_byo: bool = False,
 ) -> str:
     """Validate an LLM base URL against SSRF and private network access."""
     cleaned = url.strip().rstrip("/")
@@ -627,9 +628,20 @@ def validate_llm_base_url(
     host = parsed.hostname.lower()
 
     # Allowed hosts check (if configured by server admin)
-    if allowed_hosts:
-        allowed_list = [h.strip().lower() for h in allowed_hosts.split(",") if h.strip()]
-        if allowed_list and not any(host == ah or host.endswith(f".{ah}") for ah in allowed_list):
+    allowed_list = [h.strip().lower() for h in allowed_hosts.split(",") if h.strip()]
+    if is_byo:
+        if not allowed_list:
+            raise MetaSearchError(
+                ErrorCode.INVALID_REQUEST,
+                "BYO LLM base_url is rejected: no allowed hosts configured on the server",
+            )
+        if not any(host == ah or host.endswith(f".{ah}") for ah in allowed_list):
+            raise MetaSearchError(
+                ErrorCode.INVALID_REQUEST,
+                f"LLM base_url host '{host}' is not in allowed hosts: {allowed_hosts}",
+            )
+    elif allowed_list:
+        if not any(host == ah or host.endswith(f".{ah}") for ah in allowed_list):
             raise MetaSearchError(
                 ErrorCode.INVALID_REQUEST,
                 f"LLM base_url host '{host}' is not in allowed hosts: {allowed_hosts}",
@@ -903,6 +915,7 @@ def resolve_llm_target(
             allow_private=False,
             allowed_hosts=settings.llm_byo_allowed_hosts,
             private_hosts=settings.llm_private_hosts,
+            is_byo=True,
         )
         base_url_origin = "request"
     elif run_base_url:
@@ -928,7 +941,9 @@ def resolve_llm_target(
     else:
         if req_api_key is not None:
             api_key = req_api_key
-        elif run_api_key is not None:
+        elif run_api_key is not None and (
+            runtime_override.provider is None or runtime_override.provider == provider
+        ):
             api_key = run_api_key
         else:
             api_key = _provider_env_api_key(settings, provider)
@@ -963,7 +978,7 @@ def resolve_llm_target(
             headers["HTTP-Referer"] = settings.openrouter_site_url
         if settings.openrouter_app_name:
             headers["X-Title"] = settings.openrouter_app_name
-    if settings.custom_llm_headers:
+    if provider == "custom" and base_url_origin == "env" and settings.custom_llm_headers:
         headers.update(parse_extra_headers(settings.custom_llm_headers))
     if eff_override.extra_headers:
         parsed_extra = parse_extra_headers(eff_override.extra_headers)

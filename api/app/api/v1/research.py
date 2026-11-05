@@ -17,7 +17,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.auth import current_api_key_id
+from app.core.auth import current_api_key_id, current_role
+from app.core.errors import ErrorCode, MetaSearchError
 from app.llm.providers import LLMOverride
 from app.orchestration.research import ResearchParams
 from app.orchestration.research_jobs import get_job_store, run_job
@@ -62,9 +63,18 @@ async def create_research(request: ResearchRequest) -> dict[str, Any]:
     return {"research_id": str(job.id), "status": job.status}
 
 
+def _check_job_owner(job) -> None:
+    if current_role.get() == "admin":
+        return
+    owner = current_api_key_id.get()
+    if job.owner_key_id is not None and job.owner_key_id != owner:
+        raise MetaSearchError(ErrorCode.INVALID_REQUEST, "research job not found", status_code=404)
+
+
 @router.get("/research/{research_id}")
 async def get_research(research_id: str) -> dict[str, Any]:
     job = await get_job_store().get(research_id)
+    _check_job_owner(job)
     return {
         "research_id": str(job.id),
         "status": job.status,
@@ -80,6 +90,7 @@ async def get_research(research_id: str) -> dict[str, Any]:
 @router.get("/research/{research_id}/events")
 async def research_events(research_id: str) -> EventSourceResponse:
     job = await get_job_store().get(research_id)
+    _check_job_owner(job)
     return EventSourceResponse(_event_stream(job))
 
 

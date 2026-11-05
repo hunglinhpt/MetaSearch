@@ -22,7 +22,7 @@ from app.api.v1 import (
     superagent,
 )
 from app.config import get_settings
-from app.core.auth import require_api_key
+from app.core.auth import require_admin, require_api_key
 
 # AUTH_ENABLED=false (default) keeps local dev + Web UI open; exposed
 # deployments set AUTH_ENABLED=true and every /v1 route requires a key.
@@ -39,7 +39,11 @@ async def meta() -> dict:
     return {"name": settings.app_name, "version": __version__}
 
 
-@router.get("/meta/full", summary="Full service configuration (admin)")
+@router.get(
+    "/meta/full",
+    summary="Full service configuration (admin)",
+    dependencies=[Depends(require_admin)],
+)
 async def meta_full() -> dict:
     settings = get_settings()
     return {

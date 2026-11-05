@@ -111,21 +111,31 @@ def _any_engine_usable() -> bool:
 @router.get("/metrics", summary="Prometheus metrics", include_in_schema=False)
 async def metrics(request: Request) -> Response:
     settings = get_settings()
+    from app.core.errors import ErrorCode, MetaSearchError
+
     if settings.auth_enabled:
-        from app.core.auth import current_role
+        from app.core.auth import authenticate
 
-        if current_role.get() != "admin":
-            from app.core.errors import ErrorCode, MetaSearchError
-
+        raw_auth = request.headers.get("authorization", "").strip()
+        bearer = raw_auth[7:].strip() if raw_auth[:7].lower() == "bearer " else raw_auth
+        if not bearer:
+            raise MetaSearchError(
+                ErrorCode.UNAUTHORIZED, "metrics require an admin key", status_code=403
+            )
+        try:
+            ctx = await authenticate(bearer)
+        except Exception as exc:
+            raise MetaSearchError(
+                ErrorCode.UNAUTHORIZED, "metrics require an admin key", status_code=403
+            ) from exc
+        if ctx.role != "admin":
             raise MetaSearchError(
                 ErrorCode.UNAUTHORIZED, "metrics require an admin key", status_code=403
             )
     else:
         # No-auth deployments keep metrics loopback-only.
         client_host = request.client.host if request.client else "?"
-        if client_host not in ("127.0.0.1", "::1", "testclient"):
-            from app.core.errors import ErrorCode, MetaSearchError
-
+        if client_host not in ("127.0.0.1", "::1", "localhost", "testclient"):
             raise MetaSearchError(
                 ErrorCode.UNAUTHORIZED, "metrics restricted to loopback", status_code=403
             )

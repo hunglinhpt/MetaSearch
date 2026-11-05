@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.core.errors import ErrorCode, MetaSearchError
-from app.llm.gateway import LLMError, LLMGateway
+from app.llm.gateway import LLMGateway
 from app.llm.providers import (
     LLMOverride,
     resolve_llm_target,
@@ -29,7 +29,12 @@ from app.main import create_app
 )
 def test_request_base_url_never_inherits_env_key(provider: str, env_field: str, secret_val: str):
     """When a caller overrides base_url, the server's API key must NEVER be inherited."""
-    kwargs = {env_field: secret_val, "llm_provider": provider, "llm_byo_enabled": True}
+    kwargs = {
+        env_field: secret_val,
+        "llm_provider": provider,
+        "llm_byo_enabled": True,
+        "llm_byo_allowed_hosts": "attacker.example",
+    }
     settings = Settings(**kwargs)
 
     # Caller points to attacker endpoint without supplying an api_key
@@ -47,7 +52,11 @@ def test_request_base_url_never_inherits_env_key(provider: str, env_field: str, 
 
 def test_runtime_key_not_sent_to_request_base_url():
     """A runtime-configured key must not be sent to a request-specified base_url."""
-    settings = Settings(llm_provider="openai", llm_byo_enabled=True)
+    settings = Settings(
+        llm_provider="openai",
+        llm_byo_enabled=True,
+        llm_byo_allowed_hosts="attacker.example",
+    )
     runtime_override = LLMOverride(api_key="runtime-secret-key")
     request_override = LLMOverride(base_url="https://attacker.example/v1")
 
@@ -116,14 +125,31 @@ def test_byo_rejects_private_and_dns_rebinding_hosts(url: str):
     assert exc_info.value.code == ErrorCode.INVALID_REQUEST
 
 
-def test_llm_error_does_not_echo_upstream_body():
+@pytest.mark.asyncio
+async def test_llm_error_does_not_echo_upstream_body():
     """LLMError must not echo sensitive upstream response bodies to callers."""
-    status_code = 500
-    sensitive_detail = "Server failed: database key sk-sensitive-internal-12345 connection lost"
+    import httpx
 
-    err = LLMError(f"LLM provider 'openai' returned HTTP {status_code}")
-    assert sensitive_detail not in str(err)
-    assert "HTTP 500" in str(err)
+    from app.llm.gateway import llm_breakers
+
+    for status_code in (401, 500):
+        llm_breakers._breakers.clear()
+        sensitive_detail = "Server failed: database key sk-sensitive-internal-12345 connection lost"
+
+        def handler(request, code=status_code, text=sensitive_detail):
+            return httpx.Response(code, text=text)
+
+        settings = Settings(llm_provider="openai", openai_api_key="sk-test")
+        gw = LLMGateway(
+            settings,
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+            use_runtime_store=False,
+        )
+        with pytest.raises(Exception) as exc_info:
+            async for _ in gw.stream([{"role": "user", "content": "hi"}]):
+                pass
+        err_msg = str(exc_info.value)
+        assert sensitive_detail not in err_msg
 
 
 def test_llm_test_requires_admin_for_custom_target(monkeypatch):
