@@ -561,6 +561,25 @@ async def test_restored_research_job_retains_owner(isolation_db):
     finally:
         current_api_key_id.reset(token)
 
+    # Verify both Query and Answer rows have api_key_id stamped
+    from sqlalchemy import select
+
+    from app.db.models import Answer as AnswerRow
+    from app.db.models import Query as QueryRow
+    from app.db.session import get_sessionmaker
+
+    async with get_sessionmaker()() as session:
+        q_row = (
+            (await session.execute(select(QueryRow).where(QueryRow.id == job_id))).scalars().first()
+        )
+        assert q_row is not None and q_row.api_key_id == ctx_a.key_id
+        ans_row = (
+            (await session.execute(select(AnswerRow).where(AnswerRow.query_id == job_id)))
+            .scalars()
+            .first()
+        )
+        assert ans_row is not None and ans_row.api_key_id == ctx_a.key_id
+
     # Clear in-memory job cache to force DB reload
     store = get_job_store()
     store._jobs.clear()
