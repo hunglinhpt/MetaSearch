@@ -10,20 +10,13 @@ Idempotent — cheap to call every boot.
 
 from __future__ import annotations
 
-from sqlalchemy import text
+from sqlalchemy import func, text, update
 
 from app.core.logging import get_logger
 from app.db.base import Base
 from app.db.session import get_engine
 
 logger = get_logger(__name__)
-
-# SQLite type mapping from SQLAlchemy column types.
-_DDL = {
-    "TEXT": "TEXT",
-    "INTEGER": "INTEGER",
-    "REAL": "REAL",
-}
 
 
 def _column_ddl(column) -> str:
@@ -46,6 +39,40 @@ def _column_ddl(column) -> str:
     if isinstance(column.type, DateTime):
         return "DATETIME"
     return "TEXT"  # safe default
+
+
+_NON_CONSTANT_DEFAULTS = {"now()", "current_timestamp", "current_date", "current_time"}
+
+
+def _column_default(column) -> str:
+    """Render a safe DEFAULT clause, or "" when it is not a SQLite constant.
+
+    SQLite rejects non-constant defaults (``now()``) in ALTER TABLE ADD COLUMN, so
+    those columns are added without DEFAULT. String defaults are quoted/escaped.
+    """
+    sd = column.server_default
+    arg = getattr(sd, "arg", None) if sd is not None else None
+    if arg is None:
+        return ""
+    if isinstance(arg, bool):
+        return f" DEFAULT {int(arg)}"
+    if isinstance(arg, (int, float)):
+        return f" DEFAULT {arg}"
+    if not isinstance(arg, str):
+        return ""  # SQL expression object (func.now(), text(...)) is not a constant
+    value = arg.strip()
+    lowered = value.lower()
+    if lowered in _NON_CONSTANT_DEFAULTS or lowered.endswith("()"):
+        return ""
+    if lowered in {"true", "false"}:
+        return f" DEFAULT {1 if lowered == 'true' else 0}"
+    try:
+        float(value)
+        return f" DEFAULT {value}"
+    except ValueError:
+        pass
+    escaped = arg.replace("'", "''")
+    return f" DEFAULT '{escaped}'"
 
 
 async def ensure_schema() -> bool:
@@ -73,10 +100,15 @@ async def _add_missing_columns(conn) -> None:
             if column.name in existing:
                 continue
             ddl = _column_ddl(column)
-            default = ""
-            if column.server_default is not None and column.server_default.arg is not None:
-                default = f" DEFAULT {column.server_default.arg}"
+            default = _column_default(column)
             await conn.execute(
                 text(f"ALTER TABLE {table_name} ADD COLUMN {column.name} {ddl}{default}")
             )
+            if not default and column.server_default is not None and ddl == "DATETIME":
+                # Non-constant default (now()) cannot be part of ALTER TABLE; backfill rows.
+                await conn.execute(
+                    update(table)
+                    .where(column.is_(None))
+                    .values({column.name: func.current_timestamp()})
+                )
             logger.info("sqlite_column_added", table=table_name, column=column.name)

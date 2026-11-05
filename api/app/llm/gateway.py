@@ -514,6 +514,7 @@ class LLMGateway:
             # FIX1: client disconnected OR task cancelled mid-attempt. Record
             # CANCELLED via the finally block so the half-open breaker trial
             # doesn't stay stuck in_flight=True.
+            cancelled = True
             raise
         except httpx.HTTPError as exc:
             raise LLMError(f"{target.provider} transport error: {type(exc).__name__}") from exc
