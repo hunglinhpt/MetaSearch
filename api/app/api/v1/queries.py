@@ -104,15 +104,15 @@ async def get_query(query_id: str) -> dict[str, Any]:
             query = (
                 await session.execute(select(Query).where(Query.id == qid))
             ).scalar_one_or_none()
-            # SEC-04: wrong owner -> 404 (never 403, to avoid revealing the
-            # existence of another system's data). Admin bypasses.
-            owner = current_api_key_id.get()
-            if current_role.get() != "admin" and (
-                owner not in (None, "anonymous")
-                and query is not None
-                and query.api_key_id not in (None, owner)
-            ):
-                query = None
+            # SEC-04: wrong owner or unowned when auth enabled -> 404 (never 403,
+            # to avoid revealing the existence of another system's data). Admin bypasses.
+            # When auth is disabled (anonymous), unowned or any query can be viewed.
+            from app.config import get_settings
+
+            if get_settings().auth_enabled and current_role.get() != "admin":
+                owner = current_api_key_id.get()
+                if query is not None and (query.api_key_id is None or query.api_key_id != owner):
+                    query = None
             if query is None:
                 raise MetaSearchError(ErrorCode.INVALID_REQUEST, "query not found", status_code=404)
             results = (

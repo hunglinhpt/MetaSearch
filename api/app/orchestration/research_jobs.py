@@ -257,6 +257,7 @@ class ResearchJobStore:
                     if answer_row.status in ("complete", "truncated")
                     else answer_row.status,
                     finished=True,
+                    owner_key_id=str(query_row.api_key_id) if query_row.api_key_id else None,
                     result={
                         "report_md": answer_row.content_md or "",
                         "citations": citations,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -445,3 +446,135 @@ async def test_authenticate_sets_contextvars(isolation_db):
     assert current_api_key_id.get() == ctx.key_id
     assert current_api_key_id.get() != "dirty_key_id"
     assert current_role.get() == "admin"
+
+
+@pytest.mark.asyncio
+async def test_unowned_query_access(isolation_db, monkeypatch):
+    """GET /queries/{id}: unowned query is accessible only by admin or when auth disabled."""
+    from app.db.models import Query as QueryRow
+    from app.db.session import get_sessionmaker
+    from app.main import app
+
+    user_key, _ = await create_key("user_norm_q", role="user")
+    admin_key, _ = await create_key("admin_user_q", role="admin")
+
+    qid = uuid.uuid4()
+    async with get_sessionmaker()() as session:
+        q_row = QueryRow(
+            id=qid,
+            raw_text="UNOWNED-QUERY",
+            api_key_id=None,
+        )
+        session.add(q_row)
+        await session.commit()
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False, client=("127.0.0.1", 4242))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # Auth enabled: normal user -> 404
+        r_user = await client.get(f"/v1/queries/{qid}", headers=_hdr(user_key))
+        assert r_user.status_code == 404
+
+        # Auth enabled: admin -> 200
+        r_admin = await client.get(f"/v1/queries/{qid}", headers=_hdr(admin_key))
+        assert r_admin.status_code == 200
+        assert r_admin.json()["raw_text"] == "UNOWNED-QUERY"
+
+    # Auth disabled: anonymous -> 200
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client_noauth:
+        r_anon = await client_noauth.get(f"/v1/queries/{qid}")
+        assert r_anon.status_code == 200
+        assert r_anon.json()["raw_text"] == "UNOWNED-QUERY"
+
+
+@pytest.mark.asyncio
+async def test_unowned_research_job_access(isolation_db, monkeypatch):
+    """GET /research/{id} and /events: unowned job is accessible only by admin or no-auth."""
+    from app.main import app
+    from app.orchestration.research_jobs import ResearchJob, get_job_store
+
+    user_key, _ = await create_key("user_norm_r", role="user")
+    admin_key, _ = await create_key("admin_user_r", role="admin")
+
+    store = get_job_store()
+    jid = uuid.uuid4()
+    unowned_job = ResearchJob(
+        id=jid,
+        query="UNOWNED-JOB",
+        owner_key_id=None,
+        status="done",
+        finished=True,
+    )
+    store._jobs[jid] = unowned_job
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False, client=("127.0.0.1", 4242))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # Auth enabled: user -> 404 on detail and events
+        r_user = await client.get(f"/v1/research/{jid}", headers=_hdr(user_key))
+        assert r_user.status_code == 404
+        r_user_ev = await client.get(f"/v1/research/{jid}/events", headers=_hdr(user_key))
+        assert r_user_ev.status_code == 404
+
+        # Auth enabled: admin -> 200 on detail
+        r_admin = await client.get(f"/v1/research/{jid}", headers=_hdr(admin_key))
+        assert r_admin.status_code == 200
+
+    # Auth disabled: anonymous -> 200
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client_noauth:
+        r_anon = await client_noauth.get(f"/v1/research/{jid}")
+        assert r_anon.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_restored_research_job_retains_owner(isolation_db):
+    """Restored job from DB preserves owner_key_id after job store memory eviction."""
+    from app.db.models import Answer as AnswerRow
+    from app.db.models import Query as QueryRow
+    from app.db.session import get_sessionmaker
+    from app.main import app
+    from app.orchestration.research_jobs import get_job_store
+
+    user_a, _ = await create_key("user_a_restore", role="user")
+    user_b, _ = await create_key("user_b_restore", role="user")
+    admin_key, _ = await create_key("admin_user_restore", role="admin")
+    ctx_a = await authenticate(user_a)
+
+    job_id = uuid.uuid4()
+    async with get_sessionmaker()() as session:
+        q_row = QueryRow(
+            id=job_id,
+            raw_text="RESTORED-RESEARCH-QUERY",
+            api_key_id=ctx_a.key_id,
+        )
+        ans_row = AnswerRow(
+            query_id=job_id,
+            kind="research",
+            content_md="# Restored Research Report",
+            model="test-model",
+            status="complete",
+        )
+        session.add(q_row)
+        session.add(ans_row)
+        await session.commit()
+
+    # Clear in-memory job cache to force DB reload
+    store = get_job_store()
+    store._jobs.pop(job_id, None)
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False, client=("127.0.0.1", 4242))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # Owner A calls -> restores from DB and returns 200
+        r_a = await client.get(f"/v1/research/{job_id}", headers=_hdr(user_a))
+        assert r_a.status_code == 200
+        assert r_a.json()["report_md"] == "# Restored Research Report"
+
+        # Key B calls -> 404
+        r_b = await client.get(f"/v1/research/{job_id}", headers=_hdr(user_b))
+        assert r_b.status_code == 404
+
+        # Admin calls -> 200
+        r_admin = await client.get(f"/v1/research/{job_id}", headers=_hdr(admin_key))
+        assert r_admin.status_code == 200

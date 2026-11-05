@@ -64,10 +64,12 @@ async def create_research(request: ResearchRequest) -> dict[str, Any]:
 
 
 def _check_job_owner(job) -> None:
-    if current_role.get() == "admin":
+    from app.config import get_settings
+
+    if not get_settings().auth_enabled or current_role.get() == "admin":
         return
     owner = current_api_key_id.get()
-    if job.owner_key_id is not None and job.owner_key_id != owner:
+    if job.owner_key_id is None or job.owner_key_id != owner:
         raise MetaSearchError(ErrorCode.INVALID_REQUEST, "research job not found", status_code=404)
 
 
