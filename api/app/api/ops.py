@@ -135,7 +135,7 @@ async def metrics(request: Request) -> Response:
     else:
         # No-auth deployments keep metrics loopback-only.
         client_host = request.client.host if request.client else "?"
-        if client_host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        if client_host not in ("127.0.0.1", "::1", "testclient"):
             raise MetaSearchError(
                 ErrorCode.UNAUTHORIZED, "metrics restricted to loopback", status_code=403
             )

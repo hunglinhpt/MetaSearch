@@ -12,7 +12,10 @@ from sqlalchemy import select
 from app.config import Settings, get_settings
 from app.core.auth import (
     authenticate,
+    authenticate_and_rate_limit,
     create_key,
+    current_api_key_id,
+    current_role,
     reset_rate_limit_windows,
     validate_startup_auth,
 )
@@ -371,3 +374,62 @@ async def test_surface_protection_admin_endpoints(isolation_db):
         assert r_docs_loop.status_code == 200
         r_open_loop = await client.get("/openapi.json")
         assert r_open_loop.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_lifespan_detects_public_host_from_argv(monkeypatch):
+    """Lifespan must read --host from sys.argv and refuse startup with SystemExit."""
+    from app.main import create_app
+
+    app_instance = create_app()
+    monkeypatch.setattr("sys.argv", ["uvicorn", "app.main:app", "--host", "0.0.0.0"])
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+    with pytest.raises(SystemExit) as exc_info:
+        async with app_instance.router.lifespan_context(app_instance):
+            pass
+    assert "Refusing to start" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_auth_disabled_sets_anonymous_context(monkeypatch):
+    """When auth is disabled, authenticate_and_rate_limit sets anonymous contextvars."""
+    from starlette.requests import Request
+
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setenv("DEV_ANON_ADMIN", "false")
+    get_settings.cache_clear()
+    req = Request({"type": "http", "method": "GET", "path": "/v1/search", "headers": []})
+    ctx = await authenticate_and_rate_limit(req)
+    assert ctx.key_id == "anonymous"
+    assert current_api_key_id.get() == "anonymous"
+    assert current_role.get() == "user"
+
+    # With dev_anon_admin=True
+    monkeypatch.setenv("DEV_ANON_ADMIN", "true")
+    get_settings.cache_clear()
+    req2 = Request({"type": "http", "method": "GET", "path": "/v1/search", "headers": []})
+    ctx_admin = await authenticate_and_rate_limit(req2)
+    assert ctx_admin.role == "admin"
+    assert current_role.get() == "admin"
+
+
+@pytest.mark.asyncio
+async def test_authenticate_sets_contextvars(isolation_db):
+    """authenticate_and_rate_limit must set current_api_key_id and current_role ContextVars."""
+    from starlette.requests import Request
+
+    key_val, _ = await create_key("ctx_test", role="admin")
+    req = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/search",
+            "headers": [(b"authorization", f"Bearer {key_val}".encode())],
+        }
+    )
+    current_api_key_id.set(None)
+    current_role.set("user")
+    ctx = await authenticate_and_rate_limit(req)
+    assert current_api_key_id.get() == ctx.key_id
+    assert current_role.get() == "admin"

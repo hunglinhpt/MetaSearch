@@ -378,9 +378,7 @@ def require_weighted_key(cost: int):
 
 async def require_admin(request: Request) -> AuthContext:
     """FastAPI dependency: require an admin role when AUTH_ENABLED=true."""
-    ctx = getattr(request.state, "auth", None) if hasattr(request, "state") else None
-    if ctx is None:
-        ctx = await require_api_key(request)
+    ctx = await require_api_key(request)
     if ctx.role != "admin":
         raise MetaSearchError(
             ErrorCode.UNAUTHORIZED,
