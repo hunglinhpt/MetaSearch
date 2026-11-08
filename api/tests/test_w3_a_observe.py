@@ -413,3 +413,22 @@ def test_rss_read_does_not_import_on_every_tick(monkeypatch, tmp_path):
     for _ in range(200):
         process_rss_bytes()
     assert time.perf_counter() - start < 1.0
+
+
+async def test_monitor_ignores_a_patched_asyncio_sleep(monkeypatch):
+    """Another test may swap asyncio.sleep for an instant stub; the monitor must not spin."""
+    import app.core.metrics as metrics_mod
+
+    real_sleep = asyncio.sleep
+    calls = []
+
+    async def instant(delay, *a, **k):
+        calls.append(delay)
+
+    task = asyncio.create_task(metrics_mod.runtime_monitor(interval_s=0.05))
+    monkeypatch.setattr(asyncio, "sleep", instant)
+    await real_sleep(0.3)
+    monkeypatch.undo()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert calls == []

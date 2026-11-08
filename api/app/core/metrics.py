@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from asyncio import sleep as _SLEEP
+
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 
 REGISTRY = CollectorRegistry(auto_describe=True)
@@ -252,7 +254,9 @@ async def runtime_monitor(interval_s: float = 0.5) -> None:
     loop = asyncio.get_running_loop()
     while True:
         started = loop.time()
-        await asyncio.sleep(interval_s)
+        # The real sleep, bound at import: a test that swaps asyncio.sleep for an instant
+        # stub must not turn this loop into a busy spin that starves the event loop.
+        await _SLEEP(interval_s)
         EVENT_LOOP_LAG.observe(max(0.0, loop.time() - started - interval_s))
         rss = process_rss_bytes()
         if rss is not None:

@@ -513,7 +513,7 @@ def test_chunk_markdown_with_malformed_url():
     assert chunks[0].document_url == "http://[bad"
 
 
-def test_client_metasearch():
+def test_client_metasearch(monkeypatch):
     """MetaSearch python client must meet all resilience and contract requirements."""
     client_path = (
         Path(__file__).resolve().parents[2] / "clients" / "python" / "metasearch_client.py"
@@ -527,7 +527,7 @@ def test_client_metasearch():
     msc = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(msc)
 
-    msc.time.sleep = lambda s: None
+    monkeypatch.setattr(msc.time, "sleep", lambda s: None)  # restored after the test
 
     class FakeResponse:
         def __init__(self, code, body, headers=None):
@@ -715,7 +715,7 @@ async def test_answer_pipeline_cache_store_payload():
     assert saved.get("complete") is True
 
 
-def test_client_retry_after_parsed_and_slept():
+def test_client_retry_after_parsed_and_slept(monkeypatch):
     """Client must pass parsed Retry-After to sleep for 503 instead of hardcoded 1s."""
     client_path = (
         Path(__file__).resolve().parents[2] / "clients" / "python" / "metasearch_client.py"
@@ -730,7 +730,7 @@ def test_client_retry_after_parsed_and_slept():
     spec.loader.exec_module(msc)
 
     sleep_calls = []
-    msc.time.sleep = lambda s: sleep_calls.append(s)
+    monkeypatch.setattr(msc.time, "sleep", lambda s: sleep_calls.append(s))  # restored
 
     class R:
         def __init__(self, code, body, headers=None):
