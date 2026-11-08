@@ -1005,3 +1005,19 @@ async def test_answer_cache_looked_up_once_per_miss(monkeypatch):
     async for _ in deps.get_answer_pipeline().run(SP(query="postgres once")):
         pass
     assert calls == 1
+
+
+async def test_complete_answer_is_replayed_from_cache():
+    """A complete answer asked again is served from the cache under the effective model."""
+    good_url = "https://good.example/replay"
+    gw = _TestGateway()
+    _install_stack([_TestAdapter("fake", [_raw(good_url)])], {good_url: _page(good_url)}, gw)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        body = {"query": "postgres replay", "stream": False}
+        first = (await c.post("/v1/answer", json=body)).json()
+        second = (await c.post("/v1/answer", json=body)).json()
+    assert first["status"] == "complete" and first["cached"] is False
+    assert second["cached"] is True and second["answer_md"] == first["answer_md"]
+    assert gw.calls == 1

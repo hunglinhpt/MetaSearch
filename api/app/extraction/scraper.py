@@ -107,8 +107,8 @@ def _ordered_ips(ips: collections.abc.Iterable[str]) -> list[str]:
     return v4 + v6
 
 
-# The extractor chain stops escalating below this much request budget (see
-# _scrape_uncached), so a timeout with less left than this is our own cut.
+# Same margin as the escalation check in _scrape_uncached: a timeout with less
+# request budget left than this is our own cut.
 _BUDGET_CUT_MARGIN_S = 0.5
 
 
@@ -246,16 +246,6 @@ class Scraper:
                 logger.info("scrape_blocked_ssrf", url=url, reason=str(exc))
                 await self._mark_failed(url, ttl_s=3600.0)
                 return PageFailure(url=url, status="blocked", error=str(exc))
-            except TimeoutError as exc:
-                # Our own request budget running out says nothing about the page, so it is
-                # not negative cached. A page slower than its own per-URL limit while the
-                # request still had time left is the upstream's fault and is cached as before.
-                if _request_budget_cut():
-                    logger.info("scrape_budget_cut_not_negative_cached", url=url)
-                    return PageFailure(url=url, status="failed", error="budget_exhausted")
-                logger.info("scrape_failed", url=url, error=type(exc).__name__)
-                await self._mark_failed(url, ttl_s=300.0)
-                return PageFailure(url=url, status="failed", error=type(exc).__name__)
             except (httpx.PoolTimeout, asyncio.CancelledError) as exc:
                 # P17: Local overload, pool exhaustion or cancellation MUST NOT be negative cached!
                 logger.info(
@@ -263,6 +253,9 @@ class Scraper:
                 )
                 return PageFailure(url=url, status="failed", error=type(exc).__name__)
             except Exception as exc:
+                # Our own request budget running out says nothing about the page, so it is
+                # not negative cached. A page slower than its own per-URL limit (TimeoutError)
+                # while the request still had time left is the upstream's fault and is cached.
                 if _request_budget_cut():
                     logger.info("scrape_budget_exhausted_not_negative_cached", url=url)
                     return PageFailure(url=url, status="failed", error="budget_exhausted")
@@ -356,7 +349,7 @@ class Scraper:
                         )
 
             # Check remaining budget before escalating to crawl4ai / Jina
-            if budget is not None and budget.remaining() <= _BUDGET_CUT_MARGIN_S:
+            if budget is not None and budget.remaining() <= 0.5:
                 raise TimeoutError("exhausted budget before extractor escalation")
 
             # Ensure the target URL passed to service extractors passed SSRF check
