@@ -200,6 +200,11 @@ class Settings(BaseSettings):
 
     # --- timeouts / limits ------------------------------------------------
     request_timeout_s: float = 30.0
+    # Graceful shutdown: how long to wait for answers already returned to reach the DB.
+    shutdown_drain_s: float = 10.0
+    # Lite (SQLite) runs retention inside the API; checked hourly, run at most daily.
+    retention_enabled: bool = True
+    retention_interval_s: float = 3600.0
     # An LLM call cut short by the request budget only counts against the provider's breaker
     # when the provider had at least this long to answer; shorter cuts are our own deadline.
     llm_breaker_min_timeout_s: float = 5.0

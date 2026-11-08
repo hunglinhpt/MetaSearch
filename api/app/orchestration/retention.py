@@ -1,15 +1,25 @@
-"""Data retention (WP-13): delete expired rows in bounded batches."""
+"""Data retention (WP-13): delete expired rows in bounded batches.
+
+Order follows the foreign keys: citations and semantic-cache rows of old answers first, then
+the answers, the search results, and only then queries nobody references any more. Chunk
+rows stay because citations point at them; only their content is blanked after
+``chunks`` days, as ``docs/10-security-compliance.md`` describes.
+
+Each batch is its own short transaction, so a large purge never holds a lock for long.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select, update
 
 from app.core.logging import get_logger
-from app.db.models import Answer, Chunk, Citation, EngineHealth, Query, SearchResult
+from app.db.models import Answer, Chunk, Citation, EngineHealth, Query, SearchResult, SemanticCache
 from app.db.session import get_sessionmaker
 
 logger = get_logger(__name__)
@@ -20,72 +30,106 @@ RETENTION_DAYS = {
     "search_results": 90,
     "answers": 90,
     "citations": 90,
-    "chunks": 30,  # content only; metadata kept
+    "chunks": 30,  # content only; the row stays for the citations that point at it
     "engine_health": 14,
 }
 
 
-async def run_retention(*, dry_run: bool = False) -> dict[str, int]:
-    """Delete expired rows per table in bounded batches. Returns per-table counts."""
-    results: dict[str, int] = {}
-    session_maker = get_sessionmaker()
+async def run_retention(
+    *, dry_run: bool = False, days: dict[str, int] | None = None
+) -> dict[str, int]:
+    """Delete expired rows table by table. Returns how many rows each step touched."""
+    limits = {**RETENTION_DAYS, **(days or {})}
     now = datetime.now(UTC)
+    cut_answers = now - timedelta(days=limits["answers"])
+    cut_queries = now - timedelta(days=limits["queries"])
+    cut_results = now - timedelta(days=limits["search_results"])
+    cut_chunks = now - timedelta(days=limits["chunks"])
+    cut_health = now - timedelta(days=limits["engine_health"])
 
-    async with session_maker() as session:
-        # citations older than 90d (via answers join not needed; citations have own created_at)
-        cutoff_90 = now - timedelta(days=RETENTION_DAYS["citations"])
-        results["citations"] = await _delete_batched(
-            session, Citation, Citation.created_at < cutoff_90, dry_run
-        )
-        cutoff_90_queries = now - timedelta(days=RETENTION_DAYS["queries"])
-        results["search_results"] = await _delete_batched(
-            session, SearchResult, SearchResult.created_at < cutoff_90_queries, dry_run
-        )
-        results["answers"] = await _delete_batched(
-            session, Answer, Answer.created_at < cutoff_90_queries, dry_run
-        )
-        results["queries"] = await _delete_batched(
-            session, Query, Query.created_at < cutoff_90_queries, dry_run
-        )
-        # chunks: content older than 30d — delete by document fetched_at
-        cutoff_30 = now - timedelta(days=RETENTION_DAYS["chunks"])
-        results["chunks"] = await _delete_batched(
-            session,
-            Chunk,
-            Chunk.created_at < cutoff_30,
-            dry_run,
-        )
-        results["engine_health"] = await _delete_batched(
-            session,
-            EngineHealth,
-            EngineHealth.window_start < now - timedelta(days=RETENTION_DAYS["engine_health"]),
-            dry_run,
-        )
+    old_answers = select(Answer.id).where(Answer.created_at < cut_answers)
+    referenced_queries = (
+        select(Answer.query_id)
+        .where(Answer.query_id.is_not(None))
+        .union(select(SearchResult.query_id).where(SearchResult.query_id.is_not(None)))
+    )
+    results: dict[str, int] = {}
+    results["citations"] = await _purge(
+        Citation, Citation.id, Citation.answer_id.in_(old_answers), dry_run
+    )
+    results["semantic_cache"] = await _purge(
+        SemanticCache,
+        SemanticCache.id,
+        (SemanticCache.answer_id.in_(old_answers)) | (SemanticCache.created_at < cut_answers),
+        dry_run,
+    )
+    results["answers"] = await _purge(Answer, Answer.id, Answer.created_at < cut_answers, dry_run)
+    results["search_results"] = await _purge(
+        SearchResult, SearchResult.id, SearchResult.created_at < cut_results, dry_run
+    )
+    results["queries"] = await _purge(
+        Query,
+        Query.id,
+        (Query.created_at < cut_queries) & Query.id.not_in(referenced_queries),
+        dry_run,
+    )
+    results["chunks"] = await _blank_chunks(cut_chunks, dry_run)
+    results["engine_health"] = await _purge(
+        EngineHealth, None, EngineHealth.window_start < cut_health, dry_run
+    )
+    logger.info("retention_done", dry_run=dry_run, **results)
     return results
 
 
-async def _delete_batched(session, model, condition, dry_run: bool) -> int:
-    """Delete in batches of BATCH_SIZE, never holding a lock > 1s."""
+async def _purge(model: Any, key: Any, condition: Any, dry_run: bool) -> int:
+    """Delete matching rows, at most BATCH_SIZE per transaction."""
+    maker = get_sessionmaker()
+    if dry_run:
+        async with maker() as session:
+            stmt = select(func.count()).select_from(model).where(condition)
+            return int((await session.execute(stmt)).scalar_one())
     total = 0
     while True:
-        if dry_run:
-            from sqlalchemy import func, select
-
-            count = (
-                await session.execute(select(func.count()).select_from(model).where(condition))
-            ).scalar_one()
-            return count
-        stmt = delete(model).where(condition).execution_options(synchronize_session=False)
-        # SQLAlchemy delete with LIMIT is dialect-specific; use ctid/id subquery
-        # on PG, rowid on SQLite. Simplified: delete matching rows in loop.
-        result = await session.execute(stmt)
-        deleted = result.rowcount
-        await session.commit()
+        async with maker() as session:
+            if key is None:
+                # Composite key (engine_health): a small table, one statement.
+                result = await session.execute(delete(model).where(condition))
+            else:
+                ids = select(key).where(condition).limit(BATCH_SIZE)
+                stmt = (
+                    delete(model).where(key.in_(ids)).execution_options(synchronize_session=False)
+                )
+                result = await session.execute(stmt)
+            await session.commit()
+        deleted = int(result.rowcount or 0)
         total += deleted
-        if deleted < BATCH_SIZE:
-            break
-        logger.info("retention_batch", table=model.__tablename__, deleted=total)
-    return total
+        if key is None or deleted < BATCH_SIZE:
+            return total
+
+
+async def _blank_chunks(cutoff: datetime, dry_run: bool) -> int:
+    condition = (Chunk.created_at < cutoff) & (Chunk.content != "")
+    maker = get_sessionmaker()
+    if dry_run:
+        async with maker() as session:
+            stmt = select(func.count()).select_from(Chunk).where(condition)
+            return int((await session.execute(stmt)).scalar_one())
+    total = 0
+    while True:
+        async with maker() as session:
+            ids = select(Chunk.id).where(condition).limit(BATCH_SIZE)
+            stmt = (
+                update(Chunk)
+                .where(Chunk.id.in_(ids))
+                .values(content="", embedding=None)
+                .execution_options(synchronize_session=False)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+        changed = int(result.rowcount or 0)
+        total += changed
+        if changed < BATCH_SIZE:
+            return total
 
 
 async def run_if_due(*, last_run_path: str | None = None) -> dict[str, int] | None:
@@ -96,9 +140,10 @@ async def run_if_due(*, last_run_path: str | None = None) -> dict[str, int] | No
         p = Path(last_run_path)
 
         def _read_last() -> float | None:
-            if p.exists():
-                return float(p.read_text().strip())
-            return None
+            try:
+                return float(p.read_text().strip()) if p.exists() else None
+            except ValueError:
+                return None
 
         last = await asyncio.to_thread(_read_last)
         if last is not None and time.time() - last < 86400:
@@ -107,6 +152,13 @@ async def run_if_due(*, last_run_path: str | None = None) -> dict[str, int] | No
     if last_run_path:
         from pathlib import Path
 
-        ts = str(time.time())
-        await asyncio.to_thread(Path(last_run_path).write_text, ts)
+        await asyncio.to_thread(Path(last_run_path).write_text, str(time.time()))
     return results
+
+
+async def retention_loop(*, interval_s: float, last_run_path: str | None) -> None:
+    """Background loop for Lite: check once per interval, run at most once a day."""
+    while True:
+        with contextlib.suppress(Exception):
+            await run_if_due(last_run_path=last_run_path)
+        await asyncio.sleep(interval_s)

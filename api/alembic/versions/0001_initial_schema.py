@@ -13,8 +13,8 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from pgvector.sqlalchemy import Vector
-from sqlalchemy.dialects import postgresql
+
+from app.db.base import EmbeddingType, JSONType, StringListType, UUIDType
 
 revision: str = "0001"
 down_revision: str | None = None
@@ -27,12 +27,29 @@ UUID_PK = sa.text("gen_random_uuid()")
 NOW = sa.text("now()")
 
 
+def _is_postgres() -> bool:
+    return op.get_bind().dialect.name == "postgresql"
+
+
+def _pg_index(*args, **kwargs) -> None:
+    # HNSW vector indexes exist only on Postgres; SQLite (Lite) does without them.
+    if _is_postgres():
+        op.create_index(*args, **kwargs)
+
+
 def upgrade() -> None:
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    # Column types are the dialect-variant ones from app.db.base, so this revision also
+    # builds the Lite (SQLite) schema. Postgres keeps UUID, JSONB, ARRAY and vector.
+    global UUID_PK, NOW
+    if _is_postgres():
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    else:
+        UUID_PK = None  # ids come from the application on SQLite
+        NOW = sa.text("CURRENT_TIMESTAMP")
 
     op.create_table(
         "users",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
         sa.Column("email", sa.Text(), unique=True),
         sa.Column("role", sa.Text(), nullable=False, server_default="user"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=NOW),
@@ -40,8 +57,8 @@ def upgrade() -> None:
 
     op.create_table(
         "api_keys",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id")),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
+        sa.Column("user_id", UUIDType, sa.ForeignKey("users.id")),
         sa.Column("key_hash", sa.Text(), nullable=False),
         sa.Column("name", sa.Text()),
         sa.Column("rate_limit_rpm", sa.Integer(), server_default="60"),
@@ -51,28 +68,28 @@ def upgrade() -> None:
 
     op.create_table(
         "sessions",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id")),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
+        sa.Column("user_id", UUIDType, sa.ForeignKey("users.id")),
         sa.Column("title", sa.Text()),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=NOW),
     )
 
     op.create_table(
         "queries",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
-        sa.Column("session_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sessions.id")),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
+        sa.Column("session_id", UUIDType, sa.ForeignKey("sessions.id")),
         sa.Column("raw_text", sa.Text(), nullable=False),
         sa.Column("normalized_text", sa.Text()),
         sa.Column("lang", sa.Text()),
         sa.Column("intent", sa.Text()),
-        sa.Column("params", postgresql.JSONB()),
+        sa.Column("params", JSONType),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=NOW),
     )
     op.create_index("idx_queries_normalized", "queries", ["normalized_text"])
 
     op.create_table(
         "documents",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
         sa.Column("canonical_url", sa.Text(), nullable=False, unique=True),
         sa.Column("url_hash", sa.Text(), nullable=False),
         sa.Column("title", sa.Text()),
@@ -88,10 +105,10 @@ def upgrade() -> None:
 
     op.create_table(
         "chunks",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
         sa.Column(
             "document_id",
-            postgresql.UUID(as_uuid=True),
+            UUIDType,
             sa.ForeignKey("documents.id", ondelete="CASCADE"),
             nullable=False,
         ),
@@ -99,10 +116,10 @@ def upgrade() -> None:
         sa.Column("heading_path", sa.Text()),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("token_count", sa.Integer()),
-        sa.Column("embedding", Vector(EMBEDDING_DIM)),
+        sa.Column("embedding", EmbeddingType),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=NOW),
     )
-    op.create_index(
+    _pg_index(
         "idx_chunks_embedding",
         "chunks",
         ["embedding"],
@@ -114,21 +131,21 @@ def upgrade() -> None:
 
     op.create_table(
         "search_results",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
-        sa.Column("query_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("queries.id")),
-        sa.Column("document_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("documents.id")),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
+        sa.Column("query_id", UUIDType, sa.ForeignKey("queries.id")),
+        sa.Column("document_id", UUIDType, sa.ForeignKey("documents.id")),
         sa.Column("rank", sa.Integer()),
         sa.Column("score", sa.REAL()),
         sa.Column("consensus", sa.Integer()),
-        sa.Column("found_by", postgresql.ARRAY(sa.Text())),
+        sa.Column("found_by", StringListType),
         sa.Column("raw_snippet", sa.Text()),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=NOW),
     )
 
     op.create_table(
         "answers",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
-        sa.Column("query_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("queries.id")),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
+        sa.Column("query_id", UUIDType, sa.ForeignKey("queries.id")),
         sa.Column("kind", sa.Text(), nullable=False),
         sa.Column("content_md", sa.Text()),
         sa.Column("model", sa.Text()),
@@ -142,15 +159,15 @@ def upgrade() -> None:
 
     op.create_table(
         "citations",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
         sa.Column(
             "answer_id",
-            postgresql.UUID(as_uuid=True),
+            UUIDType,
             sa.ForeignKey("answers.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("n", sa.Integer(), nullable=False),
-        sa.Column("chunk_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("chunks.id")),
+        sa.Column("chunk_id", UUIDType, sa.ForeignKey("chunks.id")),
         sa.Column("url", sa.Text()),
         sa.Column("valid", sa.Boolean(), server_default="true"),
     )
@@ -166,7 +183,7 @@ def upgrade() -> None:
         sa.Column("timeout_ms", sa.Integer(), server_default="3000"),
         sa.Column("max_results", sa.Integer(), server_default="15"),
         sa.Column("requires_key", sa.Boolean(), server_default="false"),
-        sa.Column("config", postgresql.JSONB(), server_default="{}"),
+        sa.Column("config", JSONType, server_default="{}"),
     )
 
     op.create_table(
@@ -184,16 +201,16 @@ def upgrade() -> None:
 
     op.create_table(
         "semantic_cache",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=UUID_PK),
+        sa.Column("id", UUIDType, primary_key=True, server_default=UUID_PK),
         sa.Column("query_text", sa.Text(), nullable=False),
-        sa.Column("query_embedding", Vector(EMBEDDING_DIM)),
-        sa.Column("answer_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("answers.id")),
+        sa.Column("query_embedding", EmbeddingType),
+        sa.Column("answer_id", UUIDType, sa.ForeignKey("answers.id")),
         sa.Column("model", sa.Text()),
         sa.Column("hit_count", sa.Integer(), server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=NOW),
         sa.Column("expires_at", sa.DateTime(timezone=True)),
     )
-    op.create_index(
+    _pg_index(
         "idx_semcache_emb",
         "semantic_cache",
         ["query_embedding"],
@@ -203,7 +220,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("idx_semcache_emb", table_name="semantic_cache")
+    if _is_postgres():
+        op.drop_index("idx_semcache_emb", table_name="semantic_cache")
     op.drop_table("semantic_cache")
     op.drop_table("engine_health")
     op.drop_table("engines")
@@ -211,7 +229,8 @@ def downgrade() -> None:
     op.drop_table("answers")
     op.drop_table("search_results")
     op.drop_index("idx_chunks_document", table_name="chunks")
-    op.drop_index("idx_chunks_embedding", table_name="chunks")
+    if _is_postgres():
+        op.drop_index("idx_chunks_embedding", table_name="chunks")
     op.drop_table("chunks")
     op.drop_index("idx_documents_domain", table_name="documents")
     op.drop_table("documents")

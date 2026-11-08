@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -62,11 +63,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await get_persist_queue().start()
 
-    import asyncio
-
     from app.core.metrics import runtime_monitor
 
     monitor = asyncio.create_task(runtime_monitor(), name="runtime-monitor")
+
+    retention_task = None
+    if (
+        settings.retention_enabled
+        and settings.database_url.startswith("sqlite")
+        and not settings.is_test
+    ):
+        from pathlib import Path
+
+        from app.orchestration.retention import retention_loop
+
+        db_path = settings.database_url.split("///", 1)[-1]
+        marker = str(Path(db_path).with_suffix(".retention"))
+        retention_task = asyncio.create_task(
+            retention_loop(interval_s=settings.retention_interval_s, last_run_path=marker)
+        )
 
     from app.api.deps import get_health_writer
     from app.orchestration.engine_store import clear_legacy_auto_disabled
@@ -97,10 +112,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         monitor.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await monitor
+        if retention_task is not None:
+            retention_task.cancel()
         try:
+            # An answer already returned is written by the pipeline's background task after
+            # the "done" event: wait for those first, then drain what they enqueued.
+            from app.orchestration import persist
+            from app.orchestration import pipeline as answer_pipeline
             from app.orchestration.persist_queue import get_persist_queue
 
-            await get_persist_queue().drain(budget_s=5)
+            pending = [t for t in list(answer_pipeline._background_tasks) if not t.done()]
+            if pending:
+                await asyncio.wait(pending, timeout=settings.shutdown_drain_s)
+            await persist.wait_background(settings.shutdown_drain_s)
+            await get_persist_queue().drain(budget_s=settings.shutdown_drain_s)
             await get_persist_queue().stop()
         except Exception as exc:
             logger.warning("persist_queue_shutdown_error", error=type(exc).__name__)

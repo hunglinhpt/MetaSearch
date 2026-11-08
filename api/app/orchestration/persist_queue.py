@@ -39,6 +39,24 @@ class PersistQueue:
         self._dropped = 0
         self._running = False
 
+    @property
+    def running(self) -> bool:
+        return self._running
+
+    @property
+    def dropped(self) -> int:
+        return self._dropped
+
+    @staticmethod
+    def _discard(item: PersistItem | None) -> None:
+        # A dropped write still holds an un-awaited coroutine; close it so nothing leaks.
+        if item is None:
+            return
+        for arg in item.args:
+            close = getattr(arg, "close", None)
+            if callable(close) and asyncio.iscoroutine(arg):
+                close()
+
     def enqueue(self, item: PersistItem) -> None:
         try:
             self._queue.put_nowait(item)
@@ -46,7 +64,7 @@ class PersistQueue:
         except asyncio.QueueFull:
             # Drop oldest to make room (bounded memory under DB stall).
             try:
-                self._queue.get_nowait()
+                self._discard(self._queue.get_nowait())
                 self._dropped += 1
                 logger.warning("persist_queue_dropped_oldest", total_dropped=self._dropped)
                 self._queue.put_nowait(item)

@@ -47,11 +47,29 @@ async def _run(label: str, coro: Any) -> None:
         logger.warning("persist_failed", label=label, error=type(exc).__name__)
 
 
-def _spawn_task(label: str, coro: Any) -> asyncio.Task[None]:
+def _spawn_task(label: str, coro: Any) -> asyncio.Task[None] | None:
+    """Hand one DB write to the bounded persist queue.
+
+    The queue is started by the app lifespan. Without it (scripts, some tests) the write
+    falls back to a tracked task, as before WP-13.
+    """
+    from app.orchestration.persist_queue import PersistItem, get_persist_queue
+
+    queue = get_persist_queue()
+    if queue.running:
+        queue.enqueue(PersistItem(label, _run, (label, coro)))
+        return None
     task = asyncio.create_task(_run(label, coro))
     _background_tasks.add(task)
     task.add_done_callback(_on_task_done)
     return task
+
+
+async def wait_background(timeout_s: float) -> None:
+    """Wait for fallback write tasks still running; used on shutdown."""
+    pending = [t for t in list(_background_tasks) if not t.done()]
+    if pending:
+        await asyncio.wait(pending, timeout=timeout_s)
 
 
 def _on_task_done(task: asyncio.Task[Any]) -> None:

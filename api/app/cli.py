@@ -48,6 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     keys_sub.add_parser("list", help="List existing API keys")
     p_revoke = keys_sub.add_parser("revoke", help="Disable a key by prefix")
     p_revoke.add_argument("prefix")
+
+    p_ret = sub.add_parser("retention", help="Delete expired data now (requires DB access)")
+    p_ret.add_argument("--dry-run", action="store_true", help="count what would go, change nothing")
     return parser
 
 
@@ -61,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_answer(args)
         if args.command == "keys":
             return _cmd_keys(args)
+        if args.command == "retention":
+            return _cmd_retention(args)
     except httpx.HTTPStatusError as exc:
         _print_error(exc)
         return 1
@@ -69,6 +74,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _cmd_retention(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from app.db.session import dispose_engine
+    from app.orchestration.retention import run_retention
+
+    async def _run() -> int:
+        try:
+            counts = await run_retention(dry_run=args.dry_run)
+        finally:
+            await dispose_engine()
+        label = "would delete" if args.dry_run else "deleted"
+        for table, n in counts.items():
+            print(f"{table:<16} {label}: {n}")
+        return 0
+
+    return asyncio.run(_run())
 
 
 def _cmd_keys(args: argparse.Namespace) -> int:
