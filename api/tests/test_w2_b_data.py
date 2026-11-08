@@ -591,3 +591,202 @@ def test_client_metasearch():
 
     # 8. Request ID tracking
     assert msc.get_last_request_id() is not None
+
+
+@pytest.mark.asyncio
+async def test_scraper_exception_when_budget_exhausted():
+    """Scraper must not negative cache when an exception happens while budget is exhausted."""
+    import app.extraction.ssrf as ssrf
+    from app.cache import CacheClient, _local_cache
+    from app.config import get_settings
+    from app.core.budget import RequestBudget, use_budget
+    from app.extraction.scraper import PageFailure, Scraper
+
+    _local_cache.clear()
+
+    async def fail_transport(request):
+        raise RuntimeError("simulated network connection drop")
+
+    scraper = Scraper(
+        get_settings(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(fail_transport)),
+        cache=CacheClient(None),
+    )
+
+    async def allowed(*a, **k):
+        return True
+
+    async def resolved(url):
+        return frozenset({"93.184.216.34"})
+
+    scraper._robots.allowed = allowed
+    orig_resolve = ssrf.resolve_and_check
+    ssrf.resolve_and_check = resolved
+    target_url = "https://budget-exhausted.example/page"
+    try:
+        import time
+
+        b = RequestBudget(0.1, start_time=time.monotonic() - 1.0)
+        assert b.is_expired()
+        with use_budget(b):
+            res = await scraper.scrape(target_url)
+            assert isinstance(res, PageFailure)
+        poisoned = await scraper._is_negatively_cached(target_url)
+        assert poisoned is False
+    finally:
+        ssrf.resolve_and_check = orig_resolve
+
+
+def test_score_chunks_sync_malformed_page_url():
+    """_score_chunks_sync must safely handle malformed page url without raising ValueError."""
+    from datetime import UTC, datetime
+
+    from app.extraction.scraper import PageContent
+    from app.orchestration.pipeline import _score_chunks_sync
+
+    page = PageContent(
+        url="http://[bad",
+        final_url="http://[bad",
+        title="Title",
+        markdown="This is page text with sufficient tokens to chunk properly.",
+        extractor_used="trafilatura",
+        fetched_at=datetime.now(UTC),
+    )
+    chunks = _score_chunks_sync("query", [], [page])
+    assert isinstance(chunks, list)
+
+
+@pytest.mark.asyncio
+async def test_answer_pipeline_replay_preserves_status_complete_and_council():
+    """_replay must preserve payload status, complete, and council events."""
+    from app.cache import CacheClient
+    from app.config import get_settings
+    from app.orchestration.pipeline import AnswerPipeline
+
+    pipe = AnswerPipeline.__new__(AnswerPipeline)
+    pipe.settings = get_settings()
+    pipe.cache = CacheClient(None)
+    payload = {
+        "status": "truncated",
+        "complete": False,
+        "council": {"verdict": "consensus", "summary": "test"},
+        "answer_md": "some markdown answer text",
+        "citations": [],
+        "sources": [],
+    }
+    events = [ev async for ev in pipe._replay(payload)]
+    ev_dict = dict(events)
+    assert "council" in ev_dict
+    assert ev_dict["council"] == {"verdict": "consensus", "summary": "test"}
+    done = ev_dict["done"]
+    assert done["status"] == "truncated"
+    assert done["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_answer_pipeline_cache_store_payload():
+    """_cache_store must store status complete and complete True."""
+    import uuid
+    from typing import Any
+
+    from app.cache import CacheClient
+    from app.config import get_settings
+    from app.orchestration.pipeline import AnswerPipeline, SearchParams
+
+    cache = CacheClient(None)
+    saved: dict[str, Any] = {}
+
+    async def fake_set(k, v, **kwargs):
+        saved.update(v)
+
+    cache.set_json = fake_set
+    pipe = AnswerPipeline.__new__(AnswerPipeline)
+    pipe.settings = get_settings()
+    pipe.cache = cache
+    await pipe._cache_store(
+        SearchParams(query="python programming basics"),
+        model="fake-model",
+        answer_id=uuid.uuid4(),
+        answer_md="informative answer",
+        citations=[],
+        sources=[],
+    )
+    assert saved.get("status") == "complete"
+    assert saved.get("complete") is True
+
+
+def test_client_retry_after_parsed_and_slept():
+    """Client must pass parsed Retry-After to sleep for 503 instead of hardcoded 1s."""
+    client_path = (
+        Path(__file__).resolve().parents[2] / "clients" / "python" / "metasearch_client.py"
+    )
+    if not client_path.exists():
+        client_path = (
+            Path(__file__).resolve().parents[1] / "clients" / "python" / "metasearch_client.py"
+        )
+    spec = importlib.util.spec_from_file_location("msc2", client_path)
+    assert spec is not None and spec.loader is not None
+    msc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(msc)
+
+    sleep_calls = []
+    msc.time.sleep = lambda s: sleep_calls.append(s)
+
+    class R:
+        def __init__(self, code, body, headers=None):
+            self.status_code, self._body, self.headers, self.text = (
+                code,
+                body,
+                headers or {},
+                json.dumps(body),
+            )
+
+        def json(self):
+            return self._body
+
+    seen = {"n": 0}
+    responses = [
+        R(503, {"error": {"code": "x"}}, {"Retry-After": "3.5"}),
+        R(200, {"complete": True, "results": [{"url": "http://ok"}]}),
+    ]
+
+    def post(*a, **k):
+        r = responses[min(seen["n"], len(responses) - 1)]
+        seen["n"] += 1
+        return r
+
+    msc.requests.post = post
+    res = msc.search("http://127.0.0.1", "q")
+    assert res == [{"url": "http://ok"}]
+    assert sleep_calls == [3.5]
+
+
+def test_client_raises_for_non_json_error():
+    """Client must preserve resp.text as message when response is non-JSON error."""
+    client_path = (
+        Path(__file__).resolve().parents[2] / "clients" / "python" / "metasearch_client.py"
+    )
+    if not client_path.exists():
+        client_path = (
+            Path(__file__).resolve().parents[1] / "clients" / "python" / "metasearch_client.py"
+        )
+    spec = importlib.util.spec_from_file_location("msc3", client_path)
+    assert spec is not None and spec.loader is not None
+    msc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(msc)
+
+    class NonJsonResp:
+        status_code = 403
+        text = "Raw Custom Forbidden"
+        headers = {"x-request-id": "req-custom-403"}
+
+        def json(self):
+            raise ValueError("not json")
+
+    msc.requests.post = lambda *a, **k: NonJsonResp()
+    with pytest.raises(msc.MetaSearchError) as exc_info:
+        msc.search("http://127.0.0.1", "q")
+    exc = exc_info.value
+    assert exc.status_code == 403
+    assert exc.message == "Raw Custom Forbidden"
+    assert exc.request_id == "req-custom-403"

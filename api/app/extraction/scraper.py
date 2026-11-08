@@ -244,7 +244,14 @@ class Scraper:
                 return PageFailure(url=url, status="failed", error=type(exc).__name__)
             except Exception as exc:
                 budget = get_current_budget()
-                if budget is not None and budget.exhausted():
+                is_cut = bool(
+                    budget is not None
+                    and (
+                        (hasattr(budget, "is_expired") and budget.is_expired())
+                        or (hasattr(budget, "exhausted") and budget.exhausted())
+                    )
+                )
+                if is_cut:
                     logger.info("scrape_budget_exhausted_not_negative_cached", url=url)
                     return PageFailure(url=url, status="failed", error="budget_exhausted")
                 logger.info("scrape_failed", url=url, error=type(exc).__name__)
