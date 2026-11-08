@@ -297,3 +297,26 @@ async def test_load_refuses_foreign_server(tmp_path, monkeypatch):
             await load._check_token(c, "http://127.0.0.1:18999")
     async with server("right-token") as c:
         await load._check_token(c, "http://127.0.0.1:18999")
+
+
+def test_missing_truststore_warns(monkeypatch):
+    import builtins
+
+    import app.http as http_mod
+
+    real_import = builtins.__import__
+
+    def no_truststore(name, *args, **kwargs):
+        if name == "truststore":
+            raise ImportError("not installed")
+        return real_import(name, *args, **kwargs)
+
+    warnings = []
+    monkeypatch.setattr(builtins, "__import__", no_truststore)
+    monkeypatch.setattr(http_mod.logger, "warning", lambda event, **kw: warnings.append(event))
+    monkeypatch.setenv("TLS_TRUST_STORE", "system")
+    get_settings.cache_clear()
+    monkeypatch.setattr(http_mod, "_ssl_context", None)
+    ctx = http_mod.get_ssl_context()
+    assert ctx is not None and ctx.check_hostname
+    assert warnings == ["tls_trust_store_unavailable"]
