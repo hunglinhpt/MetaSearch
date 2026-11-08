@@ -151,12 +151,17 @@ def export_breaker_state(name: str, state: str) -> None:
         BREAKER_STATE.labels(engine=name).set(_BREAKER_LEVEL.get(state, 0))
 
 
-def process_rss_bytes() -> float | None:
-    """Resident memory of this process, or None when the platform gives no cheap answer."""
+def _make_rss_reader():
+    """Pick how to read this process's resident memory, once. Returns a callable or None.
+
+    Chosen once at import: the monitor calls it every tick, and a failing ``import`` on each
+    tick walks the whole ``sys.path`` and can starve the event loop.
+    """
     try:
         import psutil  # optional
 
-        return float(psutil.Process().memory_info().rss)
+        proc = psutil.Process()
+        return lambda: float(proc.memory_info().rss)
     except ImportError:
         pass
     import sys
@@ -180,8 +185,6 @@ def process_rss_bytes() -> float | None:
                 )
             ]
 
-        counters = _Counters()
-        counters.cb = ctypes.sizeof(_Counters)
         kernel32, psapi = ctypes.windll.kernel32, ctypes.windll.psapi
         kernel32.GetCurrentProcess.restype = wintypes.HANDLE
         psapi.GetProcessMemoryInfo.argtypes = [
@@ -189,19 +192,38 @@ def process_rss_bytes() -> float | None:
             ctypes.POINTER(_Counters),
             wintypes.DWORD,
         ]
-        if psapi.GetProcessMemoryInfo(
-            kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
-        ):
-            return float(counters.WorkingSetSize)
-        return None
-    try:
-        import os
+        handle = kernel32.GetCurrentProcess()
 
-        with open("/proc/self/statm", encoding="ascii") as fh:
-            pages = int(fh.read().split()[1])
-        return float(pages * os.sysconf("SC_PAGE_SIZE"))
-    except (OSError, ValueError, IndexError):
-        return None
+        def read_windows() -> float | None:
+            counters = _Counters()
+            counters.cb = ctypes.sizeof(_Counters)
+            if psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+                return float(counters.WorkingSetSize)
+            return None
+
+        return read_windows
+    import os
+
+    if os.path.exists("/proc/self/statm"):
+        page = os.sysconf("SC_PAGE_SIZE")
+
+        def read_proc() -> float | None:
+            try:
+                with open("/proc/self/statm", encoding="ascii") as fh:
+                    return float(int(fh.read().split()[1]) * page)
+            except (OSError, ValueError, IndexError):
+                return None
+
+        return read_proc
+    return None
+
+
+_RSS_READER = _make_rss_reader()
+
+
+def process_rss_bytes() -> float | None:
+    """Resident memory of this process, or None when the platform gives no cheap answer."""
+    return _RSS_READER() if _RSS_READER is not None else None
 
 
 def _sample_http_pools() -> None:

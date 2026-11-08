@@ -397,3 +397,19 @@ def test_breaker_half_open_exported_by_allow():
     assert _value("metasearch_breaker_state", engine="w3a-half") == 2
     assert reg.allow("w3a-half", now=10_000.0)
     assert _value("metasearch_breaker_state", engine="w3a-half") == 1
+
+
+def test_rss_read_does_not_import_on_every_tick(monkeypatch, tmp_path):
+    """The monitor reads RSS every half second; it must not search sys.path each time."""
+    import sys
+    import time
+
+    from app.core.metrics import process_rss_bytes
+
+    monkeypatch.setattr(
+        sys, "path", [str(tmp_path / f"p{i}") for i in range(3000)] + list(sys.path)
+    )
+    start = time.perf_counter()
+    for _ in range(200):
+        process_rss_bytes()
+    assert time.perf_counter() - start < 1.0
