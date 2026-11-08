@@ -793,8 +793,11 @@ def test_client_raises_for_non_json_error():
 
 
 @pytest.mark.asyncio
-async def test_scraper_timeout_error_without_budget_not_negative_cached():
-    """TimeoutError without an active budget must not be negative cached (locked to line 238)."""
+async def test_upstream_timeout_without_budget_is_negative_cached():
+    """A timeout with no request budget is the upstream's fault and stays negative cached.
+
+    Plan 11 section 4 item 6: only our own budget cut skips the negative cache (audit 15).
+    """
     import app.extraction.ssrf as ssrf
     from app.cache import CacheClient, _local_cache
     from app.config import get_settings
@@ -826,6 +829,179 @@ async def test_scraper_timeout_error_without_budget_not_negative_cached():
         assert isinstance(res, PageFailure)
         assert res.error == "TimeoutError"
         poisoned = await scraper._is_negatively_cached(target_url)
-        assert poisoned is False
+        assert poisoned is True
     finally:
         ssrf.resolve_and_check = orig_resolve
+
+
+# -- audit 15 (docs/14-readiness/15-audit-w2b-2026-11-08.md) -------------------------
+
+
+class _LongGateway(_TestGateway):
+    """First token at once, then the rest of a long answer after ``tail`` seconds."""
+
+    def __init__(self, tail: float, finish: str = "stop") -> None:
+        super().__init__(finish=finish)
+        self.tail = tail
+
+    async def stream(self, messages, **kwargs):
+        self.calls += 1
+        yield StreamDelta(text="Postgres is relational [1].")
+        await asyncio.sleep(self.tail)
+        yield StreamDelta(text=" More detail.", finish_reason=self.finish)
+        yield StreamDelta(usage=Usage(input_tokens=10, output_tokens=10))
+
+
+async def test_follower_gets_long_answer_past_first_token_budget():
+    """The answer budget counts to the first token; a joined caller must not give up early."""
+    good_url = "https://good.example/long"
+    gw = _LongGateway(tail=2.5)
+    _install_stack([_TestAdapter("fake", [_raw(good_url)])], {good_url: _page(good_url)}, gw)
+    body = {"query": "postgres long answer", "stream": False, "timeout_ms": 2000}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        rs = await asyncio.gather(*(c.post("/v1/answer", json=body) for _ in range(2)))
+    assert [r.status_code for r in rs] == [200, 200]
+    assert all("More detail" in r.json()["answer_md"] for r in rs)
+    assert gw.calls == 1
+
+
+async def test_follower_streams_tokens_before_the_answer_ends():
+    """A caller that joins a running answer gets tokens live, not only after the end."""
+    from app.orchestration.pipeline import SearchParams as SP
+
+    good_url = "https://good.example/live"
+    gw = _LongGateway(tail=0.6)
+    _install_stack([_TestAdapter("fake", [_raw(good_url)])], {good_url: _page(good_url)}, gw)
+    pipe = deps.get_answer_pipeline()
+    started = asyncio.get_running_loop().time()
+    first_token_at: dict[str, float] = {}
+
+    async def consume(tag: str) -> None:
+        async for name, _ in pipe.run(SP(query="postgres live")):
+            if name == "token" and tag not in first_token_at:
+                first_token_at[tag] = asyncio.get_running_loop().time() - started
+
+    leader = asyncio.create_task(consume("leader"))
+    await asyncio.sleep(0.05)
+    await asyncio.gather(leader, consume("follower"))
+    assert gw.calls == 1
+    assert first_token_at["follower"] < 0.5  # before the 0.6s tail finished
+
+
+async def test_reader_that_stops_early_leaves_no_stale_answer():
+    """aclose() before the end must not leave a finished flight that the next caller replays."""
+    from app.orchestration.pipeline import SearchParams as SP
+
+    good_url = "https://good.example/early"
+    gw = _LongGateway(tail=0.3, finish="length")
+    _install_stack([_TestAdapter("fake", [_raw(good_url)])], {good_url: _page(good_url)}, gw)
+    pipe = deps.get_answer_pipeline()
+    gen = pipe.run(SP(query="postgres stop early"))
+    async for name, _ in gen:
+        if name == "token":
+            break
+    await gen.aclose()
+    await asyncio.sleep(0.5)
+    assert pipe._flights == {}
+    done = None
+    async for name, data in pipe.run(SP(query="postgres stop early")):
+        if name == "done":
+            done = data
+    assert gw.calls == 2
+    assert done is not None and done.get("cached") is False
+    assert pipe._flights == {}
+
+
+async def test_last_reader_leaving_cancels_the_shared_answer():
+    """When every caller has gone, the LLM call is cancelled and the flight is removed."""
+    from app.orchestration.pipeline import SearchParams as SP
+
+    good_url = "https://good.example/gone"
+    gw = _LongGateway(tail=5.0)
+    _install_stack([_TestAdapter("fake", [_raw(good_url)])], {good_url: _page(good_url)}, gw)
+    pipe = deps.get_answer_pipeline()
+
+    async def consume() -> None:
+        async for _ in pipe.run(SP(query="postgres gone")):
+            pass
+
+    tasks = [asyncio.create_task(consume()) for _ in range(2)]
+    await asyncio.sleep(0.3)
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.sleep(0.05)
+    assert pipe._flights == {}
+    assert gw.calls == 1
+
+
+async def test_follower_idle_deadline_uses_error_model(monkeypatch):
+    """A joined caller whose shared answer goes silent gets DEADLINE_EXCEEDED, not a crash."""
+    import app.orchestration.pipeline as pl
+    from app.core.errors import ErrorCode, MetaSearchError
+
+    monkeypatch.setattr(pl, "_FLIGHT_IDLE_TIMEOUT_S", 0.2)
+    good_url = "https://good.example/silent"
+    gw = _LongGateway(tail=1.0)
+    _install_stack([_TestAdapter("fake", [_raw(good_url)])], {good_url: _page(good_url)}, gw)
+    pipe = deps.get_answer_pipeline()
+
+    async def consume() -> str:
+        async for _ in pipe.run(pl.SearchParams(query="postgres silent")):
+            pass
+        return "ok"
+
+    leader = asyncio.create_task(consume())
+    await asyncio.sleep(0.3)  # the leader already has its first token
+    with pytest.raises(MetaSearchError) as err:
+        await consume()
+    assert err.value.code is ErrorCode.DEADLINE_EXCEEDED
+    assert await leader == "ok"
+
+
+async def test_shared_answer_reaches_every_callers_on_event():
+    """Mid-flight events (engine_done and the like) reach every caller, not only the first."""
+    from app.orchestration.pipeline import SearchParams as SP
+
+    good_url = "https://good.example/events"
+    gw = _LongGateway(tail=0.2)
+    _install_stack(
+        [_TestAdapter("fake", [_raw(good_url)], delay=0.1)], {good_url: _page(good_url)}, gw
+    )
+    pipe = deps.get_answer_pipeline()
+    seen: dict[str, list[str]] = {"a": [], "b": []}
+
+    async def consume(tag: str) -> None:
+        async for _ in pipe.run(
+            SP(query="postgres events"), on_event=lambda e: seen[tag].append(e[0])
+        ):
+            pass
+
+    first = asyncio.create_task(consume("a"))
+    await asyncio.sleep(0.02)
+    await asyncio.gather(first, consume("b"))
+    assert gw.calls == 1
+    assert seen["a"] and seen["a"] == seen["b"]
+
+
+async def test_answer_cache_looked_up_once_per_miss(monkeypatch):
+    """run() looks the answer cache up; the shared producer must not look it up again."""
+    from app.orchestration.pipeline import AnswerPipeline
+    from app.orchestration.pipeline import SearchParams as SP
+
+    good_url = "https://good.example/once"
+    _install_stack([_TestAdapter("fake", [_raw(good_url)])], {good_url: _page(good_url)})
+    calls = 0
+    real = AnswerPipeline._cache_hit
+
+    async def counting(self, params, model):
+        nonlocal calls
+        calls += 1
+        return await real(self, params, model)
+
+    monkeypatch.setattr(AnswerPipeline, "_cache_hit", counting)
+    async for _ in deps.get_answer_pipeline().run(SP(query="postgres once")):
+        pass
+    assert calls == 1

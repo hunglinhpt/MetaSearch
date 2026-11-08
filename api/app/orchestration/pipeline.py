@@ -559,17 +559,51 @@ def _score_chunks_sync(
     return scored_chunks
 
 
-_FLIGHT_SENTINEL = object()
+_FLIGHT_DONE = object()
+# A caller that joined a running answer gives up when that answer goes quiet this long.
+# The first caller keeps the old behaviour: the LLM gateway's own timeouts bound it.
+_FLIGHT_IDLE_TIMEOUT_S = 60.0
 
 
-class _InFlightAnswer:
-    def __init__(self, key: str) -> None:
-        self.key = key
+class _AnswerFlight:
+    """One running answer shared by identical concurrent requests.
+
+    Every subscriber first gets the events produced so far, then the live ones, so the
+    first caller and the callers that join later all stream tokens as they come.
+    """
+
+    def __init__(self) -> None:
         self.task: asyncio.Task[None] | None = None
-        self.queue: asyncio.Queue[tuple[str, Any] | object] = asyncio.Queue()
-        self.waiters = 1
-        self.payload: dict[str, Any] | None = None
-        self.error: Exception | None = None
+        self.events: list[Event] = []
+        self.subscribers: list[asyncio.Queue[object]] = []
+        self.listeners: list[Callable[[Event], None]] = []
+
+    def subscribe(self, on_event: OnEvent) -> asyncio.Queue[object]:
+        queue: asyncio.Queue[object] = asyncio.Queue()
+        for event in self.events:
+            queue.put_nowait(event)
+        self.subscribers.append(queue)
+        if on_event is not None:
+            self.listeners.append(on_event)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue[object], on_event: OnEvent) -> None:
+        with contextlib.suppress(ValueError):
+            self.subscribers.remove(queue)
+        if on_event is not None:
+            with contextlib.suppress(ValueError):
+                self.listeners.remove(on_event)
+
+    def publish(self, item: object) -> None:
+        for queue in self.subscribers:
+            queue.put_nowait(item)
+
+    def fan_out(self, event: Event) -> None:
+        for listener in list(self.listeners):
+            try:
+                listener(event)
+            except Exception as exc:  # one caller's callback must not break the others
+                logger.warning("answer_flight_listener_failed", error=type(exc).__name__)
 
 
 def _build_answer_flight_key(
@@ -628,8 +662,7 @@ class AnswerPipeline:
         self.reranker = reranker
         self.cache = cache
         self.embedder = embedder
-        self._flight_tasks: dict[str, _InFlightAnswer] = {}
-        self._flight_lock = asyncio.Lock()
+        self._flights: dict[str, _AnswerFlight] = {}
 
     async def run(
         self,
@@ -671,91 +704,60 @@ class AnswerPipeline:
             domain=domain,
         )
 
-        async with self._flight_lock:
-            if flight_key in self._flight_tasks:
-                in_flight = self._flight_tasks[flight_key]
-                in_flight.waiters += 1
-                is_leader = False
-            else:
-                in_flight = _InFlightAnswer(flight_key)
-                self._flight_tasks[flight_key] = in_flight
-                in_flight.task = asyncio.create_task(
-                    self._run_answer_producer(
-                        in_flight,
-                        params,
-                        model=effective_model,
-                        llm_override=llm_override,
-                        council_mode=council_mode,
-                        council_endpoints=council_endpoints,
-                        domain=domain,
-                        on_event=on_event,
-                    )
+        # No await between lookup, subscribe and task creation: joining is atomic.
+        flight = self._flights.get(flight_key)
+        is_first = flight is None
+        if flight is None:
+            flight = _AnswerFlight()
+            self._flights[flight_key] = flight
+        queue = flight.subscribe(on_event)
+        if is_first:
+            flight.task = asyncio.create_task(
+                self._produce_answer(
+                    flight_key,
+                    flight,
+                    params,
+                    model=effective_model,
+                    llm_override=llm_override,
+                    council_mode=council_mode,
+                    council_endpoints=council_endpoints,
+                    domain=domain,
                 )
-                is_leader = True
+            )
 
-        if is_leader:
-            try:
-                while True:
-                    item = await in_flight.queue.get()
-                    if item is _FLIGHT_SENTINEL:
-                        break
-                    if isinstance(item, Exception):
-                        raise item
-                    yield item
-            except asyncio.CancelledError:
-                async with self._flight_lock:
-                    in_flight.waiters -= 1
-                    if in_flight.waiters <= 0:
-                        if in_flight.task and not in_flight.task.done():
-                            in_flight.task.cancel()
-                        self._flight_tasks.pop(flight_key, None)
-                raise
-            finally:
-                if in_flight.task and in_flight.task.done():
-                    async with self._flight_lock:
-                        self._flight_tasks.pop(flight_key, None)
-        else:
-            try:
-                timeout_s = (params.timeout_ms / 1000.0) if params.timeout_ms else 30.0
-                budget = get_current_budget()
-                if budget is not None:
-                    timeout_s = min(timeout_s, budget.remaining())
-                timeout_s = max(0.1, timeout_s)
-                if in_flight.task is not None:
-                    await asyncio.wait_for(asyncio.shield(in_flight.task), timeout=timeout_s)
-            except asyncio.CancelledError:
-                async with self._flight_lock:
-                    in_flight.waiters -= 1
-                    if in_flight.waiters <= 0:
-                        if in_flight.task and not in_flight.task.done():
-                            in_flight.task.cancel()
-                        self._flight_tasks.pop(flight_key, None)
-                raise
-            except TimeoutError:
-                async with self._flight_lock:
-                    in_flight.waiters -= 1
-                    if in_flight.waiters <= 0:
-                        if in_flight.task and not in_flight.task.done():
-                            in_flight.task.cancel()
-                        self._flight_tasks.pop(flight_key, None)
-                raise MetaSearchError(
-                    ErrorCode.TIMEOUT, "Answer single-flight wait deadline exceeded"
-                ) from None
-            finally:
-                if in_flight.task and in_flight.task.done():
-                    async with self._flight_lock:
-                        self._flight_tasks.pop(flight_key, None)
+        finished = False
+        try:
+            while True:
+                if is_first:
+                    item = await queue.get()
+                else:
+                    try:
+                        item = await asyncio.wait_for(queue.get(), _FLIGHT_IDLE_TIMEOUT_S)
+                    except TimeoutError:
+                        raise MetaSearchError(
+                            ErrorCode.DEADLINE_EXCEEDED,
+                            "The shared answer stopped producing output",
+                        ) from None
+                if item is _FLIGHT_DONE:
+                    finished = True
+                    break
+                if isinstance(item, BaseException):
+                    finished = True
+                    raise item
+                yield item  # type: ignore[misc]
+        finally:
+            # Runs on normal end, error, cancellation and aclose() alike.
+            flight.unsubscribe(queue, on_event)
+            task = flight.task
+            if not finished and not flight.subscribers and task is not None and not task.done():
+                if self._flights.get(flight_key) is flight:
+                    del self._flights[flight_key]
+                task.cancel()
 
-            if in_flight.error is not None:
-                raise in_flight.error
-
-            if in_flight.payload is not None:
-                async for event in self._replay(in_flight.payload):
-                    yield event
-
-    async def _run_answer_producer(
+    async def _produce_answer(
         self,
-        in_flight: _InFlightAnswer,
+        flight_key: str,
+        flight: _AnswerFlight,
         params: SearchParams,
         *,
         model: str | None = None,
@@ -763,15 +765,9 @@ class AnswerPipeline:
         council_mode: bool = False,
         council_endpoints: list[LLMOverride] | None = None,
         domain: str = "auto",
-        on_event: OnEvent = None,
     ) -> None:
+        end: object = _FLIGHT_DONE
         try:
-            sources: list[dict] = []
-            text_parts: list[str] = []
-            citations_payload: list[dict] = []
-            council_meta: dict | None = None
-            done_data: dict = {}
-
             async for event in self._run_answer(
                 params,
                 model=model,
@@ -779,36 +775,18 @@ class AnswerPipeline:
                 council_mode=council_mode,
                 council_endpoints=council_endpoints,
                 domain=domain,
-                on_event=on_event,
+                on_event=flight.fan_out,
             ):
-                in_flight.queue.put_nowait(event)
-                name, data = event
-                if name == "sources":
-                    sources = data.get("sources", [])
-                elif name == "token":
-                    text_parts.append(data.get("t", ""))
-                elif name == "citations":
-                    citations_payload = data.get("citations", [])
-                elif name == "council":
-                    council_meta = data
-                elif name == "done":
-                    done_data = data
-
-            in_flight.payload = {
-                "answer_id": done_data.get("answer_id") or uuid.uuid4(),
-                "answer_md": "".join(text_parts),
-                "citations": citations_payload,
-                "sources": sources,
-                "model": done_data.get("model", ""),
-                "status": done_data.get("status", "complete"),
-                "complete": done_data.get("complete", True),
-                "council": council_meta,
-            }
+                flight.events.append(event)
+                flight.publish(event)
         except Exception as exc:
-            in_flight.error = exc
-            in_flight.queue.put_nowait(exc)
+            end = exc
         finally:
-            in_flight.queue.put_nowait(_FLIGHT_SENTINEL)
+            # The flight leaves the table as soon as it ends, whoever is still reading, so a
+            # later identical request starts fresh instead of replaying this one.
+            if self._flights.get(flight_key) is flight:
+                del self._flights[flight_key]
+            flight.publish(end)
 
     async def _run_answer(
         self,
@@ -832,16 +810,7 @@ class AnswerPipeline:
         override_model = llm_override.model if llm_override and llm_override.model else None
         model = override_model or model or default_model
 
-        replay = (
-            await self._cache_hit(params, model)
-            if (llm_override is None and not use_council)
-            else None
-        )
-        if replay is not None:
-            async for event in replay:
-                yield event
-            return
-
+        # run() already looked the answer cache up before starting this flight.
         yield ("status", {"stage": "searching", "detail": params.query})
         outcome = await self.search.run(params, on_event=on_event)
         if not outcome.results:
