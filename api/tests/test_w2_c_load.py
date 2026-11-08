@@ -676,3 +676,13 @@ async def test_authenticate_anonymous_sets_current_auth_context(monkeypatch):
     ctx = await authenticate_and_rate_limit(DummyReq())
     assert ctx.key_id == "anonymous"
     assert current_auth_context.get() is ctx
+
+
+@pytest.mark.asyncio
+async def test_authenticate_loads_max_concurrent_from_db():
+    """Locks line 172 in auth.py: verify authenticate loads custom max_concurrent from DB."""
+    from app.core.auth import authenticate, create_key
+
+    key, _ = await create_key("custom_conc", max_concurrent=2)
+    ctx = await authenticate(key)
+    assert ctx.max_concurrent == 2
