@@ -659,3 +659,20 @@ async def test_gateway_stream_once_raises_llm_timeout_error():
             target, [{"role": "user", "content": "hi"}], "openai", max_tokens=10, temperature=0.1
         ):
             pass
+
+
+@pytest.mark.asyncio
+async def test_authenticate_anonymous_sets_current_auth_context(monkeypatch):
+    """Verify anonymous caller sets current_auth_context."""
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+    from app.core.auth import authenticate_and_rate_limit, current_auth_context
+
+    class DummyReq:
+        state = None
+        headers = {}
+
+    current_auth_context.set(None)
+    ctx = await authenticate_and_rate_limit(DummyReq())
+    assert ctx.key_id == "anonymous"
+    assert current_auth_context.get() is ctx

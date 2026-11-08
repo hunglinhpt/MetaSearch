@@ -49,7 +49,7 @@ async def get_key_semaphore(key_id: str, limit: int) -> asyncio.Semaphore:
 
 def reset_admission() -> None:
     """Reset admission semaphores (for test isolation)."""
-    global _semaphores, _key_semaphores
+    global _semaphores
     _semaphores.clear()
     _key_semaphores.clear()
 
