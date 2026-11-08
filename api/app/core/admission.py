@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
+from app.core.metrics import ADMISSION_REJECTED
 
 logger = get_logger(__name__)
 
@@ -96,6 +97,7 @@ async def acquire_admit_slot(
             await key_sem.acquire()
             acquired_key = True
         if not acquired_key:
+            ADMISSION_REJECTED.labels(route_class=tier).inc()
             logger.warning(
                 "per_key_concurrency_exceeded",
                 key_id=ctx.key_id,
@@ -130,6 +132,7 @@ async def acquire_admit_slot(
         for r in reversed(releases):
             with contextlib.suppress(Exception):
                 r()
+        ADMISSION_REJECTED.labels(route_class=tier).inc()
         retry_after = max(1, int(wait_s + 1))
         logger.warning("admission_overloaded", tier=tier, limit=limit, wait_s=wait_s)
         raise MetaSearchError(

@@ -97,10 +97,10 @@ def render_context(included: list[tuple[int, Chunk]]) -> str:
     blocks: list[str] = []
     for n, chunk in included:
         header = f"[{n}] {chunk.document_url}"
-        if chunk.heading_path:
-            header += f" (section: {chunk.heading_path})"
+        # The heading comes from the page, so it is data too and sits inside the delimiter.
+        section = f"(section: {chunk.heading_path})\n" if chunk.heading_path else ""
         begin, end = _random_delimiter(n), _random_delimiter(n)
-        blocks.append(f"{header}\n<<<{begin}>>>\n{chunk.content}\n<<<{end}>>>")
+        blocks.append(f"{header}\n<<<{begin}>>>\n{section}{chunk.content}\n<<<{end}>>>")
     return "\n\n".join(blocks)
 
 

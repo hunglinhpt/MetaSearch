@@ -22,6 +22,7 @@ from enum import StrEnum
 from typing import Any
 
 from app.core.logging import get_logger
+from app.core.metrics import export_breaker_state
 
 logger = get_logger(__name__)
 
@@ -50,8 +51,14 @@ class EngineBreaker:
     half_open_in_flight: bool = False
     half_open_since: float = 0.0
     half_open_deadline_s: float = 30.0
+    name: str = ""  # metric label; empty for breakers nobody named
 
     def allow(self, now: float | None = None) -> bool:
+        allowed = self._allow(now)
+        export_breaker_state(self.name, self.state)
+        return allowed
+
+    def _allow(self, now: float | None = None) -> bool:
         if now is None:
             now = time.monotonic()
 
@@ -79,6 +86,16 @@ class EngineBreaker:
         return True
 
     def record(
+        self,
+        outcome: Outcome,
+        now: float | None = None,
+        *,
+        retry_after_s: float | None = None,
+    ) -> None:
+        self._record(outcome, now, retry_after_s=retry_after_s)
+        export_breaker_state(self.name, self.state)
+
+    def _record(
         self,
         outcome: Outcome,
         now: float | None = None,
@@ -138,6 +155,7 @@ class EngineBreakerRegistry:
             self._breakers[engine_id] = EngineBreaker(
                 threshold=self._threshold,
                 timeout_threshold=self._timeout_threshold,
+                name=engine_id,
             )
         return self._breakers[engine_id]
 

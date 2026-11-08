@@ -39,7 +39,7 @@ from app.config import Settings
 from app.core.budget import get_current_budget
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
-from app.core.metrics import CACHE_EVENTS, ENGINE_CALLS, ENGINE_LATENCY
+from app.core.metrics import CACHE_EVENTS, ENGINE_CALLS, ENGINE_LATENCY, STAGE_DURATION
 from app.core.offload import run_cpu
 from app.core.singleflight import SingleFlight
 from app.db.base import EMBEDDING_DIM
@@ -200,6 +200,16 @@ class SearchParams:
     exclude_domains: list[str] | None = None
 
 
+@contextlib.contextmanager
+def _stage(name: str):
+    """Observe how long one pipeline stage took, also when it raises."""
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        STAGE_DURATION.labels(stage=name).observe(time.perf_counter() - started)
+
+
 def _norm_domain(domain: str) -> str:
     d = domain.strip().lower().rstrip(".")
     return d[4:] if d.startswith("www.") else d
@@ -321,6 +331,10 @@ class SearchPipeline:
         self._single_flight = SingleFlight()
 
     async def run(self, params: SearchParams, on_event: OnEvent = None) -> SearchOutcome:
+        with _stage("search"):
+            return await self._run_filtered(params, on_event)
+
+    async def _run_filtered(self, params: SearchParams, on_event: OnEvent = None) -> SearchOutcome:
         if on_event is None:
             normalized = normalize_query(params.query)
             cache_key = search_cache_key(normalized, params, news=params.news)
@@ -916,8 +930,9 @@ class AnswerPipeline:
             budget_ctx.stage("scrape", 5.0) if budget_ctx else self.settings.scrape_timeout_s
         )
         try:
-            async with asyncio.timeout(scrape_timeout):
-                pages = await self.scraper.scrape_many([r.url for r in outcome.results])
+            with _stage("scrape"):
+                async with asyncio.timeout(scrape_timeout):
+                    pages = await self.scraper.scrape_many([r.url for r in outcome.results])
         except TimeoutError:
             pages = [
                 PageFailure(url=r.url, status="failed", error="scrape stage deadline exceeded")
@@ -1128,8 +1143,9 @@ class AnswerPipeline:
             budget_ctx.stage("scrape", 6.0) if budget_ctx else self.settings.scrape_timeout_s
         )
         try:
-            async with asyncio.timeout(scrape_timeout):
-                pages = await self.scraper.scrape_many([r.url for r in outcome.results])
+            with _stage("scrape"):
+                async with asyncio.timeout(scrape_timeout):
+                    pages = await self.scraper.scrape_many([r.url for r in outcome.results])
         except TimeoutError:
             pages = [
                 PageFailure(url=r.url, status="failed", error="scrape stage deadline exceeded")
@@ -1250,7 +1266,8 @@ class AnswerPipeline:
 
     async def _rerank(self, query: str, scored_chunks: list[tuple[float, Chunk]]) -> list[Chunk]:
         try:
-            return await self.reranker.rerank(query, scored_chunks)
+            with _stage("rerank"):
+                return await self.reranker.rerank(query, scored_chunks)
         except RerankerUnavailable as exc:
             logger.warning("rerank_fallback_heuristic", reason=str(exc)[:120])
             return heuristic_order(scored_chunks)

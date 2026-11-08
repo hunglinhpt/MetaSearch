@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -61,6 +62,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await get_persist_queue().start()
 
+    import asyncio
+
+    from app.core.metrics import runtime_monitor
+
+    monitor = asyncio.create_task(runtime_monitor(), name="runtime-monitor")
+
     from app.api.deps import get_health_writer
     from app.orchestration.engine_store import clear_legacy_auto_disabled
 
@@ -87,6 +94,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             get_scanner().stop_background_loop()
         await health_writer.stop()
+        monitor.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await monitor
         try:
             from app.orchestration.persist_queue import get_persist_queue
 

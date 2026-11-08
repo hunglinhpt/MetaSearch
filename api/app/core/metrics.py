@@ -138,3 +138,96 @@ PROCESS_RSS = Gauge(
 def render_metrics() -> bytes:
     """Serialize the registry in Prometheus text exposition format."""
     return generate_latest(REGISTRY)
+
+
+# ---------------------------------------------------------------- runtime sampling (WP-12)
+
+_BREAKER_LEVEL = {"closed": 0, "half_open": 1, "open": 2}
+
+
+def export_breaker_state(name: str, state: str) -> None:
+    """Publish one breaker's state: 0 closed, 1 half-open, 2 open."""
+    if name:
+        BREAKER_STATE.labels(engine=name).set(_BREAKER_LEVEL.get(state, 0))
+
+
+def process_rss_bytes() -> float | None:
+    """Resident memory of this process, or None when the platform gives no cheap answer."""
+    try:
+        import psutil  # optional
+
+        return float(psutil.Process().memory_info().rss)
+    except ImportError:
+        pass
+    import sys
+
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class _Counters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                (name, ctypes.c_size_t)
+                for name in (
+                    "PeakWorkingSetSize",
+                    "WorkingSetSize",
+                    "QuotaPeakPagedPoolUsage",
+                    "QuotaPagedPoolUsage",
+                    "QuotaPeakNonPagedPoolUsage",
+                    "QuotaNonPagedPoolUsage",
+                    "PagefileUsage",
+                    "PeakPagefileUsage",
+                )
+            ]
+
+        counters = _Counters()
+        counters.cb = ctypes.sizeof(_Counters)
+        kernel32, psapi = ctypes.windll.kernel32, ctypes.windll.psapi
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_Counters),
+            wintypes.DWORD,
+        ]
+        if psapi.GetProcessMemoryInfo(
+            kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
+        ):
+            return float(counters.WorkingSetSize)
+        return None
+    try:
+        import os
+
+        with open("/proc/self/statm", encoding="ascii") as fh:
+            pages = int(fh.read().split()[1])
+        return float(pages * os.sysconf("SC_PAGE_SIZE"))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _sample_http_pools() -> None:
+    # httpx exposes no public pool statistics; read the transport's pool, never fail on it.
+    try:
+        from app import http as http_mod
+
+        for name, client in list(http_mod._pools.items()):
+            pool = getattr(getattr(client, "_transport", None), "_pool", None)
+            connections = list(getattr(pool, "connections", []) or [])
+            busy = sum(1 for c in connections if not c.is_idle())
+            HTTP_POOL_IN_USE.labels(pool=name).set(busy)
+    except Exception:
+        return
+
+
+async def runtime_monitor(interval_s: float = 0.5) -> None:
+    """Sample event loop lag, RSS and HTTP pool usage until cancelled."""
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    while True:
+        started = loop.time()
+        await asyncio.sleep(interval_s)
+        EVENT_LOOP_LAG.observe(max(0.0, loop.time() - started - interval_s))
+        rss = process_rss_bytes()
+        if rss is not None:
+            PROCESS_RSS.set(rss)
+        _sample_http_pools()

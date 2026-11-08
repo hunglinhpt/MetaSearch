@@ -25,6 +25,7 @@ import httpx
 from app.config import Settings, get_settings
 from app.core.budget import get_current_budget
 from app.core.logging import get_logger
+from app.core.metrics import SCRAPE_TOTAL
 from app.core.offload import run_cpu
 from app.core.singleflight import SingleFlight
 from app.extraction import ssrf
@@ -225,9 +226,14 @@ class Scraper:
     async def scrape(
         self, url: str, *, timeout_s: float | None = None
     ) -> PageContent | PageFailure:
-        return await self._single_flight.run(
+        result = await self._single_flight.run(
             url, lambda: self._scrape_guarded(url, timeout_s=timeout_s)
         )
+        if isinstance(result, PageContent):
+            SCRAPE_TOTAL.labels(tier=result.extractor_used or "unknown", outcome="ok").inc()
+        else:
+            SCRAPE_TOTAL.labels(tier="none", outcome=result.status).inc()
+        return result
 
     async def _scrape_guarded(
         self, url: str, *, timeout_s: float | None = None

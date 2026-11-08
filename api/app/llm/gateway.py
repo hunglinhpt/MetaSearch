@@ -37,7 +37,7 @@ import httpx
 
 from app.config import Settings
 from app.core.logging import get_logger
-from app.core.metrics import LLM_COST, LLM_TOKENS
+from app.core.metrics import LLM_COST, LLM_REQUESTS, LLM_TOKENS, LLM_TTFT, STAGE_DURATION
 from app.http import get_http_client
 from app.llm.providers import (
     LLMOverride,
@@ -388,20 +388,31 @@ class LLMGateway:
             seen_pairs.add(pair)
 
             attempts += 1
+            provider = cand_target.provider
+            started = time.perf_counter()
+            first_token = True
             try:
                 async for delta in self._stream_once(
                     cand_target, messages, cand_model, max_tokens=max_tok, temperature=temp
                 ):
                     if delta.text:
                         emitted_any = True
+                        if first_token:
+                            first_token = False
+                            ttft = time.perf_counter() - started
+                            LLM_TTFT.labels(provider=provider).observe(ttft)
+                            STAGE_DURATION.labels(stage="llm_first_token").observe(ttft)
                     yield delta
                 breaker.record(Outcome.OK)
+                LLM_REQUESTS.labels(provider=provider, outcome="ok").inc()
+                STAGE_DURATION.labels(stage="llm_total").observe(time.perf_counter() - started)
                 return
             except LLMStatusError as exc:
-                breaker.record(
-                    Outcome.RATE_LIMITED if exc.status_code == 429 else Outcome.UPSTREAM_ERROR,
-                    retry_after_s=exc.retry_after_s,
+                status_outcome = (
+                    Outcome.RATE_LIMITED if exc.status_code == 429 else Outcome.UPSTREAM_ERROR
                 )
+                breaker.record(status_outcome, retry_after_s=exc.retry_after_s)
+                LLM_REQUESTS.labels(provider=provider, outcome=status_outcome.value).inc()
                 last_error = exc
                 if not exc.retryable:
                     # 400/401/403/404: same key, same result — no retry, no failover.
@@ -442,6 +453,7 @@ class LLMGateway:
                 else:
                     outcome = Outcome.UPSTREAM_ERROR
                 breaker.record(outcome)
+                LLM_REQUESTS.labels(provider=provider, outcome=outcome.value).inc()
                 last_error = exc
                 logger.warning(
                     "llm_candidate_failed",

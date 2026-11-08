@@ -21,7 +21,6 @@ import redis.asyncio as aioredis
 
 from app.config import Settings, get_settings
 from app.core.logging import get_logger
-from app.core.metrics import CACHE_EVENTS
 from app.retrieval.models import ScoredResult
 
 logger = get_logger(__name__)
@@ -194,7 +193,6 @@ class CacheClient:
             try:
                 raw = await self._client.get(key)
                 if raw is not None:
-                    CACHE_EVENTS.labels(kind="L1", outcome="hit").inc()
                     return json.loads(raw)
             except Exception as exc:
                 logger.warning(
@@ -203,7 +201,6 @@ class CacheClient:
                 mark_redis_down()
         # In-process fallback
         value = _local_cache.get(key)
-        CACHE_EVENTS.labels(kind="L1", outcome="hit" if value is not None else "miss").inc()
         return value
 
     async def set_json(self, key: str, value: Any, *, ttl_s: int) -> None:

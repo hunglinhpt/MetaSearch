@@ -13,7 +13,7 @@ from contextvars import ContextVar
 import structlog
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.core.metrics import HTTP_LATENCY, HTTP_REQUESTS
+from app.core.metrics import HTTP_LATENCY, HTTP_REQUESTS, INFLIGHT_REQUESTS
 
 request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 
@@ -75,12 +75,17 @@ class RequestContextMiddleware:
                 message["headers"] = headers
             await send(message)
 
+        route_class = _route_class_of(str(scope.get("path") or "/"))
+        INFLIGHT_REQUESTS.labels(route_class=route_class).inc()
         try:
             await self.app(scope, receive, send_with_header)
         finally:
+            INFLIGHT_REQUESTS.labels(route_class=route_class).dec()
             elapsed = max(0.0, time.perf_counter() - started)
             route = scope.get("route")
-            path_label = getattr(route, "path", None) or str(scope.get("path") or "/")
+            # OBS-01: a path no route matched is never a label value; that would be one
+            # new series per random URL.
+            path_label = getattr(route, "path", None) or "unmatched"
             HTTP_REQUESTS.labels(method=method, path=path_label, status=str(status_code)).inc()
             HTTP_LATENCY.labels(method=method, path=path_label).observe(elapsed)
             structlog.contextvars.unbind_contextvars("request_id")
