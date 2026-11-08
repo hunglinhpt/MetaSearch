@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import functools
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
@@ -18,6 +21,28 @@ from app.http import get_http_client
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["ops"])
+
+# Set by the lifespan as soon as shutdown starts: from then on the process is not ready.
+_shutting_down = False
+_redis_probe: Redis | None = None
+
+
+def mark_shutting_down() -> None:
+    global _shutting_down
+    _shutting_down = True
+
+
+def reset_readiness_state() -> None:
+    global _shutting_down
+    _shutting_down = False
+
+
+async def close_readiness_clients() -> None:
+    global _redis_probe
+    if _redis_probe is not None:
+        with contextlib.suppress(Exception):
+            await _redis_probe.aclose()
+        _redis_probe = None
 
 
 @router.get("/healthz", summary="Liveness probe")
@@ -35,20 +60,23 @@ async def _check_postgres() -> dict[str, Any]:
 
 
 async def _check_redis() -> dict[str, Any]:
+    global _redis_probe
     settings = get_settings()
-    client: Redis | None = None
     try:
-        client = Redis.from_url(settings.redis_url, socket_connect_timeout=1)
-        await client.ping()
+        if _redis_probe is None:
+            # One client for every probe; a short socket timeout so a silent Redis cannot hang it.
+            _redis_probe = Redis.from_url(
+                settings.redis_url,
+                socket_connect_timeout=settings.readiness_timeout_s,
+                socket_timeout=settings.readiness_timeout_s,
+            )
+        await _redis_probe.ping()
         return {"ok": True}
     except Exception as exc:
         if not settings.searxng_enabled:
             # Lite profile runs with in-process cache/rate-limit fallback when Redis is absent
             return {"ok": True, "skipped": "optional_in_lite_mode", "error": type(exc).__name__}
         return {"ok": False, "error": type(exc).__name__}
-    finally:
-        if client is not None:
-            await client.aclose()
 
 
 async def _check_searxng() -> dict[str, Any]:
@@ -68,8 +96,17 @@ async def _check_searxng() -> dict[str, Any]:
 
 async def collect_readiness() -> dict[str, Any]:
     """Probe every critical dependency concurrently."""
+    limit = get_settings().readiness_timeout_s
+
+    async def bounded(check: Any) -> dict[str, Any]:
+        try:
+            async with asyncio.timeout(limit):
+                return await check
+        except TimeoutError:
+            return {"ok": False, "error": "timeout"}
+
     postgres, redis, searxng = await asyncio.gather(
-        _check_postgres(), _check_redis(), _check_searxng()
+        bounded(_check_postgres()), bounded(_check_redis()), bounded(_check_searxng())
     )
     checks = {"postgres": postgres, "redis": redis, "searxng": searxng}
     ready = all(check["ok"] for check in checks.values())
@@ -78,34 +115,57 @@ async def collect_readiness() -> dict[str, Any]:
 
 @router.get("/readyz", summary="Readiness probe with degraded state (WP-14)")
 async def readyz(response: Response, strict: bool = False) -> dict[str, Any]:
+    """ready 200; degraded 200 (a dependency is down, search still works; 503 with strict);
+    not_ready 503 (no usable engine); shutting_down 503."""
     result = await collect_readiness()
-    if result["ready"]:
-        result["status"] = "ready"
-        result["schema_version"] = 1
-        READINESS.set(1)
+    result["schema_version"] = schema_version()
+    if _shutting_down:
+        result["status"] = "shutting_down"
+        READINESS.set(0)
+        response.status_code = 503
         return result
-    # WP-14: DB/Redis down = degraded (200), not_ready = 503.
-    # "Not ready" means: no search engine usable or the process is shutting down.
-    engines_usable = _any_engine_usable()
-    if not engines_usable:
+    if not await _any_engine_usable():
         result["status"] = "not_ready"
         READINESS.set(0)
-        if strict:
-            response.status_code = 503
+        response.status_code = 503
+        return result
+    READINESS.set(1)
+    if result["ready"]:
+        result["status"] = "ready"
         return result
     result["status"] = "degraded"
-    result["schema_version"] = 1
-    READINESS.set(1)  # still serving traffic
     if strict:
         response.status_code = 503
     return result
 
 
-def _any_engine_usable() -> bool:
+async def _any_engine_usable() -> bool:
+    """At least one engine both has an adapter and is enabled in the engine store."""
+    from app.api import deps
     from app.retrieval.registry import build_adapters
 
     adapters = build_adapters(get_settings())
-    return bool(adapters)
+    try:
+        snapshot = await deps.get_engine_store().snapshot()
+    except Exception:  # store down: fall back to "an adapter exists"
+        return bool(adapters)
+    return any(cfg.enabled for engine_id, cfg in snapshot.items() if engine_id in adapters)
+
+
+@functools.lru_cache(maxsize=1)
+def schema_version() -> str | None:
+    """The Alembic head this build ships, read from the migration scripts."""
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        api_dir = Path(__file__).resolve().parents[2]
+        cfg = Config(str(api_dir / "alembic.ini"))
+        cfg.set_main_option("script_location", str(api_dir / "alembic"))
+        return ScriptDirectory.from_config(cfg).get_current_head()
+    except Exception as exc:  # missing scripts must not break the probe
+        logger.warning("schema_version_unknown", error=type(exc).__name__)
+        return None
 
 
 @router.get("/metrics", summary="Prometheus metrics", include_in_schema=False)

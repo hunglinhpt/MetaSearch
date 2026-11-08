@@ -36,12 +36,11 @@ def test_readyz_reflects_dependency_state(
     monkeypatch.setattr(ops, "_check_searxng", fake_check)
 
     response = client.get("/readyz")
-    # WP-14: degraded (deps down, engines usable) = 200; not_ready = 503.
-    # In test rig no engines are usable (no searxng), so degraded -> 200.
+    # WP-14: dependencies down while engines are usable is degraded, still 200.
     body = response.json()
-    assert response.status_code == 200  # degraded is 200 (WP-14)
+    assert response.status_code == 200
     assert body["ready"] is ok
-    assert body.get("status") in ("ready", "degraded", "not_ready")
+    assert body["status"] == ("ready" if ok else "degraded")
     assert set(body["checks"]) == {"postgres", "redis", "searxng"}
 
 

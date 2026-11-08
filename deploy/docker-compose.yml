@@ -76,11 +76,25 @@ services:
       retries: 5
     mem_limit: 768m
 
+  # Applies Alembic migrations once, before the API starts.
+  migrate:
+    build: ../api
+    container_name: metasearch-migrate
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-metasearch}:${POSTGRES_PASSWORD:-metasearch}@postgres:5432/${POSTGRES_DB:-metasearch}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    mem_limit: 256m
+
   api:
     build: ../api
     container_name: metasearch-api
     restart: unless-stopped
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-graceful-shutdown", "15"]
     env_file: .env
     environment:
       - SEARXNG_URL=http://searxng:8080
@@ -91,6 +105,8 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

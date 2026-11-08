@@ -106,9 +106,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.api.deps import get_scanner
 
         get_scanner().start_background_loop(settings.scheduler_interval_hours)
+    from app.api import ops as ops_module
+
+    ops_module.reset_readiness_state()
     try:
         yield
     finally:
+        ops_module.mark_shutting_down()
         if settings.scheduler_enabled and not settings.is_test:
             from app.api.deps import get_scanner
 
@@ -136,6 +140,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning("persist_queue_shutdown_error", error=type(exc).__name__)
         await dispose_engine()
         await dispose_redis()
+        await ops_module.close_readiness_clients()
         await dispose_http_client()
         logger.info("service_stopped")
 

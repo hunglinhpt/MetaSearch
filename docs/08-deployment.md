@@ -30,6 +30,36 @@ copy ..\deploy\.env.lite.example .env        # điền OPENAI_API_KEY nếu mu�
 | Auth | Đầy đủ (SQLite) | `metasearch keys create` |
 | Deep Research / MCP / eval | Đầy đủ | Budget cap như thường |
 
+### Chạy Lite như một dịch vụ trên Windows
+
+Script trong `scripts/windows/`, chạy được trên PowerShell 5.1:
+
+```powershell
+# Bật, tắt, xem trạng thái. Chỉ nghe 127.0.0.1, auth bật, từ chối cổng đã có tiến trình khác giữ.
+.\scripts\windows\metasearch-lite.ps1 start -Port 8000
+.\scripts\windows\metasearch-lite.ps1 status
+.\scripts\windows\metasearch-lite.ps1 stop
+
+# Tự khởi động khi đăng nhập, tự chạy lại khi chết, tự kiểm /readyz mỗi 5 phút và khi máy thức dậy.
+.\scripts\windows\install-task.ps1 -Port 8000
+.\scripts\windows\install-task.ps1 -Remove
+```
+
+- Log ở `api\.lite.log`, `api\.lite.err.log`, xoay khi quá 10 MB; nhật ký của script ở `api\.lite.manager.log`.
+- `check` khởi động lại dịch vụ khi `/readyz` không trả 200 trong 30 giây.
+- Đo trên máy chạy thật (`04-quality-checklist` C11-C13): `measure-lite.ps1 idle`, `restart`, và `wake` sau mỗi lần máy thức. Kết quả nối vào `api\.lite.measure.log`.
+
+### `/readyz`
+
+| Trạng thái | HTTP | Nghĩa |
+|---|---|---|
+| `ready` | 200 | Mọi phụ thuộc trả lời |
+| `degraded` | 200 (503 với `?strict=true`) | Một phụ thuộc vắng mặt, search vẫn chạy |
+| `not_ready` | 503 | Không còn engine nào vừa có adapter vừa đang bật |
+| `shutting_down` | 503 | Tiến trình đang tắt |
+
+Mỗi phụ thuộc được hỏi trong tối đa `READINESS_TIMEOUT_S` (mặc định 2 s). `schema_version` là revision Alembic mà bản build mang theo.
+
 ### Khi nào cần Docker trở lại
 
 - Cần SearXNG consensus 70+ engines / JS crawl4ai render / pgvector L2 cache /

@@ -43,7 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_create.add_argument("name")
     p_create.add_argument("--role", default="user", choices=["user", "admin"])
     p_create.add_argument("--rate-limit", type=int, default=60, help="requests per minute")
-    p_create.add_argument("--max-concurrent", type=int, default=5, help="concurrent research jobs")
+    p_create.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=5,
+        help="requests this key may run at once, on every route",
+    )
     p_create.add_argument("--expires", default=None, help="e.g. 365d, 30d, 12h")
     keys_sub.add_parser("list", help="List existing API keys")
     p_revoke = keys_sub.add_parser("revoke", help="Disable a key by prefix")
