@@ -1,6 +1,6 @@
 # 15 — Hướng dẫn tích hợp cho hệ thống ngoài
 
-Tài liệu này dành cho đội tích hợp một hệ thống khác với MetaSearch qua REST `/v1`. Hợp đồng được khóa bằng snapshot `api/tests/contract/openapi_v1.json`; đổi hợp đồng phải cập nhật snapshot và ghi vào mục 8 dưới đây.
+Tài liệu này dành cho đội tích hợp một hệ thống bên ngoài với MetaSearch qua REST `/v1`. MetaSearch chỉ cung cấp công cụ tìm kiếm và ngữ cảnh dùng chung; nghiệp vụ của hệ thống gọi tới nằm ở phía hệ thống đó, không nằm trong repo này. Hợp đồng được khóa bằng snapshot `api/tests/contract/openapi_v1.json`; đổi hợp đồng phải cập nhật snapshot và ghi vào mục 9 dưới đây.
 
 > **Trạng thái:** chương trình readiness (`docs/14-readiness/`) chưa xong. Đọc `docs/14-readiness/README.md` trước khi nối hệ thống thật.
 
@@ -16,7 +16,7 @@ Tài liệu này dành cho đội tích hợp một hệ thống khác với Met
 Bật xác thực bằng `AUTH_ENABLED=true`. Tạo key bằng CLI, trên máy có quyền vào DB:
 
 ```bash
-metasearch keys create lbs --rate-limit 600 --max-concurrent 16
+metasearch keys create my-system --rate-limit 600 --max-concurrent 16
 ```
 
 - Key in ra **một lần**. Gửi kèm header `Authorization: Bearer <key>`.

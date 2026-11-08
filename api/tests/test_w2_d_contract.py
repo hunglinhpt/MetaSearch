@@ -22,6 +22,8 @@ from app.orchestration.engine_store import InMemoryEngineStore
 from app.retrieval.models import EngineConfig, RawResult
 from app.retrieval.reranker import HeuristicReranker
 
+# The real factory, captured before any test swaps it.
+_REAL_ANSWER_PIPELINE = deps.get_answer_pipeline
 _DEPS_SWAPPED = (
     "get_cache",
     "get_engine_store",
@@ -30,6 +32,7 @@ _DEPS_SWAPPED = (
     "get_gateway",
     "get_embedder",
     "get_reranker",
+    "get_answer_pipeline",
 )
 FETCHED = datetime(2026, 11, 1, 8, 0, tzinfo=UTC)
 
@@ -364,3 +367,100 @@ def test_contract_check_fails_when_the_api_is_unreachable(capsys):
     code = module.main(["--base-url", "http://127.0.0.1:9", "--timeout", "0.5"])
     assert code == 1
     assert "FAIL" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ locking the remaining paths
+
+
+async def test_council_passes_domain_filters_to_context():
+    seen = {}
+
+    class Pipe:
+        async def prepare_context(self, params, **kwargs):
+            seen["include"] = params.include_domains
+            seen["exclude"] = params.exclude_domains
+            from app.core.errors import ErrorCode, MetaSearchError
+
+            raise MetaSearchError(ErrorCode.NO_RESULTS, "stop here")
+
+    _install()
+    deps.get_answer_pipeline = lambda: Pipe()
+    try:
+        async with _client() as c:
+            r = await c.post(
+                "/v1/llm/council",
+                json={
+                    "query": "postgres",
+                    "include_domains": ["a.example"],
+                    "exclude_domains": ["b.example"],
+                },
+            )
+    finally:
+        deps.get_answer_pipeline = _REAL_ANSWER_PIPELINE
+    assert r.status_code == 503
+    assert seen == {"include": ["a.example"], "exclude": ["b.example"]}
+
+
+async def test_filtered_and_unfiltered_answers_do_not_share_a_flight():
+    _, gateway = _install()
+
+    async def slow_stream(messages, **kwargs):
+        gateway.calls += 1
+        await asyncio.sleep(0.3)
+        yield StreamDelta(text="Postgres uses btree indexes [1].", finish_reason="stop")
+        yield StreamDelta(usage=Usage(input_tokens=5, output_tokens=5))
+
+    gateway.stream = slow_stream
+    async with _client() as c:
+        filtered, plain = await asyncio.gather(
+            c.post(
+                "/v1/answer", json={"query": "postgres flight", "include_domains": ["a.example"]}
+            ),
+            c.post("/v1/answer", json={"query": "postgres flight"}),
+        )
+    assert gateway.calls == 2, "a filtered answer must not be handed to an unfiltered caller"
+    assert {s["url"] for s in filtered.json()["sources"]} == {URL_A}
+    assert {s["url"] for s in plain.json()["sources"]} == {URL_A, URL_B}
+
+
+async def test_filtered_answer_skips_the_semantic_cache(monkeypatch):
+    from app.orchestration.pipeline import AnswerPipeline
+
+    _install()
+    stored = []
+
+    class Embedder:
+        enabled = True
+
+    async def no_lookup(self, query):
+        return None
+
+    async def record_store(self, query, answer_id, model):
+        stored.append(query)
+
+    monkeypatch.setattr(AnswerPipeline, "_semantic_lookup", no_lookup)
+    monkeypatch.setattr(AnswerPipeline, "_semantic_cache_store", record_store)
+    deps.get_embedder = lambda: Embedder()
+    deps.reset_pipelines()
+    async with _client() as c:
+        await c.post(
+            "/v1/answer", json={"query": "postgres semantic", "include_domains": ["a.example"]}
+        )
+        await asyncio.sleep(0.2)
+        assert stored == [], "a filtered answer must not enter the semantic cache"
+        await c.post("/v1/answer", json={"query": "postgres semantic plain"})
+        await asyncio.sleep(0.2)
+    assert stored == ["postgres semantic plain"]
+
+
+def test_mcp_run_tool_dispatches_research_status(monkeypatch):
+    import json
+
+    from app.mcp import client as mcp
+
+    async def fake_call(method, path, payload=None):
+        return {"research_id": "r1", "status": "running", "progress": 0.5}
+
+    monkeypatch.setattr(mcp, "_call", fake_call)
+    out = json.loads(mcp.run_tool("research_status", {"research_id": "r1"}))
+    assert out == {"research_id": "r1", "status": "running", "progress": 0.5}
