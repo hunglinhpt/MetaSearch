@@ -790,3 +790,42 @@ def test_client_raises_for_non_json_error():
     assert exc.status_code == 403
     assert exc.message == "Raw Custom Forbidden"
     assert exc.request_id == "req-custom-403"
+
+
+@pytest.mark.asyncio
+async def test_scraper_timeout_error_without_budget_not_negative_cached():
+    """TimeoutError without an active budget must not be negative cached (locked to line 238)."""
+    import app.extraction.ssrf as ssrf
+    from app.cache import CacheClient, _local_cache
+    from app.config import get_settings
+    from app.extraction.scraper import PageFailure, Scraper
+
+    _local_cache.clear()
+
+    async def timeout_transport(request):
+        raise TimeoutError("local socket read timeout")
+
+    scraper = Scraper(
+        get_settings(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(timeout_transport)),
+        cache=CacheClient(None),
+    )
+
+    async def allowed(*a, **k):
+        return True
+
+    async def resolved(url):
+        return frozenset({"93.184.216.34"})
+
+    scraper._robots.allowed = allowed
+    orig_resolve = ssrf.resolve_and_check
+    ssrf.resolve_and_check = resolved
+    target_url = "https://timeout-no-budget.example/page"
+    try:
+        res = await scraper.scrape(target_url)
+        assert isinstance(res, PageFailure)
+        assert res.error == "TimeoutError"
+        poisoned = await scraper._is_negatively_cached(target_url)
+        assert poisoned is False
+    finally:
+        ssrf.resolve_and_check = orig_resolve
