@@ -315,3 +315,79 @@ async def test_sqlite_pragmas_per_connection():
             )
             assert int((await conn.exec_driver_sql("PRAGMA busy_timeout")).scalar()) >= 1000
         await dispose_engine()
+
+
+async def test_wal_set_on_every_new_connection(tmp_path, monkeypatch):
+    # A brand-new file that ensure_schema never touched: only the per-connection pragma sets WAL.
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{(tmp_path / 'fresh.db').as_posix()}")
+    get_settings.cache_clear()
+    await dispose_engine()
+    async with get_engine().connect() as conn:
+        assert str((await conn.exec_driver_sql("PRAGMA journal_mode")).scalar()).lower() == "wal"
+    await dispose_engine()
+
+
+async def test_shutdown_waits_for_fallback_writes():
+    from app.orchestration import persist
+
+    done = []
+
+    async def slow_write():
+        await asyncio.sleep(0.3)
+        done.append(1)
+
+    assert persist._spawn_task("t", slow_write()) is not None  # queue not running: fallback task
+    await persist.wait_background(2.0)
+    assert done == [1]
+
+
+async def test_retention_runs_at_most_daily(tmp_path, monkeypatch):
+    from app.orchestration import retention
+
+    calls = []
+
+    async def fake_run(**kwargs):
+        calls.append(1)
+        return {}
+
+    monkeypatch.setattr(retention, "run_retention", fake_run)
+    marker = tmp_path / "last.retention"
+    assert await retention.run_if_due(last_run_path=str(marker)) == {}
+    assert marker.exists()
+    assert await retention.run_if_due(last_run_path=str(marker)) is None
+    marker.write_text("not a number")
+    assert await retention.run_if_due(last_run_path=str(marker)) == {}
+    assert len(calls) == 2
+
+
+async def test_retention_loop_keeps_going_after_errors(monkeypatch):
+    from app.orchestration import retention
+
+    calls = []
+
+    async def flaky(**kwargs):
+        calls.append(1)
+        raise RuntimeError("db busy")
+
+    monkeypatch.setattr(retention, "run_if_due", flaky)
+    task = asyncio.create_task(retention.retention_loop(interval_s=0.05, last_run_path=None))
+    await asyncio.sleep(0.3)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert len(calls) >= 3
+
+
+async def test_lite_runs_retention_in_the_api_and_stops_it(monkeypatch):
+    from app.orchestration import retention
+
+    async def quiet(**kwargs):
+        return None
+
+    monkeypatch.setattr(retention, "run_if_due", quiet)
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    get_settings.cache_clear()
+    async with app.router.lifespan_context(app):
+        names = {t.get_name() for t in asyncio.all_tasks() if not t.done()}
+        assert "retention-loop" in names
+    await asyncio.sleep(0)
+    assert not any(t.get_name() == "retention-loop" and not t.done() for t in asyncio.all_tasks())

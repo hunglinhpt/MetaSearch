@@ -80,7 +80,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db_path = settings.database_url.split("///", 1)[-1]
         marker = str(Path(db_path).with_suffix(".retention"))
         retention_task = asyncio.create_task(
-            retention_loop(interval_s=settings.retention_interval_s, last_run_path=marker)
+            retention_loop(interval_s=settings.retention_interval_s, last_run_path=marker),
+            name="retention-loop",
         )
 
     from app.api.deps import get_health_writer
