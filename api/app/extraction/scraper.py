@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.config import Settings, get_settings
+from app.core.budget import get_current_budget
 from app.core.logging import get_logger
 from app.core.offload import run_cpu
 from app.core.singleflight import SingleFlight
@@ -104,6 +105,17 @@ def _ordered_ips(ips: collections.abc.Iterable[str]) -> list[str]:
         else:
             v6.append(ip_str)
     return v4 + v6
+
+
+# Same margin as the escalation check in _scrape_uncached: a timeout with less
+# request budget left than this is our own cut.
+_BUDGET_CUT_MARGIN_S = 0.5
+
+
+def _request_budget_cut() -> bool:
+    """True when the current request's own budget, not the page, ended the scrape."""
+    budget = get_current_budget()
+    return budget is not None and budget.remaining() <= _BUDGET_CUT_MARGIN_S
 
 
 class Scraper:
@@ -241,6 +253,12 @@ class Scraper:
                 )
                 return PageFailure(url=url, status="failed", error=type(exc).__name__)
             except Exception as exc:
+                # Our own request budget running out says nothing about the page, so it is
+                # not negative cached. A page slower than its own per-URL limit (TimeoutError)
+                # while the request still had time left is the upstream's fault and is cached.
+                if _request_budget_cut():
+                    logger.info("scrape_budget_exhausted_not_negative_cached", url=url)
+                    return PageFailure(url=url, status="failed", error="budget_exhausted")
                 logger.info("scrape_failed", url=url, error=type(exc).__name__)
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)
                 if (

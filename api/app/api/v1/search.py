@@ -74,4 +74,5 @@ async def search(request: SearchRequest) -> SearchResponse:
                 latency_ms=outcome.latency_ms,
                 cached=outcome.cached,
                 complete=outcome.complete,
+                age_s=outcome.age_s,
             )

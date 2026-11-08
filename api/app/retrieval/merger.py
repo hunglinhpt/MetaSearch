@@ -8,10 +8,13 @@ from collections import Counter
 from datetime import datetime
 from urllib.parse import urlsplit
 
+from app.core.logging import get_logger
 from app.retrieval.canonical import canonicalize
 from app.retrieval.models import EngineConfig, RawResult, ScoredResult
 from app.retrieval.scoring import apply_signals
 from app.retrieval.simhash import is_near_duplicate, simhash64
+
+logger = get_logger(__name__)
 
 _DEEP_VERTICAL_ADAPTERS = frozenset({"viet_stock", "stooq", "fengshui", "sec_edgar"})
 
@@ -27,7 +30,12 @@ def merge(
     """Deduplicate ``raws`` by canonical URL, score groups, sort desc."""
     groups: dict[str, list[RawResult]] = {}
     for raw in raws:
-        groups.setdefault(canonicalize(raw.url), []).append(raw)
+        try:
+            canon = canonicalize(raw.url)
+        except Exception as exc:
+            logger.warning("merger_malformed_url_dropped", url=raw.url, error=str(exc))
+            continue
+        groups.setdefault(canon, []).append(raw)
 
     merged: list[ScoredResult] = []
     for canonical_url, group in groups.items():

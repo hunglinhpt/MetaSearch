@@ -37,7 +37,10 @@ def _new_chunk(
     # position + content hash. Tracking URL and clean URL → same chunk ID.
     from app.retrieval.canonical import canonicalize
 
-    canon = canonicalize(document_url)
+    try:
+        canon = canonicalize(document_url)
+    except Exception:
+        canon = document_url
     content_hash = hashlib.sha1(content.encode("utf-8")).hexdigest()[:12]  # nosec B324
     chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{canon}:{position}:{content_hash}"))
     return Chunk(
