@@ -76,6 +76,10 @@ class LLMError(Exception):
     """Raised when the upstream LLM fails or is not configured."""
 
 
+class LLMTimeoutError(LLMError, TimeoutError):
+    """Raised when an LLM upstream call times out."""
+
+
 class LLMStatusError(LLMError):
     """Upstream returned an HTTP status; carries retry classification."""
 
@@ -344,7 +348,7 @@ class LLMGateway:
         eff_model = self._effective_model(model, target, task=task)
         max_tok = max_tokens or self._settings.llm_answer_max_tokens
         temp = self._settings.llm_temperature if temperature is None else temperature
-        budget = max(int(self._settings.llm_max_attempts), 1)
+        max_attempts = max(int(self._settings.llm_max_attempts), 1)
         emitted_any = False
 
         candidates = deque(
@@ -356,7 +360,7 @@ class LLMGateway:
         last_error: LLMError | None = None
         seen_pairs: set[tuple[str, str]] = set()
 
-        while candidates and attempts < budget:
+        while candidates and attempts < max_attempts:
             cand_target, cand_model = candidates.popleft()
             pair = (cand_target.provider, cand_model)
             breaker = llm_breakers.get(f"llm:{cand_target.provider}")
@@ -410,11 +414,22 @@ class LLMGateway:
                 if exc.retry_after_s is not None:
                     seen_pairs.discard(pair)  # allow the same pair again
                     candidates.appendleft((cand_target, cand_model))
-                await asyncio.sleep(min(exc.retry_after_s or 0.5, 30.0))
+                if attempts < max_attempts:
+                    sleep_s = min(exc.retry_after_s or 0.5, 30.0)
+                    from app.core.budget import get_current_budget
+
+                    req_budget = get_current_budget()
+                    if req_budget is not None:
+                        if req_budget.is_expired():
+                            continue
+                        sleep_s = min(sleep_s, max(0.0, req_budget.remaining()))
+                    if sleep_s > 0:
+                        await asyncio.sleep(sleep_s)
             except LLMError as exc:
-                breaker.record(
-                    Outcome.TIMEOUT if isinstance(exc, TimeoutError) else Outcome.UPSTREAM_ERROR
+                is_timeout = isinstance(exc, (TimeoutError, LLMTimeoutError)) or isinstance(
+                    getattr(exc, "__cause__", None), (TimeoutError, httpx.TimeoutException)
                 )
+                breaker.record(Outcome.TIMEOUT if is_timeout else Outcome.UPSTREAM_ERROR)
                 last_error = exc
                 logger.warning(
                     "llm_candidate_failed",
@@ -453,13 +468,21 @@ class LLMGateway:
         )
         client = self._client or get_http_client()
         cancelled = False  # FIX1: tracks client disconnect for breaker
+        timeout_s = self._settings.request_timeout_s
+        from app.core.budget import get_current_budget
+
+        budget = get_current_budget()
+        if budget is not None:
+            rem = budget.remaining()
+            timeout_s = max(0.05, min(timeout_s, rem))
+
         try:
             async with client.stream(
                 "POST",
                 url,
                 json=body,
                 headers=headers,
-                timeout=self._settings.request_timeout_s,
+                timeout=timeout_s,
             ) as resp:
                 if resp.status_code >= 400:
                     detail = await _read_limited(resp)
@@ -470,11 +493,12 @@ class LLMGateway:
                         detail=detail[:500],
                     )
                     retry_after = resp.headers.get("retry-after")
-                    retry_after_s = (
-                        float(retry_after)
-                        if (retry_after or "").replace(".", "").isdigit()
-                        else None
-                    )
+                    retry_after_s: float | None = None
+                    if retry_after:
+                        try:
+                            retry_after_s = float(retry_after)
+                        except (ValueError, TypeError):
+                            retry_after_s = None
                     raise LLMStatusError(
                         target.provider, resp.status_code, retry_after_s=retry_after_s
                     )
@@ -516,6 +540,8 @@ class LLMGateway:
             # doesn't stay stuck in_flight=True.
             cancelled = True
             raise
+        except (httpx.TimeoutException, TimeoutError) as exc:
+            raise LLMTimeoutError(f"{target.provider} timeout: {type(exc).__name__}") from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"{target.provider} transport error: {type(exc).__name__}") from exc
         finally:

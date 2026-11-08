@@ -36,6 +36,14 @@ async def search(request: SearchRequest) -> SearchResponse:
             # all engines failed = 503. Agents must distinguish the two.
             all_failed = all(s.status != "ok" for s in outcome.statuses)
             if not outcome.results and all_failed:
+                has_timeout = any(s.status in ("timeout", "cancelled") for s in outcome.statuses)
+                if budget is not None and (budget.is_expired() or has_timeout):
+                    raise MetaSearchError(
+                        ErrorCode.DEADLINE_EXCEEDED,
+                        "Request budget exceeded before search could return results",
+                        status_code=504,
+                        details={"engines_status": {s.engine: s.status for s in outcome.statuses}},
+                    )
                 raise MetaSearchError(
                     ErrorCode.NO_RESULTS,
                     "All engines failed or returned no results",

@@ -195,7 +195,7 @@ class SearchParams:
 
 
 _INCOMPLETE_ENGINE_STATUSES = frozenset(
-    {"error", "timeout", "circuit_broken", "local_overload", "skipped_breaker"}
+    {"error", "timeout", "circuit_broken", "local_overload", "skipped_breaker", "cancelled"}
 )
 
 
@@ -461,12 +461,14 @@ class SearchPipeline:
         successful_engines = 0
         start_mono = time.monotonic()
 
+        quorum_met = False
         while pending:
             elapsed = time.monotonic() - start_mono
             remaining_hard = hard_timeout - elapsed
             if remaining_hard <= 0.0:
                 break
             if elapsed >= soft_timeout and successful_engines >= min_engines:
+                quorum_met = True
                 break
 
             step_timeout = min(
@@ -482,15 +484,24 @@ class SearchPipeline:
                     res = t.result()
                     if res and len(res) > 0:
                         successful_engines += 1
+
+        if not quorum_met and pending:
+            elapsed = time.monotonic() - start_mono
+            if elapsed >= soft_timeout and successful_engines >= min_engines:
+                quorum_met = True
+
         if pending:
             from app.retrieval.health import Outcome
 
+            outcome = Outcome.CANCELLED if quorum_met else Outcome.TIMEOUT
+            status_str = "cancelled" if quorum_met else "timeout"
+
             for task in pending:
                 engine_id = tasks[task]
-                statuses.append(EngineStatus(engine=engine_id, status="timeout"))
-                ENGINE_CALLS.labels(engine=engine_id, outcome="timeout").inc()
-                self.health_registry.record(engine_id, Outcome.TIMEOUT)
-                if self.health_writer:
+                statuses.append(EngineStatus(engine=engine_id, status=status_str))
+                ENGINE_CALLS.labels(engine=engine_id, outcome=status_str).inc()
+                self.health_registry.record(engine_id, outcome)
+                if self.health_writer and not quorum_met:
                     self.health_writer.record(engine_id, ok=False, latency_ms=0)
                 task.cancel()
             # Let cancellations settle so no task leaks past the request.

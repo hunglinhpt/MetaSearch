@@ -13,6 +13,8 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.api import deps
 from app.api.v1.schemas import AnswerRequest, AnswerResponse, CitationItem
+from app.core.admission import acquire_admit_slot, admit
+from app.core.budget import RequestBudget, create_budget_for_route, get_current_budget, use_budget
 from app.core.errors import ErrorCode, MetaSearchError
 from app.llm.providers import coerce_council_endpoints
 from app.orchestration.pipeline import Event, SearchParams
@@ -64,15 +66,20 @@ async def answer(request: AnswerRequest):
             status_code=500,
         )
 
-    from app.core.admission import admit
-    from app.core.budget import create_budget_for_route, use_budget
-
     budget = create_budget_for_route("answer", timeout_ms=request.timeout_ms)
-    async with admit("answer"):
-        with use_budget(budget):
-            if request.stream:
-                return EventSourceResponse(_sse(_params(request), _extra_run_kwargs(request)))
-            return await _json(_params(request), _extra_run_kwargs(request))
+    if not request.stream:
+        async with admit("answer"):
+            with use_budget(budget):
+                return await _json(_params(request), _extra_run_kwargs(request))
+
+    slot = await acquire_admit_slot("answer")
+    try:
+        return EventSourceResponse(
+            _sse(_params(request), _extra_run_kwargs(request), budget=budget, slot=slot)
+        )
+    except Exception:
+        slot.release()
+        raise
 
 
 async def _json(
@@ -108,6 +115,13 @@ async def _json(
             error = data
 
     if error is not None or not meta:
+        budget = get_current_budget()
+        if budget is not None and budget.is_expired():
+            raise MetaSearchError(
+                ErrorCode.DEADLINE_EXCEEDED,
+                "Request deadline exceeded before answer completed",
+                status_code=504,
+            )
         raise MetaSearchError(
             ErrorCode.INTERNAL,
             (error or {}).get("message", "answer pipeline produced no output"),
@@ -130,6 +144,9 @@ async def _json(
 async def _sse(
     params: SearchParams,
     run_kwargs: dict[str, Any],
+    *,
+    budget: RequestBudget | None = None,
+    slot: Any | None = None,
 ) -> AsyncIterator[dict]:
     """Bridge pipeline events + mid-flight engine_done callbacks into SSE."""
     queue: asyncio.Queue[Event | None] = asyncio.Queue()
@@ -139,10 +156,12 @@ async def _sse(
 
     async def producer() -> None:
         try:
-            kwargs = dict(run_kwargs)
-            kwargs["on_event"] = on_event
-            async for event in deps.get_answer_pipeline().run(params, **kwargs):
-                await queue.put(event)
+            b_ctx = use_budget(budget) if budget is not None else contextlib.nullcontext()
+            with b_ctx:
+                kwargs = dict(run_kwargs)
+                kwargs["on_event"] = on_event
+                async for event in deps.get_answer_pipeline().run(params, **kwargs):
+                    await queue.put(event)
         except asyncio.CancelledError:
             # Client disconnected mid-flight; gracefully cancel
             raise
@@ -167,3 +186,5 @@ async def _sse(
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+        if slot is not None:
+            slot.release()
