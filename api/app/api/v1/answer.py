@@ -52,6 +52,8 @@ def _params(request: AnswerRequest) -> SearchParams:
         include_snippets=request.include_snippets,
         news=request.news,
         timeout_ms=request.timeout_ms,
+        include_domains=request.include_domains,
+        exclude_domains=request.exclude_domains,
     )
 
 

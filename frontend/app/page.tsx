@@ -418,9 +418,18 @@ export default function HomePage() {
           categories: categoriesParam,
         });
         setHits(resp.results);
+        const incomplete = resp.complete === false;
+        const emptyNote =
+          resp.results.length === 0
+            ? incomplete
+              ? " · chưa đủ dữ liệu để kết luận là không có kết quả"
+              : " · không có kết quả (mọi engine đã trả lời)"
+            : "";
         setSearchInfo(
           `${resp.results.length} kết quả · ${resp.latency_ms} ms · engines: ` +
-            `${resp.engines_used.join(", ") || "-"} · ${resp.cached ? "cached" : "fresh"}`
+            `${resp.engines_used.join(", ") || "-"} · ${resp.cached ? "cached" : "fresh"}` +
+            (incomplete ? " · chưa đầy đủ" : "") +
+            emptyNote
         );
       } else {
         await streamAnswer(
@@ -1214,8 +1223,10 @@ export default function HomePage() {
                 <pre style={{ overflowX: "auto", margin: "0.5rem 0 0" }}>
 {`# Bước 1: Lấy ngữ cảnh đã Search 19 engines + Pháp y BCTC + Rerank + Đánh số [1]..[n]
 POST ${API_BASE_URL}/v1/context
-{"query": "pháp y BCTC VCB và kỹ thuật FPT", "k": 8, "budget": 6000}
-# -> Trả về: { context_md, system_prompt, messages, chunks, sources }
+{"query": "pháp y BCTC VCB và kỹ thuật FPT", "k": 8, "budget": 6000,
+ "include": ["chunks", "sources", "messages"]}
+# -> Mặc định chỉ trả { chunks, sources } kèm source_url, fetched_at, data_kind;
+#    thêm "context_md", "messages", "system_prompt" vào include nếu cần
 
 # Bước 2: Đưa 'messages' vào LLM sẵn có của hệ thống bạn để sinh answer_md, sau đó hậu kiểm trích dẫn:
 POST ${API_BASE_URL}/v1/citations/validate

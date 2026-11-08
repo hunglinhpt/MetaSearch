@@ -252,7 +252,7 @@ class TestMcpClient:
         assert "## Nội dung trang" in out
         assert "# body" in out
 
-    async def test_deep_research_returns_poll_hint(self, monkeypatch):
+    async def test_deep_research_points_at_research_status(self, monkeypatch):
         from app.mcp import client as mcp
 
         async def fake_call(method, path, payload=None):
@@ -260,7 +260,32 @@ class TestMcpClient:
 
         monkeypatch.setattr(mcp, "_call", fake_call)
         out = json.loads(await mcp.deep_research("q"))
-        assert out["poll_hint"].endswith("/v1/research/abc")
+        assert out["research_id"] == "abc"
+        assert "poll_hint" not in out
+        assert "research_status" in out["next"]
+
+    async def test_research_status_returns_report_when_done(self, monkeypatch):
+        from app.mcp import client as mcp
+
+        calls = []
+
+        async def fake_call(method, path, payload=None):
+            calls.append((method, path))
+            return {
+                "research_id": "abc",
+                "status": "done",
+                "progress": 1.0,
+                "report_md": "# Report [1]",
+                "citations": [{"n": 1, "url": "https://a.example"}],
+                "error": None,
+            }
+
+        monkeypatch.setattr(mcp, "_call", fake_call)
+        out = json.loads(await mcp.research_status("abc"))
+        assert calls == [("GET", "/v1/research/abc")]
+        assert out["status"] == "done"
+        assert out["report_md"] == "# Report [1]"
+        assert out["citations"][0]["n"] == 1
 
     async def test_api_error_surfaces_friendly(self, monkeypatch):
         from app.mcp import client as mcp

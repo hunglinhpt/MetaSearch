@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
 import json
 import re
@@ -22,6 +23,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 
@@ -192,6 +194,38 @@ class SearchParams:
     include_snippets: bool = True
     news: bool = False
     timeout_ms: int | None = None
+    # Applied after the search (and its cache), so filtered and unfiltered calls share one
+    # fan-out. A filter that removes every result marks the outcome incomplete, not empty.
+    include_domains: list[str] | None = None
+    exclude_domains: list[str] | None = None
+
+
+def _norm_domain(domain: str) -> str:
+    d = domain.strip().lower().rstrip(".")
+    return d[4:] if d.startswith("www.") else d
+
+
+def _has_domain_filter(params: SearchParams) -> bool:
+    return bool(
+        getattr(params, "include_domains", None) or getattr(params, "exclude_domains", None)
+    )
+
+
+def _domain_in(host: str, wanted: list[str]) -> bool:
+    h = _norm_domain(host)
+    return any(h == w or h.endswith("." + w) for w in wanted)
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _age_s(value: datetime | None) -> int | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return max(0, int((datetime.now(UTC) - value).total_seconds()))
 
 
 _INCOMPLETE_ENGINE_STATUSES = frozenset(
@@ -201,6 +235,50 @@ _INCOMPLETE_ENGINE_STATUSES = frozenset(
 
 def _has_incomplete_status(statuses: list[EngineStatus]) -> bool:
     return any(s.status in _INCOMPLETE_ENGINE_STATUSES for s in statuses)
+
+
+_OPTIONAL_CONTEXT_PARTS = frozenset(
+    {"chunks", "sources", "context_md", "messages", "system_prompt", "domain_intelligence"}
+)
+_DEFAULT_CONTEXT_INCLUDE = ("chunks", "sources")
+_EMPTY_MARKS: dict[str, object] = {
+    "source_url": None,
+    "data_kind": None,
+    "fetched_at": None,
+    "published_at": None,
+    "as_of": None,
+    "age_s": None,
+}
+
+
+def _data_marks(r: ScoredResult) -> dict[str, object]:
+    """Provenance and time marks of one result. Unknown stays None, never invented."""
+    return {
+        "source_url": r.source_url,
+        "data_kind": r.data_kind,
+        "fetched_at": None,
+        "published_at": _iso(r.published_at),
+        "as_of": _iso(r.as_of),
+        "age_s": _age_s(r.as_of),
+    }
+
+
+def _apply_domain_filter(outcome: SearchOutcome, params: SearchParams) -> SearchOutcome:
+    if not _has_domain_filter(params):
+        return outcome
+    include = [_norm_domain(d) for d in params.include_domains or [] if d.strip()]
+    exclude = [_norm_domain(d) for d in params.exclude_domains or [] if d.strip()]
+    kept = []
+    for r in outcome.results:
+        host = r.domain or (urlsplit(r.url).hostname or "")
+        if include and not _domain_in(host, include):
+            continue
+        if exclude and _domain_in(host, exclude):
+            continue
+        kept.append(r)
+    # Results existed but the filter removed them all: say so, never claim a true empty.
+    complete = outcome.complete and (bool(kept) or not outcome.results)
+    return dataclasses.replace(outcome, results=kept, complete=complete)
 
 
 @dataclass(slots=True)
@@ -246,10 +324,12 @@ class SearchPipeline:
         if on_event is None:
             normalized = normalize_query(params.query)
             cache_key = search_cache_key(normalized, params, news=params.news)
-            return await self._single_flight.run(
+            outcome = await self._single_flight.run(
                 cache_key, lambda: self._run_search(params, on_event=None)
             )
-        return await self._run_search(params, on_event=on_event)
+        else:
+            outcome = await self._run_search(params, on_event=on_event)
+        return _apply_domain_filter(outcome, params)
 
     async def _run_search(self, params: SearchParams, on_event: OnEvent = None) -> SearchOutcome:
         started = time.perf_counter()
@@ -631,6 +711,8 @@ def _build_answer_flight_key(
         "include_snippets": params.include_snippets,
         "news": params.news,
         "timeout_ms": params.timeout_ms,
+        "include_domains": sorted(params.include_domains or []),
+        "exclude_domains": sorted(params.exclude_domains or []),
         "model": model,
         "domain": domain or "auto",
         "council_mode": council_mode,
@@ -986,6 +1068,7 @@ class AnswerPipeline:
                 citations=[(c.n, c.url, c.title, c.chunk_id) for c in check.citations],
                 query=normalize_query(params.query),
                 status=answer_status,
+                cacheable=not _has_domain_filter(params),
             )
         )
         _background_tasks.add(finalize)
@@ -1009,6 +1092,7 @@ class AnswerPipeline:
         *,
         budget: int | None = None,
         domain: str = "auto",
+        include: list[str] | None = None,
     ) -> dict[str, object]:
         """Run stages 3-10 (Search -> Scrape -> Chunk -> Rerank -> Context Pack)
         without calling an internal LLM.
@@ -1030,7 +1114,13 @@ class AnswerPipeline:
             raise _no_results(outcome.statuses)
 
         sources = [
-            {"url": r.url, "title": r.title, "domain": r.domain, "score": round(r.score, 4)}
+            {
+                "url": r.url,
+                "title": r.title,
+                "domain": r.domain,
+                "score": round(r.score, 4),
+                **_data_marks(r),
+            }
             for r in outcome.results
         ]
         budget_ctx = get_current_budget()
@@ -1066,7 +1156,25 @@ class AnswerPipeline:
         messages = build_messages(normalized, included)
         latency_ms = int((time.perf_counter() - started) * 1000)
 
-        return {
+        by_url: dict[str, ScoredResult] = {r.url: r for r in outcome.results}
+        page_by_url: dict[str, PageContent] = {}
+        for page in ok_pages:
+            page_by_url[page.url] = page
+            page_by_url.setdefault(page.final_url, page)
+
+        def chunk_marks(url: str) -> dict[str, object]:
+            result = by_url.get(url)
+            page = page_by_url.get(url)
+            marks = _data_marks(result) if result is not None else dict(_EMPTY_MARKS)
+            # A chunk read from a fetched page is verifiable at that page; a snippet-only
+            # chunk has no fetch time and keeps whatever the engine reported.
+            if page is not None:
+                marks["source_url"] = marks["source_url"] or page.final_url
+                marks["fetched_at"] = _iso(page.fetched_at)
+            return marks
+
+        wanted = set(include or _DEFAULT_CONTEXT_INCLUDE)
+        payload: dict[str, object] = {
             "query_id": str(outcome.query_id),
             "normalized_query": normalized,
             "inferred_categories": inferred_cats,
@@ -1083,6 +1191,7 @@ class AnswerPipeline:
                     "heading_path": chunk.heading_path,
                     "content": chunk.content,
                     "word_count": chunk.word_count,
+                    **chunk_marks(chunk.document_url),
                 }
                 for n, chunk in included
             ],
@@ -1100,6 +1209,9 @@ class AnswerPipeline:
             "latency_ms": latency_ms,
             "complete": outcome.complete and bool(ok_pages),
         }
+        for part in _OPTIONAL_CONTEXT_PARTS - wanted:
+            payload.pop(part, None)
+        return payload
 
     async def _finalize_answer(
         self,
@@ -1115,6 +1227,7 @@ class AnswerPipeline:
         citations: list[tuple[int, str, str, str | None]],
         query: str,
         status: str = "complete",
+        cacheable: bool = True,
     ) -> None:
         if pages:
             await persist.persist_pages_async(pages, chunks)
@@ -1130,7 +1243,7 @@ class AnswerPipeline:
             citations=citations,
             status=status,
         )
-        if self.embedder is not None and self.embedder.enabled:
+        if cacheable and self.embedder is not None and self.embedder.enabled:
             await self._semantic_cache_store(query, answer_id, model)
 
     # -- rerank ------------------------------------------------------------
@@ -1151,6 +1264,8 @@ class AnswerPipeline:
 
     async def _cache_hit(self, params: SearchParams, model: str) -> AsyncIterator[Event] | None:
         """Return a replay generator when L1 or L2 has a fresh answer."""
+        if _has_domain_filter(params):
+            return None  # the answer cache is keyed without domain filters
         query = normalize_query(params.query)
         if self.cache is not None:
             payload = await self.cache.get_json(
@@ -1211,7 +1326,7 @@ class AnswerPipeline:
         citations: list[dict],
         sources: list[dict],
     ) -> None:
-        if self.cache is None or not answer_md:
+        if self.cache is None or not answer_md or _has_domain_filter(params):
             return
         categories = set(params.categories or [])
         if categories == {"general"} or params.news:

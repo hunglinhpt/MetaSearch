@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter
 
 from app.api import deps
@@ -12,6 +14,14 @@ from app.core.errors import ErrorCode, MetaSearchError
 from app.orchestration.pipeline import SearchParams
 
 router = APIRouter(tags=["search"])
+
+
+def _age_s(value: datetime | None) -> int | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return max(0, int((datetime.now(UTC) - value).total_seconds()))
 
 
 @router.post("/search", response_model=SearchResponse, response_model_exclude_none=True)
@@ -30,6 +40,8 @@ async def search(request: SearchRequest) -> SearchResponse:
                     include_snippets=request.include_snippets,
                     news=request.news,
                     timeout_ms=request.timeout_ms,
+                    include_domains=request.include_domains,
+                    exclude_domains=request.exclude_domains,
                 )
             )
             # WP-15: empty results with healthy engines = 200 complete:true;
@@ -66,6 +78,12 @@ async def search(request: SearchRequest) -> SearchResponse:
                         "engines": r.engines,
                         "domain": r.domain,
                         "published_at": r.published_at.isoformat() if r.published_at else None,
+                        # Provenance: None means unknown, never a guess (D3).
+                        "source_url": r.source_url,
+                        "source_name": r.source_name,
+                        "data_kind": r.data_kind,
+                        "as_of": r.as_of.isoformat() if r.as_of else None,
+                        "age_s": _age_s(r.as_of),
                     }
                     for i, r in enumerate(outcome.results, start=1)
                 ],

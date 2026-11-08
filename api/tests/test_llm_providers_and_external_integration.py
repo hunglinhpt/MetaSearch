@@ -375,7 +375,12 @@ class TestLLMEndpointsAndExternalIntegration:
         # Step 1: External system calls POST /v1/context to get RAG pack for its own LLM
         ctx_resp = client.post(
             "/v1/context",
-            json={"query": "Phân tích CASA của VCB và tăng trưởng FPT", "k": 5, "budget": 4000},
+            json={
+                "query": "Phân tích CASA của VCB và tăng trưởng FPT",
+                "k": 5,
+                "budget": 4000,
+                "include": ["chunks", "sources", "context_md", "messages"],
+            },
         )
         assert ctx_resp.status_code == 200
         ctx = ctx_resp.json()

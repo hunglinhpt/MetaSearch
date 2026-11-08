@@ -321,6 +321,10 @@ def serialize_results(results: list[ScoredResult]) -> list[dict[str, Any]]:
             "adapter_score": r.adapter_score,
             "published_at": r.published_at.isoformat() if r.published_at else None,
             "score": r.score,
+            "source_url": r.source_url,
+            "source_name": r.source_name,
+            "as_of": r.as_of.isoformat() if r.as_of else None,
+            "data_kind": r.data_kind,
         }
         for r in results
     ]
@@ -332,6 +336,7 @@ def deserialize_results(payload: list[dict[str, Any]]) -> list[ScoredResult]:
     out: list[ScoredResult] = []
     for item in payload:
         published = item.get("published_at")
+        as_of = item.get("as_of")
         out.append(
             ScoredResult(
                 url=item["url"],
@@ -346,6 +351,10 @@ def deserialize_results(payload: list[dict[str, Any]]) -> list[ScoredResult]:
                 adapter_score=item.get("adapter_score"),
                 published_at=datetime.fromisoformat(published) if published else None,
                 score=float(item.get("score") or 0.0),
+                source_url=item.get("source_url"),
+                source_name=item.get("source_name"),
+                as_of=datetime.fromisoformat(as_of) if as_of else None,
+                data_kind=item.get("data_kind"),
             )
         )
     return out

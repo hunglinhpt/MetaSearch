@@ -427,7 +427,11 @@ async def test_context_honors_budget_with_blackhole_upstream(monkeypatch):
         # Request with 1500ms timeout_ms
         resp = await client.post(
             "/v1/context",
-            json={"query": "python asyncio", "timeout_ms": 1500},
+            json={
+                "query": "python asyncio",
+                "timeout_ms": 1500,
+                "include": ["chunks", "sources", "context_md"],
+            },
         )
         elapsed = time.monotonic() - start
 
