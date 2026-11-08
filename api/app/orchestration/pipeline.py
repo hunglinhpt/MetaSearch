@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import re
 import time
 import unicodedata
@@ -192,6 +194,15 @@ class SearchParams:
     timeout_ms: int | None = None
 
 
+_INCOMPLETE_ENGINE_STATUSES = frozenset(
+    {"error", "timeout", "circuit_broken", "local_overload", "skipped_breaker"}
+)
+
+
+def _has_incomplete_status(statuses: list[EngineStatus]) -> bool:
+    return any(s.status in _INCOMPLETE_ENGINE_STATUSES for s in statuses)
+
+
 @dataclass(slots=True)
 class SearchOutcome:
     query_id: uuid.UUID
@@ -200,6 +211,7 @@ class SearchOutcome:
     latency_ms: int
     cached: bool = False
     complete: bool = True
+    age_s: int | None = None
 
 
 def normalize_query(raw: str) -> str:
@@ -247,6 +259,8 @@ class SearchPipeline:
         cached_payload = await self._cache_lookup(query, params)
         if cached_payload is not None:
             CACHE_EVENTS.labels(kind="search", outcome="hit").inc()
+            cached_at = cached_payload.get("cached_at")
+            age_s = max(0, int(time.time() - cached_at)) if cached_at is not None else 0
             return SearchOutcome(
                 query_id=uuid.UUID(cached_payload["query_id"]),
                 results=deserialize_results(cached_payload["results"]),
@@ -258,6 +272,8 @@ class SearchPipeline:
                 ],
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 cached=True,
+                complete=bool(cached_payload.get("complete", True)),
+                age_s=age_s,
             )
         CACHE_EVENTS.labels(kind="search", outcome="miss").inc()
 
@@ -282,7 +298,7 @@ class SearchPipeline:
             },
             results=results,
         )
-        is_complete = not any(s.status in ("timeout", "circuit_broken", "error") for s in statuses)
+        is_complete = not _has_incomplete_status(statuses)
         return SearchOutcome(
             query_id=query_id,
             results=results,
@@ -310,18 +326,20 @@ class SearchPipeline:
         if self.cache is None:
             return
         ttl_s = search_ttl_s(self.settings, news=params.news)
-        has_partial = any(
-            s.status in ("error", "timeout", "circuit_broken", "local_overload") for s in statuses
-        )
-        if has_partial:
+        if _has_incomplete_status(statuses):
             ttl_s = min(ttl_s, self.settings.cache_partial_ttl_s)
-        if "financial" in params.categories:
+        categories = set(params.categories or [])
+        if categories == {"general"} or params.news:
+            categories |= infer_categories_from_query(query, news=params.news)
+        if "financial" in categories:
             ttl_s = min(ttl_s, 300)
+        is_complete = not _has_incomplete_status(statuses)
         await self.cache.set_json(
             search_cache_key(query, params, news=params.news),
             {
                 "query_id": str(query_id),
                 "cached_at": time.time(),
+                "complete": is_complete,
                 "results": serialize_results(results),
                 "statuses": [
                     {"engine": s.engine, "status": s.status, "results": s.results} for s in statuses
@@ -498,8 +516,14 @@ def _score_chunks_sync(
     for page in pages:
         scraped_urls.add(page.url)
         scraped_urls.add(page.final_url)
-        scraped_urls.add(canonicalize(page.url))
-        matched_res = res_by_url.get(page.url) or res_by_url.get(canonicalize(page.url))
+        try:
+            canon_page_url = canonicalize(page.url)
+            scraped_urls.add(canon_page_url)
+        except Exception:
+            canon_page_url = None
+        matched_res = res_by_url.get(page.url) or (
+            res_by_url.get(canon_page_url) if canon_page_url else None
+        )
         result_score = matched_res.score if matched_res else 0.0
         md_body = page.markdown
         # Preserve quantitative synthesis snippets from vertical adapters even when scraped
@@ -535,6 +559,55 @@ def _score_chunks_sync(
     return scored_chunks
 
 
+_FLIGHT_SENTINEL = object()
+
+
+class _InFlightAnswer:
+    def __init__(self, key: str) -> None:
+        self.key = key
+        self.task: asyncio.Task[None] | None = None
+        self.queue: asyncio.Queue[tuple[str, Any] | object] = asyncio.Queue()
+        self.waiters = 1
+        self.payload: dict[str, Any] | None = None
+        self.error: Exception | None = None
+
+
+def _build_answer_flight_key(
+    params: SearchParams,
+    *,
+    model: str | None = None,
+    llm_override: LLMOverride | None = None,
+    council_mode: bool = False,
+    council_endpoints: list[LLMOverride] | None = None,
+    domain: str = "auto",
+) -> str:
+    key_dict = {
+        "query": normalize_query(params.query),
+        "lang": params.lang,
+        "k": params.k,
+        "categories": sorted(params.categories or []),
+        "engines": sorted(params.engines or []) if params.engines else None,
+        "freshness_days": params.freshness_days,
+        "include_snippets": params.include_snippets,
+        "news": params.news,
+        "timeout_ms": params.timeout_ms,
+        "model": model,
+        "domain": domain or "auto",
+        "council_mode": council_mode,
+        "council_endpoints": [
+            ep.model_dump() if hasattr(ep, "model_dump") else str(ep)
+            for ep in (council_endpoints or [])
+        ],
+        "llm_override": (
+            llm_override.model_dump() if hasattr(llm_override, "model_dump") else str(llm_override)
+        )
+        if llm_override
+        else None,
+    }
+    raw = json.dumps(key_dict, sort_keys=True, default=str)
+    return "an_flight:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 class AnswerPipeline:
     """Cache -> search -> scrape -> chunk -> rerank -> synthesize (stages 8-11)."""
 
@@ -555,8 +628,189 @@ class AnswerPipeline:
         self.reranker = reranker
         self.cache = cache
         self.embedder = embedder
+        self._flight_tasks: dict[str, _InFlightAnswer] = {}
+        self._flight_lock = asyncio.Lock()
 
     async def run(
+        self,
+        params: SearchParams,
+        *,
+        model: str | None = None,
+        llm_override: LLMOverride | None = None,
+        council_mode: bool = False,
+        council_endpoints: list[LLMOverride] | None = None,
+        domain: str = "auto",
+        on_event: OnEvent = None,
+    ) -> AsyncIterator[Event]:
+        gateway = (
+            self.gateway.with_override(llm_override)
+            if llm_override is not None and hasattr(self.gateway, "with_override")
+            else self.gateway
+        )
+        default_model = getattr(gateway, "default_quick_model", self.settings.llm_quick_model)
+        override_model = llm_override.model if llm_override and llm_override.model else None
+        effective_model = override_model or model or default_model
+        use_council = council_mode or bool(council_endpoints) or self.settings.llm_council_enabled
+
+        replay = (
+            await self._cache_hit(params, effective_model)
+            if (llm_override is None and not use_council)
+            else None
+        )
+        if replay is not None:
+            async for event in replay:
+                yield event
+            return
+
+        flight_key = _build_answer_flight_key(
+            params,
+            model=effective_model,
+            llm_override=llm_override,
+            council_mode=council_mode,
+            council_endpoints=council_endpoints,
+            domain=domain,
+        )
+
+        async with self._flight_lock:
+            if flight_key in self._flight_tasks:
+                in_flight = self._flight_tasks[flight_key]
+                in_flight.waiters += 1
+                is_leader = False
+            else:
+                in_flight = _InFlightAnswer(flight_key)
+                self._flight_tasks[flight_key] = in_flight
+                in_flight.task = asyncio.create_task(
+                    self._run_answer_producer(
+                        in_flight,
+                        params,
+                        model=effective_model,
+                        llm_override=llm_override,
+                        council_mode=council_mode,
+                        council_endpoints=council_endpoints,
+                        domain=domain,
+                        on_event=on_event,
+                    )
+                )
+                is_leader = True
+
+        if is_leader:
+            try:
+                while True:
+                    item = await in_flight.queue.get()
+                    if item is _FLIGHT_SENTINEL:
+                        break
+                    if isinstance(item, Exception):
+                        raise item
+                    yield item
+            except asyncio.CancelledError:
+                async with self._flight_lock:
+                    in_flight.waiters -= 1
+                    if in_flight.waiters <= 0:
+                        if in_flight.task and not in_flight.task.done():
+                            in_flight.task.cancel()
+                        self._flight_tasks.pop(flight_key, None)
+                raise
+            finally:
+                if in_flight.task and in_flight.task.done():
+                    async with self._flight_lock:
+                        self._flight_tasks.pop(flight_key, None)
+        else:
+            try:
+                timeout_s = (params.timeout_ms / 1000.0) if params.timeout_ms else 30.0
+                budget = get_current_budget()
+                if budget is not None:
+                    timeout_s = min(timeout_s, budget.remaining())
+                timeout_s = max(0.1, timeout_s)
+                if in_flight.task is not None:
+                    await asyncio.wait_for(asyncio.shield(in_flight.task), timeout=timeout_s)
+            except asyncio.CancelledError:
+                async with self._flight_lock:
+                    in_flight.waiters -= 1
+                    if in_flight.waiters <= 0:
+                        if in_flight.task and not in_flight.task.done():
+                            in_flight.task.cancel()
+                        self._flight_tasks.pop(flight_key, None)
+                raise
+            except TimeoutError:
+                async with self._flight_lock:
+                    in_flight.waiters -= 1
+                    if in_flight.waiters <= 0:
+                        if in_flight.task and not in_flight.task.done():
+                            in_flight.task.cancel()
+                        self._flight_tasks.pop(flight_key, None)
+                raise MetaSearchError(
+                    ErrorCode.TIMEOUT, "Answer single-flight wait deadline exceeded"
+                ) from None
+            finally:
+                if in_flight.task and in_flight.task.done():
+                    async with self._flight_lock:
+                        self._flight_tasks.pop(flight_key, None)
+
+            if in_flight.error is not None:
+                raise in_flight.error
+
+            if in_flight.payload is not None:
+                async for event in self._replay(in_flight.payload):
+                    yield event
+
+    async def _run_answer_producer(
+        self,
+        in_flight: _InFlightAnswer,
+        params: SearchParams,
+        *,
+        model: str | None = None,
+        llm_override: LLMOverride | None = None,
+        council_mode: bool = False,
+        council_endpoints: list[LLMOverride] | None = None,
+        domain: str = "auto",
+        on_event: OnEvent = None,
+    ) -> None:
+        try:
+            sources: list[dict] = []
+            text_parts: list[str] = []
+            citations_payload: list[dict] = []
+            council_meta: dict | None = None
+            done_data: dict = {}
+
+            async for event in self._run_answer(
+                params,
+                model=model,
+                llm_override=llm_override,
+                council_mode=council_mode,
+                council_endpoints=council_endpoints,
+                domain=domain,
+                on_event=on_event,
+            ):
+                in_flight.queue.put_nowait(event)
+                name, data = event
+                if name == "sources":
+                    sources = data.get("sources", [])
+                elif name == "token":
+                    text_parts.append(data.get("t", ""))
+                elif name == "citations":
+                    citations_payload = data.get("citations", [])
+                elif name == "council":
+                    council_meta = data
+                elif name == "done":
+                    done_data = data
+
+            in_flight.payload = {
+                "answer_id": done_data.get("answer_id") or uuid.uuid4(),
+                "answer_md": "".join(text_parts),
+                "citations": citations_payload,
+                "sources": sources,
+                "model": done_data.get("model", ""),
+                "status": done_data.get("status", "complete"),
+                "complete": done_data.get("complete", True),
+                "council": council_meta,
+            }
+        except Exception as exc:
+            in_flight.error = exc
+            in_flight.queue.put_nowait(exc)
+        finally:
+            in_flight.queue.put_nowait(_FLIGHT_SENTINEL)
+
+    async def _run_answer(
         self,
         params: SearchParams,
         *,
@@ -729,7 +983,14 @@ class AnswerPipeline:
 
         # REL-04: Cache write and DB finalize MUST be executed/scheduled before done event
         # so if the client disconnects immediately on done, cache and storage are never lost!
-        if self.cache is not None and llm_override is None:
+        is_complete = outcome.complete and bool(ok_pages) and answer_status == "complete"
+        if (
+            self.cache is not None
+            and llm_override is None
+            and not use_council
+            and answer_status == "complete"
+            and is_complete
+        ):
             try:
                 await self._cache_store(
                     params, model, answer_id, check.text, citations_payload, sources
@@ -949,14 +1210,18 @@ class AnswerPipeline:
                 "citations",
                 {"citations": payload.get("citations") or [], "invalid_markers": []},
             )
+            if payload.get("council"):
+                yield ("council", payload["council"])
             yield (
                 "done",
                 {
                     "answer_id": str(payload.get("answer_id") or uuid.uuid4()),
                     "latency_ms": 0,
-                    "status": "complete",
+                    "status": str(payload.get("status") or "complete"),
                     "model": str(payload.get("model") or ""),
                     "cached": True,
+                    "complete": bool(payload.get("complete", True)),
+                    **({"council": payload["council"]} if payload.get("council") else {}),
                 },
             )
 
@@ -973,7 +1238,10 @@ class AnswerPipeline:
     ) -> None:
         if self.cache is None or not answer_md:
             return
-        if "financial" in params.categories and getattr(params, "max_age_s", None) is None:
+        categories = set(params.categories or [])
+        if categories == {"general"} or params.news:
+            categories |= infer_categories_from_query(params.query, news=params.news)
+        if "financial" in categories and getattr(params, "max_age_s", None) is None:
             # DAT-10: Dynamic financial answers must not be cached without max_age_s
             return
         await self.cache.set_json(
@@ -994,6 +1262,8 @@ class AnswerPipeline:
                 "citations": citations,
                 "sources": sources,
                 "model": model,
+                "status": "complete",
+                "complete": True,
             },
             ttl_s=self.settings.cache_answer_ttl_s,
         )

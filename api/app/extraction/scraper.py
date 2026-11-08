@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from app.config import Settings, get_settings
+from app.core.budget import get_current_budget
 from app.core.logging import get_logger
 from app.core.offload import run_cpu
 from app.core.singleflight import SingleFlight
@@ -234,13 +235,18 @@ class Scraper:
                 logger.info("scrape_blocked_ssrf", url=url, reason=str(exc))
                 await self._mark_failed(url, ttl_s=3600.0)
                 return PageFailure(url=url, status="blocked", error=str(exc))
-            except (httpx.PoolTimeout, asyncio.CancelledError) as exc:
-                # P17: Local overload, pool exhaustion or cancellation MUST NOT be negative cached!
+            except (httpx.PoolTimeout, asyncio.CancelledError, TimeoutError) as exc:
+                # P17: Local overload, pool exhaustion, cancellation, or budget cuts
+                # MUST NOT be negative cached!
                 logger.info(
                     "scrape_local_overload_not_negative_cached", url=url, error=type(exc).__name__
                 )
                 return PageFailure(url=url, status="failed", error=type(exc).__name__)
             except Exception as exc:
+                budget = get_current_budget()
+                if budget is not None and budget.exhausted():
+                    logger.info("scrape_budget_exhausted_not_negative_cached", url=url)
+                    return PageFailure(url=url, status="failed", error="budget_exhausted")
                 logger.info("scrape_failed", url=url, error=type(exc).__name__)
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)
                 if (

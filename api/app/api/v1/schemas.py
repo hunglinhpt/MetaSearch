@@ -64,6 +64,7 @@ class SearchResponse(BaseModel):
     latency_ms: int
     cached: bool = False
     complete: bool = True
+    age_s: int | None = None
 
 
 class AnswerResponse(BaseModel):
