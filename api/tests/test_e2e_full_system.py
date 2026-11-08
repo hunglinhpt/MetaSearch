@@ -464,7 +464,13 @@ class TestE2EExternalSystemAndCoreEndpoints:
         # 4. Context-only RAG pack for external LLM systems + domain override
         c_resp = e2e_client.post(
             "/v1/context",
-            json={"query": "Phân tích VCB và FPT", "k": 5, "budget": 4000, "domain": "financial"},
+            json={
+                "query": "Phân tích VCB và FPT",
+                "k": 5,
+                "budget": 4000,
+                "domain": "financial",
+                "include": ["chunks", "sources", "context_md"],
+            },
         )
         assert c_resp.status_code == 200
         c_body = c_resp.json()

@@ -21,6 +21,12 @@ export type SearchHit = {
   engines?: string[];
   domain: string;
   published_at?: string | null;
+  // Provenance marks; null means unknown, never guessed.
+  source_url?: string | null;
+  source_name?: string | null;
+  data_kind?: "observed" | "derived" | "reference" | "computed" | null;
+  as_of?: string | null;
+  age_s?: number | null;
 };
 export type SearchResponse = {
   query_id: string;
@@ -29,6 +35,10 @@ export type SearchResponse = {
   engines_failed: string[];
   latency_ms: number;
   cached: boolean;
+  // false when some engine failed or a domain filter removed every result:
+  // an empty list is then "not known", not "nothing exists".
+  complete?: boolean;
+  age_s?: number | null;
 };
 export type EngineDone = { engine: string; results: number; ms: number };
 export type AnswerMeta = {

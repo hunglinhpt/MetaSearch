@@ -25,7 +25,7 @@ Endpoints:
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -67,9 +67,17 @@ class LLMTestRequest(BaseModel):
     )
 
 
+ContextPart = Literal[
+    "chunks", "sources", "context_md", "messages", "system_prompt", "domain_intelligence"
+]
+
+
 class ContextRequest(SearchRequest):
     budget: int | None = Field(default=None, ge=200, le=50_000)
     domain: str = Field(default="auto", max_length=60)
+    # Parts of the payload to return. The default keeps it small: chunks and sources carry
+    # everything; context_md and messages repeat the chunk text for callers that want it.
+    include: list[ContextPart] = Field(default_factory=lambda: ["chunks", "sources"])
 
 
 class ContextChunkInput(BaseModel):
@@ -302,6 +310,8 @@ async def run_llm_council(request: CouncilRequest, raw_request: Request) -> dict
             freshness_days=request.freshness_days,
             include_snippets=request.include_snippets,
             news=request.news,
+            include_domains=request.include_domains,
+            exclude_domains=request.exclude_domains,
         )
         ctx = await deps.get_answer_pipeline().prepare_context(
             params, budget=request.budget, domain=request.domain
@@ -455,9 +465,11 @@ async def build_external_llm_context(request: ContextRequest) -> dict[str, Any]:
                 include_snippets=request.include_snippets,
                 news=request.news,
                 timeout_ms=request.timeout_ms,
+                include_domains=request.include_domains,
+                exclude_domains=request.exclude_domains,
             )
             return await deps.get_answer_pipeline().prepare_context(
-                params, budget=request.budget, domain=request.domain
+                params, budget=request.budget, domain=request.domain, include=request.include
             )
 
 
@@ -481,11 +493,20 @@ async def validate_external_llm_citations(request: CitationValidateRequest) -> d
         )
         included.append((num, chunk))
     check = validate_citations(request.answer_md, included)
+    # marker_valid only says a [n] marker points at a chunk the caller supplied. It does not
+    # say the chunk supports the sentence; that check belongs to the eval harness (DAT-09).
     return {
         "validated_answer_md": check.text,
         "citations": [
-            {"n": c.n, "url": c.url, "title": c.title, "chunk_id": c.chunk_id}
+            {
+                "n": c.n,
+                "url": c.url,
+                "title": c.title,
+                "chunk_id": c.chunk_id,
+                "marker_valid": True,
+            }
             for c in check.citations
         ],
         "invalid_markers": check.invalid_markers,
+        "marker_valid": not check.invalid_markers,
     }

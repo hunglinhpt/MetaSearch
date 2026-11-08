@@ -149,14 +149,31 @@ async def deep_research(
         "/v1/research",
         {"query": query, "breadth": breadth, "depth": depth, "max_time_s": max_time_s},
     )
+    # The agent follows up with the research_status tool; it never has to call REST itself.
     return json.dumps(
         {
             "research_id": data["research_id"],
             "status": data["status"],
-            "poll_hint": f"GET {_api_url()}/v1/research/{data['research_id']}",
+            "next": "call research_status with this research_id until status is done or failed",
         },
         ensure_ascii=False,
     )
+
+
+async def research_status(research_id: str, *, max_chars: int = _TOTAL_CHAR_BUDGET) -> str:
+    """Status of a deep_research job; the report once it is done."""
+    data = await _call("GET", f"/v1/research/{research_id}")
+    out: dict[str, Any] = {
+        "research_id": data.get("research_id", research_id),
+        "status": data.get("status"),
+        "progress": data.get("progress"),
+    }
+    if data.get("error"):
+        out["error"] = data["error"]
+    if data.get("report_md"):
+        out["report_md"] = _cap(data["report_md"], max_chars)
+        out["citations"] = data.get("citations", [])
+    return json.dumps(out, ensure_ascii=False)
 
 
 def run_tool(name: str, kwargs: dict[str, Any]) -> Any:
@@ -166,6 +183,7 @@ def run_tool(name: str, kwargs: dict[str, Any]) -> Any:
         "web_scrape": web_scrape,
         "web_search_and_scrape": web_search_and_scrape,
         "deep_research": deep_research,
+        "research_status": research_status,
     }
     if name not in tools:
         raise MCPClientError(f"unknown tool: {name}")

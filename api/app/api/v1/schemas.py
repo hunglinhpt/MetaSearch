@@ -20,6 +20,10 @@ class SearchRequest(BaseModel):
     include_snippets: bool = True
     news: bool = False
     timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
+    # Keep or drop results by host; "example.com" also matches its subdomains. A filter that
+    # removes every result returns complete=false, not a confirmed empty answer.
+    include_domains: list[str] | None = Field(default=None, max_length=50)
+    exclude_domains: list[str] | None = Field(default=None, max_length=50)
 
 
 class CitationItem(BaseModel):

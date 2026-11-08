@@ -80,11 +80,18 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
     async def deep_research(
         query: str, breadth: int = 4, depth: int = 2, max_time_s: int = 180
     ) -> dict[str, Any]:
-        """Multi-iteration research report (30-180s). Returns a research_id to
-        poll via GET /v1/research/{id} (or stream /events for progress)."""
+        """Start a multi-iteration research report (30-180s). Returns a research_id;
+        follow it with the research_status tool."""
         raw = await mcp_client.deep_research(
             query, breadth=breadth, depth=depth, max_time_s=max_time_s
         )
+        return _loads(raw)
+
+    @mcp.tool()
+    async def research_status(research_id: str, max_chars: int = 12000) -> dict[str, Any]:
+        """Status of a deep_research job. Call again until status is done or failed;
+        the report and its citations come back once it is done."""
+        raw = await mcp_client.research_status(research_id, max_chars=max_chars)
         return _loads(raw)
 
     return mcp
