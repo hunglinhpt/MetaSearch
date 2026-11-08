@@ -46,6 +46,9 @@ _window_warned = False
 # layers so data is stamped with its creator and filtered by it.
 current_api_key_id: ContextVar[str | None] = ContextVar("current_api_key_id", default=None)
 current_role: ContextVar[str] = ContextVar("current_role", default="user")
+current_auth_context: ContextVar[AuthContext | None] = ContextVar(
+    "current_auth_context", default=None
+)
 
 
 def validate_startup_auth(
@@ -75,6 +78,7 @@ class AuthContext:
     name: str | None
     role: str
     rate_limit_rpm: int
+    max_concurrent: int = 5
 
 
 def generate_key() -> tuple[str, str, str]:
@@ -165,6 +169,7 @@ async def authenticate(bearer: str | None) -> AuthContext:
         name=row.name,
         role=row.role or "user",
         rate_limit_rpm=int(row.rate_limit_rpm or settings.rate_limit_rpm),
+        max_concurrent=int(getattr(row, "max_concurrent", 5) or 5),
     )
     await _cache_put(key_hash, ctx)
     return ctx
@@ -320,6 +325,7 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
     """
     state = getattr(request, "state", None)
     if state is not None and getattr(state, "auth", None) is not None:
+        current_auth_context.set(state.auth)
         return state.auth
 
     settings = get_settings()
@@ -333,6 +339,7 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
         else:
             current_role.set("user")
             ctx = AuthContext(key_id="anonymous", name=None, role="user", rate_limit_rpm=0)
+        current_auth_context.set(ctx)
         if state is not None:
             state.auth = ctx
         return ctx
@@ -353,6 +360,7 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
     ctx = await authenticate(bearer)
     current_api_key_id.set(ctx.key_id)
     current_role.set(ctx.role)
+    current_auth_context.set(ctx)
     rl_headers = await check_rate_limit(ctx, cost=cost)
     state = getattr(request, "state", None)
     if state is not None:
