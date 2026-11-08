@@ -335,14 +335,10 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
         current_api_key_id.set("anonymous")
         if settings.dev_anon_admin:
             current_role.set("admin")
-            ctx = AuthContext(
-                key_id="anonymous", name=None, role="admin", rate_limit_rpm=0, max_concurrent=0
-            )
+            ctx = AuthContext(key_id="anonymous", name=None, role="admin", rate_limit_rpm=0)
         else:
             current_role.set("user")
-            ctx = AuthContext(
-                key_id="anonymous", name=None, role="user", rate_limit_rpm=0, max_concurrent=0
-            )
+            ctx = AuthContext(key_id="anonymous", name=None, role="user", rate_limit_rpm=0)
         current_auth_context.set(ctx)
         if state is not None:
             state.auth = ctx

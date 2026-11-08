@@ -485,11 +485,6 @@ class SearchPipeline:
                     if res and len(res) > 0:
                         successful_engines += 1
 
-        if not quorum_met and pending:
-            elapsed = time.monotonic() - start_mono
-            if elapsed >= soft_timeout and successful_engines >= min_engines:
-                quorum_met = True
-
         if pending:
             from app.retrieval.health import Outcome
 

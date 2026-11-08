@@ -15,7 +15,7 @@ from app.core import admission
 from app.core.admission import reset_admission
 from app.core.auth import create_key, reset_rate_limit_windows
 from app.core.budget import RequestBudget, get_current_budget, use_budget
-from app.core.errors import ErrorCode
+from app.core.errors import ErrorCode, MetaSearchError
 from app.db.bootstrap import ensure_schema
 from app.db.session import dispose_engine
 from app.llm.gateway import (
@@ -282,6 +282,7 @@ async def test_quorum_cut_keeps_breaker_closed(monkeypatch):
         out = await pipe.run(SearchParams(query=f"quorum test {i}"))
         slow_st = next(s.status for s in out.statuses if s.engine == "slow")
         statuses.append(slow_st)
+        assert slow_st == "cancelled", f"Expected cancelled status under quorum cut, got {slow_st}"
 
     breaker = registry.get("slow")
     assert breaker.state == "closed", f"Breaker was opened: {breaker.state}"
@@ -514,3 +515,147 @@ async def test_fast_failure_under_load():
     assert r.status_code == 503, f"Expected 503, got {r.status_code}"
     assert bool(r.headers.get("retry-after")), "Missing Retry-After header"
     assert took <= 2.3, f"Overload rejection was too slow: took {took:.2f}s"
+
+
+@pytest.mark.asyncio
+async def test_answer_json_deadline_exceeded_504():
+    """Verify non-streaming /v1/answer returns 504 DEADLINE_EXCEEDED when budget expires."""
+    reset_admission()
+    _install_stack([_MockAdapter("fake", [_raw("https://example.com/1")])])
+
+    class DelayedEmptyPipe:
+        async def run(self, params, **kw):
+            await asyncio.sleep(1.05)
+            if False:
+                yield ("token", {})
+
+    deps.get_answer_pipeline = lambda: DelayedEmptyPipe()
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.post(
+            "/v1/answer",
+            json={"query": "test", "stream": False, "timeout_ms": 1000},
+        )
+    assert r.status_code == 504
+    assert r.json().get("error", {}).get("code") == ErrorCode.DEADLINE_EXCEEDED.value
+
+
+@pytest.mark.asyncio
+async def test_reset_admission_clears_key_semaphores():
+    """Verify reset_admission clears per-key semaphores."""
+    await admission.get_key_semaphore("test_key", 5)
+    assert "test_key" in admission._key_semaphores
+    reset_admission()
+    assert len(admission._key_semaphores) == 0
+
+
+@pytest.mark.asyncio
+async def test_acquire_admit_slot_rolls_back_key_semaphore_on_tier_timeout():
+    """Verify that when tier admission times out, acquired key permit is rolled back."""
+    reset_admission()
+    from app.core.auth import AuthContext, current_auth_context
+
+    key_ctx = AuthContext(
+        key_id="rollback_key", name="test", role="user", rate_limit_rpm=100, max_concurrent=2
+    )
+    current_auth_context.set(key_ctx)
+
+    sem = await admission.get_tier_semaphore("search", 64)
+    drains = [asyncio.create_task(sem.acquire()) for _ in range(64)]
+    await asyncio.gather(*drains)
+
+    with pytest.raises(MetaSearchError) as exc_info:
+        await admission.acquire_admit_slot("search", custom_wait_s=0.01)
+    assert exc_info.value.status_code == 503
+
+    key_sem = await admission.get_key_semaphore("rollback_key", 2)
+    assert key_sem._value == 2, f"Key semaphore was not rolled back: {key_sem._value}"
+
+    for _ in range(64):
+        sem.release()
+
+
+@pytest.mark.asyncio
+async def test_authenticate_uses_cached_state_auth():
+    """Verify authenticate_and_rate_limit sets current_auth_context from request.state.auth."""
+    from app.core.auth import AuthContext, authenticate_and_rate_limit, current_auth_context
+
+    dummy_auth = AuthContext(
+        key_id="k_cached", name="Cached", role="user", rate_limit_rpm=10, max_concurrent=3
+    )
+
+    class DummyState:
+        auth = dummy_auth
+
+    class DummyReq:
+        state = DummyState()
+        headers = {}
+
+    current_auth_context.set(None)
+    ctx = await authenticate_and_rate_limit(DummyReq())
+    assert ctx.key_id == "k_cached"
+    assert current_auth_context.get() is dummy_auth
+
+
+@pytest.mark.asyncio
+async def test_gateway_stream_once_timeout_capped_by_budget():
+    """Verify that _stream_once caps client.stream timeout to remaining budget."""
+    from contextlib import asynccontextmanager
+
+    from app.config import Settings
+
+    gw = LLMGateway(Settings(llm_provider="pollinations"), use_runtime_store=False)
+    target = gw.resolve_target()
+    captured_timeout = None
+
+    @asynccontextmanager
+    async def mock_stream(*args, **kwargs):
+        nonlocal captured_timeout
+        captured_timeout = kwargs.get("timeout")
+        yield httpx.Response(200, text="data: {}\n\n")
+
+    dummy_client = type("Client", (), {"stream": mock_stream})()
+    gw._client = dummy_client
+
+    with use_budget(RequestBudget(0.35)):
+        try:
+            async for _ in gw._stream_once(
+                target,
+                [{"role": "user", "content": "hi"}],
+                "openai",
+                max_tokens=10,
+                temperature=0.1,
+            ):
+                pass
+        except Exception:
+            pass
+
+    assert captured_timeout is not None
+    assert captured_timeout <= 0.4
+
+
+@pytest.mark.asyncio
+async def test_gateway_stream_once_raises_llm_timeout_error():
+    """Verify that _stream_once converts httpx.TimeoutException into LLMTimeoutError."""
+    from contextlib import asynccontextmanager
+
+    from app.config import Settings
+    from app.llm.gateway import LLMTimeoutError
+
+    gw = LLMGateway(Settings(llm_provider="pollinations"), use_runtime_store=False)
+    target = gw.resolve_target()
+
+    @asynccontextmanager
+    async def timeout_stream(*args, **kwargs):
+        raise httpx.ReadTimeout("timed out")
+        yield
+
+    dummy_client = type("Client", (), {"stream": timeout_stream})()
+    gw._client = dummy_client
+
+    with pytest.raises(LLMTimeoutError):
+        async for _ in gw._stream_once(
+            target, [{"role": "user", "content": "hi"}], "openai", max_tokens=10, temperature=0.1
+        ):
+            pass
