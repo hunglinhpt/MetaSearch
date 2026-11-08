@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -160,6 +161,14 @@ async def _json(
                 ErrorCode.DEADLINE_EXCEEDED,
                 "Request deadline exceeded before answer completed",
                 status_code=504,
+            )
+        if (error or {}).get("code") == ErrorCode.OVERLOADED.value:
+            wait = math.ceil(float(error.get("retry_after_s") or 1))
+            raise MetaSearchError(
+                ErrorCode.OVERLOADED,
+                error.get("message", "LLM providers are cooling down"),
+                status_code=503,
+                headers={"Retry-After": str(max(1, wait))},
             )
         raise MetaSearchError(
             ErrorCode.INTERNAL,

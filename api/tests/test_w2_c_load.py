@@ -649,7 +649,9 @@ async def test_gateway_stream_once_timeout_capped_by_budget():
             pass
 
     assert captured_timeout is not None
-    assert captured_timeout <= 0.4
+    # Since wave 3 package D the gateway sends an httpx.Timeout; the read part follows the budget.
+    assert captured_timeout.read <= 0.4
+    assert captured_timeout.pool == 1.0
 
 
 @pytest.mark.asyncio

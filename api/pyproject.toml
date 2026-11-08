@@ -32,6 +32,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# TLS_TRUST_STORE=system: use the OS trust store (corporate proxies, antivirus TLS).
+tls = ["truststore>=0.9"]
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",

@@ -38,7 +38,7 @@ import httpx
 from app.config import Settings
 from app.core.logging import get_logger
 from app.core.metrics import LLM_COST, LLM_REQUESTS, LLM_TOKENS, LLM_TTFT, STAGE_DURATION
-from app.http import get_http_client
+from app.http import POOL_ACQUIRE_TIMEOUT_S, get_http_client
 from app.llm.providers import (
     LLMOverride,
     ResolvedLLMTarget,
@@ -86,6 +86,16 @@ class LLMTimeoutError(LLMError, TimeoutError):
     def __init__(self, message: str, *, provider_fault: bool = True) -> None:
         super().__init__(message)
         self.provider_fault = provider_fault
+
+
+class LLMUnavailableError(LLMError):
+    """Every candidate provider sits behind an open breaker: try again after a while."""
+
+    code = "overloaded"
+
+    def __init__(self, message: str, *, retry_after_s: float) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
 
 
 class LLMStatusError(LLMError):
@@ -367,6 +377,7 @@ class LLMGateway:
         attempts = 0
         last_error: LLMError | None = None
         seen_pairs: set[tuple[str, str]] = set()
+        cooling_s = 0.0  # longest wait among candidates skipped by an open breaker
 
         from app.core.budget import get_current_budget
 
@@ -380,10 +391,13 @@ class LLMGateway:
             cand_target, cand_model = candidates.popleft()
             pair = (cand_target.provider, cand_model)
             breaker = llm_breakers.get(f"llm:{cand_target.provider}")
-            if pair in seen_pairs or not breaker.allow():
+            if pair in seen_pairs:
+                continue
+            if not breaker.allow():
                 logger.info(
                     "llm_candidate_skipped", provider=cand_target.provider, model=cand_model
                 )
+                cooling_s = max(cooling_s, breaker.retry_at - time.monotonic())
                 continue
             seen_pairs.add(pair)
 
@@ -465,6 +479,11 @@ class LLMGateway:
                     raise
                 continue
 
+        if attempts == 0 and last_error is None and cooling_s > 0:
+            raise LLMUnavailableError(
+                "every LLM provider is cooling down after repeated failures",
+                retry_after_s=max(1.0, cooling_s),
+            )
         if emitted_any and last_error is not None:
             raise last_error
         raise last_error or LLMError("LLM call failed: attempt budget exhausted")
@@ -490,7 +509,7 @@ class LLMGateway:
         body = self._body_for(
             target, messages, model, max_tokens=max_tokens, temperature=temperature
         )
-        client = self._client or get_http_client()
+        client = self._client or get_http_client("llm")
         cancelled = False  # FIX1: tracks client disconnect for breaker
         timeout_s = self._settings.request_timeout_s
         from app.core.budget import get_current_budget
@@ -509,7 +528,7 @@ class LLMGateway:
                 url,
                 json=body,
                 headers=headers,
-                timeout=timeout_s,
+                timeout=httpx.Timeout(timeout_s, pool=POOL_ACQUIRE_TIMEOUT_S),
             ) as resp:
                 if resp.status_code >= 400:
                     detail = await _read_limited(resp)

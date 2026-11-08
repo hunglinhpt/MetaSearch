@@ -16,6 +16,9 @@ from typing import Literal
 import httpx
 
 from app.config import get_settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 PoolName = Literal["search", "scrape", "llm", "internal"]
 
@@ -25,6 +28,9 @@ _LIMITS: dict[PoolName, httpx.Limits] = {
     "llm": httpx.Limits(max_connections=32, max_keepalive_connections=16),
     "internal": httpx.Limits(max_connections=16, max_keepalive_connections=8),
 }
+
+# Waiting for a free connection is our own congestion, never worth the request timeout.
+POOL_ACQUIRE_TIMEOUT_S = 1.0
 
 _ssl_context: ssl.SSLContext | None = None
 _pools: dict[PoolName, httpx.AsyncClient] = {}
@@ -41,6 +47,11 @@ def get_ssl_context() -> ssl.SSLContext:
 
                 _ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             except (ImportError, AttributeError):
+                logger.warning(
+                    "tls_trust_store_unavailable",
+                    detail="TLS_TRUST_STORE=system needs the 'tls' extra (truststore); "
+                    "using Python's default trust store",
+                )
                 _ssl_context = ssl.create_default_context()
         else:
             try:
@@ -63,8 +74,7 @@ def get_http_client(pool: PoolName = "internal") -> httpx.AsyncClient:
         settings = get_settings()
         limits = _LIMITS.get(pool, _LIMITS["internal"])
         ctx = get_ssl_context()
-        # pool=1.0 ensures fast failure on pool exhaustion
-        timeout = httpx.Timeout(settings.request_timeout_s, pool=1.0)
+        timeout = httpx.Timeout(settings.request_timeout_s, pool=POOL_ACQUIRE_TIMEOUT_S)
         _pools[pool] = httpx.AsyncClient(
             headers={"User-Agent": settings.user_agent},
             follow_redirects=False,

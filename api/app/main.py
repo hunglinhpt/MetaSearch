@@ -59,6 +59,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.db.bootstrap import ensure_schema
 
         await ensure_schema()
+    from app.http import get_ssl_context
+
+    get_ssl_context()  # build it now: lazily it cost the first request ~250 ms
+
     from app.orchestration.persist_queue import get_persist_queue
 
     await get_persist_queue().start()

@@ -11,15 +11,31 @@ import asyncio
 import contextlib
 import json
 import platform
+import tempfile
 import time
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 18765
 DEFAULT_UPSTREAM_PORT = 18766
+
+
+async def _check_token(client: httpx.AsyncClient, api_url: str) -> None:
+    """Only measure the bench server this machine started on that port (scripts/perf/server.py)."""
+    port = urlsplit(api_url).port
+    expected_file = Path(tempfile.gettempdir()) / f"metasearch_bench_{port}.token"
+    expected = expected_file.read_text(encoding="ascii").strip() if expected_file.exists() else None
+    got = (await client.get(f"{api_url}/__rss")).json().get("token")
+    if not expected or got != expected:
+        raise RuntimeError(
+            f"{api_url} is not the bench server started by scripts/perf/server.py "
+            "(token mismatch); refusing to measure it"
+        )
 
 
 async def wait_ready(api_url: str, max_attempts: int = 120, delay_s: float = 0.25) -> None:
@@ -32,6 +48,7 @@ async def wait_ready(api_url: str, max_attempts: int = 120, delay_s: float = 0.2
                     if resp_meta.status_code == 200:
                         data = resp_meta.json()
                         app_name = data.get("name")
+                        await _check_token(client, api_url)
                         if app_name != "MetaSearch AI":
                             raise RuntimeError(
                                 f"Foreign service on {api_url}: "

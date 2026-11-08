@@ -1035,7 +1035,13 @@ class AnswerPipeline:
                     usage.output_tokens += delta.usage.output_tokens
         except LLMError as exc:
             logger.warning("llm_stream_failed", error=str(exc)[:200])
-            yield ("error", {"code": "internal", "message": str(exc)[:200]})
+            error: dict[str, object] = {
+                "code": getattr(exc, "code", "internal"),
+                "message": str(exc)[:200],
+            }
+            if getattr(exc, "retry_after_s", None) is not None:
+                error["retry_after_s"] = round(float(exc.retry_after_s), 1)
+            yield ("error", error)
             return
         record_usage(model, usage)
         # DAT-07: a "length" cut-off is not a complete answer.

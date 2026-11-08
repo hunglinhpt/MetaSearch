@@ -19,10 +19,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import secrets
 import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 
 def get_current_rss_mb() -> float:
@@ -74,11 +76,24 @@ def get_current_rss_mb() -> float:
     return 0.0
 
 
+# A random token per server start. load.py refuses to measure a server whose /__rss does
+# not return the token this server wrote next to its port, so it never benchmarks a
+# stray process that happens to hold the port.
+BENCH_TOKEN = secrets.token_hex(16)
+
+
+def token_path(port: int) -> Path:
+    return Path(tempfile.gettempdir()) / f"metasearch_bench_{port}.token"
+
+
 def setup_env(profile: str, upstream_url: str) -> None:
     tmp = tempfile.mkdtemp(prefix="ms_bench_")
     env = {
         "ENVIRONMENT": "dev",
         "LOG_LEVEL": "ERROR",
+        # Every fake page lives on one host, so the per-domain cap (docs/10 section 2) would
+        # throttle the whole bench instead of modelling real traffic.
+        "SCRAPE_PER_DOMAIN_CONCURRENCY": "64",
         "SEARXNG_URL": upstream_url,
         "SEARXNG_TIMEOUT_S": "3",
         "CRAWL4AI_URL": "http://127.0.0.1:1",
@@ -208,8 +223,9 @@ def main() -> None:
 
     @fastapp.get("/__rss", include_in_schema=False)
     async def rss() -> JSONResponse:
-        return JSONResponse({"rss_mb": round(get_current_rss_mb(), 2)})
+        return JSONResponse({"rss_mb": round(get_current_rss_mb(), 2), "token": BENCH_TOKEN})
 
+    token_path(args.port).write_text(BENCH_TOKEN, encoding="ascii")
     uvicorn.run(fastapp, host=args.host, port=args.port, log_level="error")
 
 
