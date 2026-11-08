@@ -14,14 +14,16 @@ logger = get_logger(__name__)
 
 # Concurrency limits and queue wait timeouts (docs/14-readiness/03-work-packages.md WP-07)
 # search: 64 concurrent, 1.0s queue wait
-# context: 16 concurrent, 2.0s queue wait
-# answer: 16 concurrent, 2.0s queue wait
+# context: 16 concurrent, 1.0s queue wait
+# answer: 16 concurrent, 1.0s queue wait
+# (1.0s, not 2.0s: under 100 concurrent callers the rejection itself adds ~0.5s,
+# and the plan bounds the whole rejection at 2s. B16 in status/W2-C.md.)
 # scrape: 16 concurrent, 1.0s queue wait
 # research: max_concurrent (default 5), 0.0s queue wait
 _TIER_CONFIG: dict[str, tuple[int, float]] = {
     "search": (64, 1.0),
-    "context": (16, 2.0),
-    "answer": (16, 2.0),
+    "context": (16, 1.0),
+    "answer": (16, 1.0),
     "scrape": (16, 1.0),
     "research": (5, 0.0),
 }
