@@ -15,6 +15,7 @@ from app.api import deps
 from app.config import get_settings
 from app.core import admission
 from app.core.auth import create_key, reset_rate_limit_windows
+from app.core.errors import MetaSearchError
 from app.core.metrics import REGISTRY
 from app.db.bootstrap import ensure_schema
 from app.db.session import dispose_engine
@@ -328,3 +329,71 @@ def test_heading_inside_delimiter():
     )
     rendered = render_context([(1, chunk)])
     assert rendered.index("<<<") < rendered.index(marker)
+
+
+async def test_monitor_exports_every_pool_and_stops_on_shutdown():
+    async with app.router.lifespan_context(app):
+        await asyncio.sleep(0.8)
+        assert any(t.get_name() == "runtime-monitor" for t in asyncio.all_tasks())
+    for pool in ("search", "scrape", "llm", "internal"):
+        assert REGISTRY.get_sample_value("metasearch_http_pool_in_use", {"pool": pool}) is not None
+    await asyncio.sleep(0)
+    assert not any(t.get_name() == "runtime-monitor" and not t.done() for t in asyncio.all_tasks())
+
+
+async def test_cache_events_have_no_l1_duplicate():
+    from app.cache import CacheClient
+
+    before = _sum("metasearch_cache_events_total", kind="L1")
+    cache = CacheClient(None)
+    await cache.set_json("w3a:key", {"a": 1}, ttl_s=60)
+    await cache.get_json("w3a:key")
+    await cache.get_json("w3a:missing")
+    assert _sum("metasearch_cache_events_total", kind="L1") == before
+
+
+async def test_key_limit_rejection_counted(monkeypatch):
+    from app.core.auth import AuthContext, current_auth_context
+
+    before = _value("metasearch_admission_rejected_total", route_class="search")
+    token = current_auth_context.set(
+        AuthContext(key_id="w3a-k", name=None, role="user", rate_limit_rpm=0, max_concurrent=1)
+    )
+    try:
+        held = await admission.acquire_admit_slot("search")
+        with pytest.raises(MetaSearchError):
+            await admission.acquire_admit_slot("search")
+        held.release()
+    finally:
+        current_auth_context.reset(token)
+    assert _value("metasearch_admission_rejected_total", route_class="search") == before + 1
+
+
+async def test_llm_timeout_counted_with_its_outcome():
+    def slow(request):
+        raise httpx.ReadTimeout("slow", request=request)
+
+    _install([_Adapter("good")], llm_handler=slow)
+    before = _sum("metasearch_llm_requests_total", provider="custom", outcome="timeout")
+    async with _client() as c:
+        await c.post("/v1/answer", json={"query": f"postgres llm timeout {uuid.uuid4().hex}"})
+    assert _sum("metasearch_llm_requests_total", provider="custom", outcome="timeout") > before
+
+
+async def test_context_records_scrape_stage():
+    _install([_Adapter("good")])
+    before = _value("metasearch_stage_duration_seconds_count", stage="scrape")
+    async with _client() as c:
+        r = await c.post("/v1/context", json={"query": f"postgres ctx stage {uuid.uuid4().hex}"})
+    assert r.status_code == 200, r.text
+    assert _value("metasearch_stage_duration_seconds_count", stage="scrape") == before + 1
+
+
+def test_breaker_half_open_exported_by_allow():
+    from app.retrieval.health import EngineBreakerRegistry, Outcome
+
+    reg = EngineBreakerRegistry(threshold=1)
+    reg.record("w3a-half", Outcome.UPSTREAM_ERROR, now=0.0)
+    assert _value("metasearch_breaker_state", engine="w3a-half") == 2
+    assert reg.allow("w3a-half", now=10_000.0)
+    assert _value("metasearch_breaker_state", engine="w3a-half") == 1

@@ -207,8 +207,13 @@ def process_rss_bytes() -> float | None:
 def _sample_http_pools() -> None:
     # httpx exposes no public pool statistics; read the transport's pool, never fail on it.
     try:
+        from typing import get_args
+
         from app import http as http_mod
 
+        for name in get_args(http_mod.PoolName):
+            if name not in http_mod._pools:
+                HTTP_POOL_IN_USE.labels(pool=name).set(0)  # not created yet: nothing in use
         for name, client in list(http_mod._pools.items()):
             pool = getattr(getattr(client, "_transport", None), "_pool", None)
             connections = list(getattr(pool, "connections", []) or [])
