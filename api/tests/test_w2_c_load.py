@@ -959,3 +959,32 @@ async def test_search_engine_error_with_timeout_stays_no_results():
         r = await c.post("/v1/search", json={"query": "q", "timeout_ms": 2000})
     assert r.status_code == 503, r.text
     assert r.json()["error"]["code"] == "no_results"
+
+
+@pytest.mark.asyncio
+async def test_answer_overload_refused_within_queue_wait():
+    """Overflow waits at most the 1s queue, so the whole refusal fits the 2s bound under load."""
+    reset_admission()
+
+    class HangPipe:
+        async def run(self, params, **kw):
+            await asyncio.sleep(10)
+            yield ("done", {"answer_id": "x"})
+
+    deps.get_answer_pipeline = lambda: HangPipe()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        held = [
+            asyncio.create_task(c.post("/v1/answer", json={"query": "q", "stream": False}))
+            for _ in range(16)
+        ]
+        await asyncio.sleep(0.1)
+        start = time.perf_counter()
+        r = await c.post("/v1/answer", json={"query": "overflow", "stream": True})
+        took = time.perf_counter() - start
+        for t in held:
+            t.cancel()
+        await asyncio.gather(*held, return_exceptions=True)
+
+    assert r.status_code == 503
+    assert took < 1.5, f"overflow waited {took:.2f}s in the queue"

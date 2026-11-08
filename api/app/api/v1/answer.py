@@ -110,7 +110,6 @@ async def answer(request: AnswerRequest):
                 _params(request),
                 _extra_run_kwargs(request),
                 budget=budget,
-                slot=slot,
                 max_s=max_s,
             ),
             slot=slot,
@@ -184,7 +183,6 @@ async def _sse(
     run_kwargs: dict[str, Any],
     *,
     budget: RequestBudget | None = None,
-    slot: Any | None = None,
     max_s: float | None = None,
 ) -> AsyncIterator[dict]:
     """Bridge pipeline events + mid-flight engine_done callbacks into SSE."""
@@ -239,5 +237,4 @@ async def _sse(
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        if slot is not None:
-            slot.release()
+        # The admission slot is released by _SlotStreamResponse once the response ends.
