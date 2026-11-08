@@ -136,7 +136,8 @@ async def acquire_admit_slot(
             status_code=503,
             headers={"Retry-After": str(retry_after)},
         ) from None
-    except Exception:
+    except BaseException:
+        # Includes cancellation while queued: the key permit must not outlive the caller.
         for r in reversed(releases):
             with contextlib.suppress(Exception):
                 r()

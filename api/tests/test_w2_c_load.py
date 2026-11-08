@@ -137,6 +137,19 @@ def _install_stack(adapters, gateway=None):
     return gw
 
 
+# The real answer pipeline factory, captured before any test swaps it for a fake.
+_REAL_GET_ANSWER_PIPELINE = deps.get_answer_pipeline
+_DEPS_SWAPPED = (
+    "get_engine_store",
+    "build_adapters",
+    "get_scraper",
+    "get_gateway",
+    "get_embedder",
+    "get_reranker",
+    "get_answer_pipeline",
+)
+
+
 @pytest.fixture(autouse=True)
 async def setup_w2_c_env(tmp_path, monkeypatch):
     db_file = tmp_path / "w2_c.db"
@@ -149,7 +162,11 @@ async def setup_w2_c_env(tmp_path, monkeypatch):
     reset_admission()
     reset_rate_limit_windows()
     await ensure_schema()
+    saved = {name: getattr(deps, name) for name in _DEPS_SWAPPED}
     yield
+    for name, value in saved.items():
+        setattr(deps, name, value)
+    deps.reset_pipelines()
     await dispose_engine()
     get_settings.cache_clear()
 
@@ -686,3 +703,259 @@ async def test_authenticate_loads_max_concurrent_from_db():
     key, _ = await create_key("custom_conc", max_concurrent=2)
     ctx = await authenticate(key)
     assert ctx.max_concurrent == 2
+
+
+# --------------------------------------------------------------------------------------
+# Audit 17 fixes: budget cuts are not provider faults, stream ceiling, slot release paths.
+
+
+def _slow_first_byte(need_s: float):
+    """Fake LLM upstream that needs ``need_s`` before its first byte and honours read timeouts."""
+    calls = {"n": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        limit = (request.extensions.get("timeout") or {}).get("read") or 30
+        if limit < need_s:
+            await asyncio.sleep(limit)
+            raise httpx.ReadTimeout("slow", request=request)
+        await asyncio.sleep(need_s)
+        body = 'data: {"choices":[{"delta":{"content":"Answer [1]."}}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    return handler, calls
+
+
+def _custom_llm_env(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "custom")
+    monkeypatch.setenv("CUSTOM_LLM_BASE_URL", "https://llm.test.invalid/v1")
+    monkeypatch.setenv("CUSTOM_LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_short_budget_callers_keep_llm_breaker_closed(monkeypatch):
+    """Callers whose own timeout_ms cuts the LLM call must not open the breaker for others."""
+    _custom_llm_env(monkeypatch)
+    handler, calls = _slow_first_byte(2.0)
+    llm_breakers._breakers.clear()
+    gw = LLMGateway(
+        get_settings(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        use_runtime_store=False,
+    )
+    _install_stack([_MockAdapter("fake", [_raw("https://example.com/1")])], gateway=gw)
+    deps.get_answer_pipeline = _REAL_GET_ANSWER_PIPELINE
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", timeout=30) as c:
+        for i in range(6):
+            r = await c.post(
+                "/v1/answer", json={"query": f"short {i}", "stream": False, "timeout_ms": 1000}
+            )
+            assert r.status_code == 504, r.text
+        r = await c.post("/v1/answer", json={"query": "normal caller", "stream": False})
+
+    states = {k: b.state for k, b in llm_breakers._breakers.items()}
+    assert all(s == "closed" for s in states.values()), states
+    assert r.status_code == 200, r.text
+    assert calls["n"] == 7
+
+
+@pytest.mark.asyncio
+async def test_long_llm_timeout_still_counts_against_provider():
+    """A provider that had its full window and still timed out is a provider fault."""
+    from app.config import Settings
+
+    handler, _ = _slow_first_byte(60.0)
+    settings = Settings(llm_provider="pollinations", request_timeout_s=0.2)
+    llm_breakers._breakers.clear()
+    gw = LLMGateway(
+        settings,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        use_runtime_store=False,
+    )
+    with pytest.raises(LLMError):
+        async for _ in gw.stream([{"role": "user", "content": "hi"}]):
+            pass
+    counted = [b.consecutive_timeouts for b in llm_breakers._breakers.values()]
+    assert counted and max(counted) >= 1, counted
+
+
+@pytest.mark.asyncio
+async def test_gateway_stops_calling_when_budget_runs_out(monkeypatch):
+    """With five candidates and a spent budget, the gateway makes no further upstream calls."""
+    from app.config import Settings
+
+    calls = {"n": 0}
+
+    async def slow_fail(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        await asyncio.sleep(0.3)
+        return httpx.Response(500, json={"error": "down"})
+
+    llm_breakers._breakers.clear()
+    gw = LLMGateway(
+        Settings(llm_provider="pollinations", llm_max_attempts=5),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(slow_fail)),
+        use_runtime_store=False,
+    )
+    target = gw.resolve_target()
+    five = [(target, f"model-{i}") for i in range(5)]
+    monkeypatch.setattr(gw, "_candidates", lambda *a, **k: list(five))
+
+    with use_budget(RequestBudget(0.25)), pytest.raises(LLMError):
+        async for _ in gw.stream([{"role": "user", "content": "hi"}]):
+            pass
+    assert calls["n"] == 1, f"gateway kept calling after the budget ran out: {calls['n']}"
+
+    calls["n"] = 0
+    llm_breakers._breakers.clear()
+    with pytest.raises(LLMError):
+        async for _ in gw.stream([{"role": "user", "content": "hi"}]):
+            pass
+    assert calls["n"] == 3, f"without a budget, calls stop at the breaker threshold: {calls['n']}"
+
+
+@pytest.mark.asyncio
+async def test_sse_stream_ceiling_ends_stream_and_frees_slot(monkeypatch):
+    """A stream that drips forever is ended with DEADLINE_EXCEEDED and gives its slot back."""
+    monkeypatch.setenv("ANSWER_STREAM_MAX_S", "0.5")
+    get_settings.cache_clear()
+    reset_admission()
+    _install_stack([_MockAdapter("fake", [_raw("https://example.com/1")])])
+
+    class Drip:
+        async def run(self, params, **kw):
+            while True:
+                await asyncio.sleep(0.1)
+                yield ("token", {"t": "."})
+
+    deps.get_answer_pipeline = lambda: Drip()
+    transport = httpx.ASGITransport(app=app)
+    start = time.perf_counter()
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", timeout=10) as c:
+        r = await c.post("/v1/answer", json={"query": "q", "stream": True})
+    took = time.perf_counter() - start
+
+    assert r.status_code == 200
+    assert "event: error" in r.text and "deadline_exceeded" in r.text, r.text[-300:]
+    assert took < 3.0, f"stream ran {took:.1f}s past its 0.5s ceiling"
+    await asyncio.sleep(0.05)
+    sem = await admission.get_tier_semaphore("answer", 16)
+    assert sem._value == 16
+
+
+@pytest.mark.asyncio
+async def test_json_answer_ceiling_returns_504(monkeypatch):
+    """The JSON answer has the same total ceiling and maps it to DEADLINE_EXCEEDED."""
+    monkeypatch.setenv("ANSWER_STREAM_MAX_S", "0.3")
+    get_settings.cache_clear()
+    reset_admission()
+    _install_stack([_MockAdapter("fake", [_raw("https://example.com/1")])])
+
+    class Hang:
+        async def run(self, params, **kw):
+            await asyncio.sleep(10)
+            yield ("done", {"answer_id": "x"})
+
+    deps.get_answer_pipeline = lambda: Hang()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", timeout=10) as c:
+        r = await c.post("/v1/answer", json={"query": "q", "stream": False, "timeout_ms": 30000})
+    assert r.status_code == 504, r.text
+    assert r.json()["error"]["code"] == "deadline_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_sse_slot_released_when_stream_never_starts():
+    """If sending the response head fails, the generator never runs; the slot still returns."""
+    import json as _json
+
+    reset_admission()
+    _install_stack([_MockAdapter("fake", [_raw("https://example.com/1")])])
+
+    class Pipe:
+        async def run(self, params, **kw):
+            yield ("done", {"answer_id": "x"})
+
+    deps.get_answer_pipeline = lambda: Pipe()
+    body = _json.dumps({"query": "q", "stream": True}).encode()
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/answer",
+        "raw_path": b"/v1/answer",
+        "query_string": b"",
+        "root_path": "",
+        "client": ("127.0.0.1", 1),
+        "server": ("test", 80),
+        "headers": [(b"content-type", b"application/json"), (b"host", b"test")],
+        "state": {},
+    }
+    failures = 0
+    for _ in range(20):
+        state = {"sent": False}
+
+        async def receive(state=state):
+            if not state["sent"]:
+                state["sent"] = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                raise OSError("client gone")
+
+        try:
+            await app(dict(scope), receive, send)
+        except Exception:
+            failures += 1
+
+    assert failures == 20
+    sem = await admission.get_tier_semaphore("answer", 16)
+    assert sem._value == 16, f"slots leaked: {sem._value}/16 free"
+
+
+@pytest.mark.asyncio
+async def test_key_permit_released_when_cancelled_in_queue():
+    """A caller cancelled while queued for the tier gives its key permit back."""
+    from app.core.auth import AuthContext, current_auth_context
+
+    reset_admission()
+    token = current_auth_context.set(
+        AuthContext(key_id="k1", name=None, role="user", rate_limit_rpm=0, max_concurrent=2)
+    )
+    try:
+        held = await admission.acquire_admit_slot("answer", custom_limit=1, custom_wait_s=5.0)
+        waiter = asyncio.create_task(
+            admission.acquire_admit_slot("answer", custom_limit=1, custom_wait_s=5.0)
+        )
+        await asyncio.sleep(0.05)
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+        held.release()
+        assert admission._key_semaphores["k1"]._value == 2
+    finally:
+        current_auth_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_search_engine_error_with_timeout_stays_no_results():
+    """One engine erroring and one cut by time, with budget left, is NO_RESULTS, not a deadline."""
+    reset_admission()
+    _install_stack(
+        [
+            _MockAdapter("broken", fail=True),
+            _MockAdapter("slow", [_raw("https://example.com/s")], delay=10.0),
+        ]
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", timeout=10) as c:
+        r = await c.post("/v1/search", json={"query": "q", "timeout_ms": 2000})
+    assert r.status_code == 503, r.text
+    assert r.json()["error"]["code"] == "no_results"

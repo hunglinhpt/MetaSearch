@@ -200,6 +200,12 @@ class Settings(BaseSettings):
 
     # --- timeouts / limits ------------------------------------------------
     request_timeout_s: float = 30.0
+    # An LLM call cut short by the request budget only counts against the provider's breaker
+    # when the provider had at least this long to answer; shorter cuts are our own deadline.
+    llm_breaker_min_timeout_s: float = 5.0
+    # Hard ceiling for one streamed answer, first byte to last, so a slow drip cannot hold
+    # an admission slot forever.
+    answer_stream_max_s: float = 120.0
     searxng_timeout_s: float = 3.0
     # Overall budget for the fan-out stage before falling back to partial results.
     search_fanout_budget_s: float = 5.0

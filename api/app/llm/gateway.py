@@ -77,7 +77,15 @@ class LLMError(Exception):
 
 
 class LLMTimeoutError(LLMError, TimeoutError):
-    """Raised when an LLM upstream call times out."""
+    """Raised when an LLM upstream call times out.
+
+    ``provider_fault`` is False when the request budget cut the call shorter than the
+    provider deserves: that timeout is our deadline, not a sign the provider is unhealthy.
+    """
+
+    def __init__(self, message: str, *, provider_fault: bool = True) -> None:
+        super().__init__(message)
+        self.provider_fault = provider_fault
 
 
 class LLMStatusError(LLMError):
@@ -360,7 +368,15 @@ class LLMGateway:
         last_error: LLMError | None = None
         seen_pairs: set[tuple[str, str]] = set()
 
+        from app.core.budget import get_current_budget
+
+        req_budget = get_current_budget()
         while candidates and attempts < max_attempts:
+            if req_budget is not None and req_budget.is_expired():
+                # No time left for this request: another call could only time out and
+                # would be charged to a provider that did nothing wrong.
+                logger.info("llm_budget_exhausted", attempts=attempts)
+                break
             cand_target, cand_model = candidates.popleft()
             pair = (cand_target.provider, cand_model)
             breaker = llm_breakers.get(f"llm:{cand_target.provider}")
@@ -414,22 +430,18 @@ class LLMGateway:
                 if exc.retry_after_s is not None:
                     seen_pairs.discard(pair)  # allow the same pair again
                     candidates.appendleft((cand_target, cand_model))
-                if attempts < max_attempts:
+                if candidates and attempts < max_attempts:
                     sleep_s = min(exc.retry_after_s or 0.5, 30.0)
-                    from app.core.budget import get_current_budget
-
-                    req_budget = get_current_budget()
                     if req_budget is not None:
-                        if req_budget.is_expired():
-                            continue
                         sleep_s = min(sleep_s, max(0.0, req_budget.remaining()))
                     if sleep_s > 0:
                         await asyncio.sleep(sleep_s)
             except LLMError as exc:
-                is_timeout = isinstance(exc, (TimeoutError, LLMTimeoutError)) or isinstance(
-                    getattr(exc, "__cause__", None), (TimeoutError, httpx.TimeoutException)
-                )
-                breaker.record(Outcome.TIMEOUT if is_timeout else Outcome.UPSTREAM_ERROR)
+                if isinstance(exc, LLMTimeoutError):
+                    outcome = Outcome.TIMEOUT if exc.provider_fault else Outcome.CANCELLED
+                else:
+                    outcome = Outcome.UPSTREAM_ERROR
+                breaker.record(outcome)
                 last_error = exc
                 logger.warning(
                     "llm_candidate_failed",
@@ -473,8 +485,11 @@ class LLMGateway:
 
         budget = get_current_budget()
         if budget is not None:
-            rem = budget.remaining()
-            timeout_s = max(0.05, min(timeout_s, rem))
+            timeout_s = max(0.05, min(timeout_s, budget.remaining()))
+        # A timeout shorter than this is our deadline, not the provider's failure.
+        provider_fault = timeout_s >= min(
+            self._settings.request_timeout_s, self._settings.llm_breaker_min_timeout_s
+        )
 
         try:
             async with client.stream(
@@ -541,7 +556,9 @@ class LLMGateway:
             cancelled = True
             raise
         except (httpx.TimeoutException, TimeoutError) as exc:
-            raise LLMTimeoutError(f"{target.provider} timeout: {type(exc).__name__}") from exc
+            raise LLMTimeoutError(
+                f"{target.provider} timeout: {type(exc).__name__}", provider_fault=provider_fault
+            ) from exc
         except httpx.HTTPError as exc:
             raise LLMError(f"{target.provider} transport error: {type(exc).__name__}") from exc
         finally:

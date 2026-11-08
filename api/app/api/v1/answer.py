@@ -22,6 +22,25 @@ from app.orchestration.pipeline import Event, SearchParams
 router = APIRouter(tags=["answer"])
 
 
+class _SlotStreamResponse(EventSourceResponse):
+    """SSE response that gives its admission slot back however the response ends.
+
+    The generator's own ``finally`` only runs once the generator has started. If sending
+    the response head fails first, the generator never runs, so the response releases the
+    slot as well. ``AdmissionSlot.release`` is idempotent.
+    """
+
+    def __init__(self, content: Any, *, slot: Any) -> None:
+        super().__init__(content)
+        self._slot = slot
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._slot.release()
+
+
 def _params(request: AnswerRequest) -> SearchParams:
     return SearchParams(
         query=request.query,
@@ -67,17 +86,36 @@ async def answer(request: AnswerRequest):
         )
 
     budget = create_budget_for_route("answer", timeout_ms=request.timeout_ms)
+    max_s = settings.answer_stream_max_s
     if not request.stream:
         async with admit("answer"):
             with use_budget(budget):
-                return await _json(_params(request), _extra_run_kwargs(request))
+                deadline = asyncio.timeout(max_s)
+                try:
+                    async with deadline:
+                        return await _json(_params(request), _extra_run_kwargs(request))
+                except TimeoutError:
+                    if deadline.expired():
+                        raise MetaSearchError(
+                            ErrorCode.DEADLINE_EXCEEDED,
+                            f"Answer did not finish within {max_s:g}s",
+                            status_code=504,
+                        ) from None
+                    raise
 
     slot = await acquire_admit_slot("answer")
     try:
-        return EventSourceResponse(
-            _sse(_params(request), _extra_run_kwargs(request), budget=budget, slot=slot)
+        return _SlotStreamResponse(
+            _sse(
+                _params(request),
+                _extra_run_kwargs(request),
+                budget=budget,
+                slot=slot,
+                max_s=max_s,
+            ),
+            slot=slot,
         )
-    except Exception:
+    except BaseException:
         slot.release()
         raise
 
@@ -147,6 +185,7 @@ async def _sse(
     *,
     budget: RequestBudget | None = None,
     slot: Any | None = None,
+    max_s: float | None = None,
 ) -> AsyncIterator[dict]:
     """Bridge pipeline events + mid-flight engine_done callbacks into SSE."""
     queue: asyncio.Queue[Event | None] = asyncio.Queue()
@@ -175,9 +214,23 @@ async def _sse(
             await queue.put(None)
 
     task = asyncio.create_task(producer())
+    loop = asyncio.get_running_loop()
+    deadline = None if max_s is None else loop.time() + max_s
     try:
         while True:
-            event = await queue.get()
+            if deadline is None:
+                event = await queue.get()
+            else:
+                try:
+                    event = await asyncio.wait_for(queue.get(), max(0.0, deadline - loop.time()))
+                except TimeoutError:
+                    # Total stream ceiling: end the stream with an error the client can act on.
+                    data = {
+                        "code": ErrorCode.DEADLINE_EXCEEDED.value,
+                        "message": f"Answer stream exceeded {max_s:g}s",
+                    }
+                    yield {"event": "error", "data": json.dumps(data)}
+                    break
             if event is None:
                 break
             name, data = event
