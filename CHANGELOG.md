@@ -4,6 +4,68 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [2.0.0] — 2026-11-09 — Readiness cho hệ thống bên ngoài: an toàn, liêm chính dữ liệu, tải, quan sát, vận hành, CI
+
+Bản này gom chương trình readiness (đợt 1-4). Bản MAJOR vì có thay đổi phá vỡ tương thích ở REST API (xem mục đầu). Mọi số đo nêu dưới đây là số đo thật trên harness `api/scripts/perf/` hoặc trên máy chạy Lite; mục nào chưa đo được ghi rõ.
+
+### Breaking / thay đổi hành vi
+- **`/v1/context`** mặc định chỉ trả `chunks` và `sources`; `context_md` và các khối khác phải xin qua `include`.
+- **BYO LLM tắt mặc định** (`LLM_BYO_ENABLED=false`): request chỉ định `base_url` riêng bị từ chối, trừ host trong `LLM_BYO_ALLOWED_HOSTS`. Khóa trong env hoặc runtime không bao giờ gửi tới `base_url` lấy từ request. Lỗi LLM không còn trả body của upstream.
+- **Chỉ admin:** `/v1/meta/full`, `GET /v1/llm/config`, `/v1/llm/dream-rsi/state`, test LLM với endpoint tùy chỉnh; `/docs`, `/openapi.json` chỉ mở cho loopback hoặc admin; `/metrics` cần key khi bật auth.
+- **Cách ly theo key:** key chỉ đọc được query, answer, research job của chính nó (sai chủ trả 404); bản ghi không chủ chỉ admin thấy.
+- **SuperAgent tắt mặc định** (`SUPERAGENT_ENABLED=false`); không còn artifact viết sẵn hay số token giả khi thiếu LLM.
+- **Dữ liệu tài chính:** bỏ ước lượng và bảng tĩnh khỏi runtime. Z/M/F-Score chỉ tính khi có BCTC thật, trường thiếu là `null`; upstream chết thì trả rỗng, không trả số cũ; không có mẫu hình mặc định.
+- **Crawler tự xưng `MetaSearchBot`** như khi đọc robots.txt, bỏ header giả trình duyệt.
+- **503 `OVERLOADED` kèm `Retry-After`** khi quá tải hoặc khi mọi nhà cung cấp LLM đang nghỉ; rate limit có trọng số (answer 5, context 3, search 1, research 20).
+
+### Added
+- `include_domains`, `exclude_domains` cho search, context, answer; `complete=false` khi lọc hết.
+- Mốc dữ liệu `source_url`, `data_kind`, `fetched_at`, `published_at`, `as_of`, `age_s` cho kết quả, source, chunk; `marker_valid` ở `/v1/citations/validate`; MCP thêm `research_status`.
+- Hợp đồng tích hợp: `docs/15-integration-guide.md`, `api/scripts/contract_check.py`, snapshot OpenAPI có test.
+- Ngân sách và deadline theo request, admission control, quorum fan-out, cắt sớm scrape, `max_concurrent` theo key.
+- Gộp request trùng (single-flight) cho answer, search, scrape; negative cache theo nguyên nhân lỗi.
+- Lớp HTTP dùng chung (pool `search`, `scrape`, `llm`, `internal`), SSL context dựng một lần; extra `tls` dùng trust store của hệ điều hành.
+- Việc CPU nặng (`extract_static`, chunk, score, rerank ONNX) chạy ở thread, không trên event loop.
+- Circuit breaker cho engine, LLM provider và Redis; fail-open khi mọi engine bị ngắt.
+- Metric: stage, LLM, scrape, admission, breaker, loop lag, RSS, pool HTTP, hàng đợi persist; alert trong `deploy/prometheus/alerts.yml` (lỗi 5xx, answer chậm, loop lag, breaker mở, hàng đợi persist đầy, ghi bị bỏ, ghi lỗi).
+- Ghi DB qua hàng đợi có giới hạn; tắt êm không mất answer đã trả.
+- Retention theo lô, đúng thứ tự khóa ngoại; Lite tự chạy; lệnh `metasearch retention [--dry-run]`.
+- `/readyz`: 503 khi không còn engine dùng được hoặc đang tắt; probe có giới hạn thời gian; `schema_version` thật.
+- Lite trên Windows như một dịch vụ: `scripts/windows/metasearch-lite.ps1` (start, stop, restart, status, check, xoay log), `install-task.ps1` (Task Scheduler), `measure-lite.ps1`.
+- Harness đo `api/scripts/perf/` (upstream giả, server thật có token, load driver).
+- CI: lockfile `uv`, mypy cho `app/core` và `app/api`, coverage tối thiểu 84%, gitleaks toàn lịch sử, promtool, parse script Windows, `npm audit`, test MCP với SDK thật; workflow nightly (integration với compose, perf smoke, live smoke).
+
+### Fixed
+- SSE của deep research không còn đóng băng khi vượt bộ đệm sự kiện; có sự kiện `gap` cho subscriber chậm.
+- Engine duy nhất lỗi rồi hồi phục thì tìm kiếm tự chạy lại; không ghi DB trên đường nóng.
+- Lite: `alembic upgrade head` lúc khởi động (trước đây `create_all`, DB cũ không nhận index và migration dữ liệu); DB cũ được bổ sung rồi `stamp head`.
+- Lite: `/readyz` báo `ready` khi không cấu hình Redis (trước đây luôn `degraded`); Redis im lặng không còn làm probe hết giờ.
+- `-EnvFile` của script Windows do app đọc bằng cùng bộ parse với `api/.env`: trước đây chú thích cuối dòng thành giá trị (ví dụ `JINA_API_KEY`), giá trị rỗng bị xóa nên mặc định `redis://redis:6379` quay lại.
+- `measure-lite.ps1` đo và kill đúng tiến trình server (trước đây đo launcher của venv, khoảng 5 MB).
+- Gauge độ sâu hàng đợi persist giảm khi consumer lấy ra (trước đây chỉ tăng).
+- Monitor RSS không còn import mỗi nhịp (từng làm treo lúc tắt); đọc RSS được trên macOS.
+- Extra `mcp` ghim `<2`: `mcp` 2.x đổi tên API làm `python -m app.mcp` lỗi.
+- Vá `postcss` (high) trong frontend.
+
+### Đo được (harness, upstream giả, Windows 11, 2026-11-09)
+| Kịch bản | Trước (1.3.1) | Bây giờ |
+|---|---|---|
+| Search 5 engine, c=1, p95 | 875 ms | 197 ms |
+| Search 5 engine, c=20 | 1,0 RPS, 100% lỗi | 16,7 RPS, 0% lỗi |
+| Lite context c=1, p95 | 6480 ms | 692 ms |
+| Lite context c=10 | 100% lỗi | 0% lỗi, p95 2923 ms |
+| Answer c=1, TTFT p95 | 1626 ms | 929 ms |
+| Answer c=15, TTFT p95 | chưa đo | 2862 ms, 0% lỗi |
+| Event loop stall tối đa khi search c=20 | 1324 ms (c=3) | 54 ms |
+
+Chưa đo: Postgres, Redis, crawl4ai, SearXNG thật; Linux; soak dài.
+
+### Sửa tài liệu
+- 1.3.1 ghi "nghiêm cấm ngụy tạo dữ liệu tài chính trong toàn bộ hệ thống" nhưng khi đó vẫn còn ước lượng ở ba lớp; bản này mới gỡ hết (mục Breaking).
+- Danh mục mã là 1.518 mã (`vn_tickers.json`), không phải "hơn 1,600".
+- Watchdog của SuperAgent là thử nghiệm và tắt mặc định.
+- `docs/08`: một tiến trình uvicorn (không phải `2×vCPU` worker); retention, alert, cache Lite mô tả đúng; `docs/11`: CI và eval mô tả đúng.
+
 ## [1.3.1] — 2026-11-02 — Financial Data Integrity, Real Market OHLCV & 3-Round Expert Audit
 
 ### Fixed & Hardened (Data Integrity & Grounding)

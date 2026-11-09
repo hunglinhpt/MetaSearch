@@ -10,7 +10,7 @@
 | **3 — Deep Research & MCP** | 5–6 | Deep research loop, `/v1/research`, MCP server 4 tools, auth + API keys, rate limit | Deep report 30–180s có 10+ citation; MCP chạy với Claude Desktop |
 | **4 — Hardening** | 7–8 | SSRF suite, k6 load test, observability (OTel+Prometheus+Langfuse), eval harness, docs hoàn thiện | KPI đạt (bảng §3), security checklist pass |
 | **5 — Institutional Release (v1.0.0)** | 9 | 5-Wave Deep Audit, BCTC Forensics theo ngành (CAMELS/Margin/BĐS), Quantitative Technicals, 19 Engines, 40 Golden Evals | 333 unit tests pass, 0 ruff/bandit issues, Next.js build clean |
-| **6 — Readiness cho hệ thống bên ngoài** | Đang làm | Bảo mật, liêm chính dữ liệu, tải, quan sát, vận hành và CI trước khi một hệ thống bên ngoài dùng thật; hợp đồng ở [15-integration-guide.md](15-integration-guide.md) |
+| **6 — Readiness cho hệ thống bên ngoài** | Xong phần repo này (v2.0.0); còn tích hợp thật ở phía hệ thống gọi tới và đo trên Postgres, Linux | Bảo mật, liêm chính dữ liệu, tải, quan sát, vận hành và CI trước khi một hệ thống bên ngoài dùng thật; hợp đồng ở [15-integration-guide.md](15-integration-guide.md) |
 
 ## 2. Task breakdown chi tiết
 

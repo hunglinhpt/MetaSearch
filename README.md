@@ -5,7 +5,7 @@
 Trạng thái: **v1.3.1 — Financial Data Integrity, Real Market OHLCV & Autonomous Super-Agent Engine**:
 - **Liêm Chính Dữ Liệu Tài Chính & Nguồn Công Khai Thực Tế (`v1.3.1`)**:
   - Loại bỏ triệt để 100% các chuỗi nến giả lập bằng hàm `sin/cos` (`_build_stock_ohlcv_series`, `_build_asset_fallback_series`), kiên quyết thực hiện nguyên tắc **Zero-Hallucination & Grounded Data**.
-  - Kết nối trực tiếp dữ liệu nến thật từ **VNDIRECT dchart TradingView Feed** cho hơn 1,600 mã chứng khoán Việt Nam (HSX, HNX, UPCOM) và chỉ số thị trường (`VNINDEX`, `VN30`).
+  - Kết nối trực tiếp dữ liệu nến thật từ **VNDIRECT dchart TradingView Feed** cho 1.518 mã chứng khoán Việt Nam (HSX, HNX, UPCOM; danh mục `app/retrieval/data/vn_tickers.json`, có ngày `as_of`) và chỉ số thị trường (`VNINDEX`, `VN30`).
   - Kết nối dữ liệu cơ bản thực tế từ **Simplize API** với thuật toán động `_build_dynamic_company_financials`.
   - Chuẩn hóa liêm chính mốc thời gian `published_at` theo ngày nến EOD thực tế và ngày cập nhật BCTC, nghiêm cấm ngụy tạo `datetime.now(UTC)`.
   - Bộ lọc `_VIET_STOCK_STOP_WORDS` ngăn chặn việc tự ý inject mã cổ phiếu vào các truy vấn thị trường chung.

@@ -6,7 +6,7 @@
 - Mọi test không gọi internet trừ khi đánh dấu `@pytest.mark.live` (chạy nightly, không chạy trong CI per-commit).
 - Fixtures: SearXNG local qua docker; HTML mẫu (fixtures/) cho extractor tests.
 
-## 2. Unit tests (pytest, target coverage ≥ 80% core)
+## 2. Unit tests (pytest; CI chặn khi coverage `app` < 84%)
 
 | Module | Test chính |
 |---|---|
@@ -46,15 +46,15 @@
 
 ## 6. Eval (chất lượng LLM) — xem chi tiết [09](09-observability-eval.md) §5
 
-- Golden set 50–100 query; nightly chạy RAGAS + citation accuracy; regression gate 3%.
+- Golden set 40 query, chạy tay (`--judge-faithfulness`). Chưa chạy nightly, chưa có RAGAS hay regression gate.
 
 ## 7. CI pipeline (GitHub Actions)
 
 ```yaml
 jobs:
-  lint:        ruff check + mypy (api) / eslint + tsc (frontend)
+  lint:        ruff check + mypy (app/core, app/api) / tsc (frontend)
   unit:        pytest -m "not live" --cov=metasearch --cov-fail-under=80
   security:    gitleaks, pip-audit, npm audit, ssrf-suite
   integration: docker compose up test profile → pytest -m integration
-  (nightly)    live tests + eval harness
+  (nightly)    integration với compose, perf smoke, live smoke (chỉ báo cáo); eval chưa có
 ```

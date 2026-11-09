@@ -24,8 +24,8 @@ copy ..\deploy\.env.lite.example .env        # điền OPENAI_API_KEY nếu mu�
 | General search | DuckDuckGo keyless + Tavily/Serper/Brave khi có key | Dedup/consensus/diversity/citation giữ nguyên |
 | Academic/reference | arXiv + Wikipedia (theo lang) | Category filter như thường |
 | Extraction | trafilatura in-process -> Jina Reader keyless | SSRF guard + pinning + robots + 5MB cap giữ nguyên |
-| Persistence | SQLite (WAL) — queries/answers/keys/engine config | Tự tạo schema lúc boot; Alembic chỉ cho Postgres |
-| Cache | Redis -> **in-process TTL fallback** (512 entries) | Hit/share per-worker |
+| Persistence | SQLite (WAL) — queries/answers/keys/engine config | Lúc boot chạy `alembic upgrade head` như Postgres; DB cũ tạo bằng `create_all` được bổ sung rồi `stamp head` |
+| Cache | `REDIS_URL` trống hoặc Redis chết -> **in-process TTL fallback** (512 entries) | Một tiến trình nên không cần chia sẻ; `/readyz` báo Redis `skipped` |
 | Rate limit | Redis -> **local sliding window fallback** | Vẫn chặn 429 khi Redis chết |
 | Auth | Đầy đủ (SQLite) | `metasearch keys create` |
 | Deep Research / MCP / eval | Đầy đủ | Budget cap như thường |
@@ -86,8 +86,8 @@ flowchart LR
 
 - **searxng**: meta-search core (giant #1), `formats: [html, json]`, limiter off (nội bộ).
 - **crawl4ai**: extraction service (giant #2), Playwright/Chromium đóng gói sẵn trong image, API `POST /md` — ta không tự cài Chromium.
-- **api**: FastAPI orchestration mỏng; dev 16GB chạy 1–2 workers, prod 2×vCPU.
-- **worker**: asyncio worker cho deep research + job dọn retention.
+- **api**: FastAPI orchestration mỏng; một tiến trình uvicorn (`--workers 1`): breaker, admission, gộp request trùng và rate limit dự phòng là trạng thái trong tiến trình, nhiều worker sẽ chia nhỏ chúng.
+- **worker**: asyncio worker cho deep research.
 - **frontend**: Next.js standalone.
 - **postgres**: image `pgvector/pgvector:pg16`.
 - **redis**: cache + rate limit + locks.
@@ -98,7 +98,7 @@ flowchart LR
 |---|---|---|
 | WSL2 | cap 6GB qua `%UserProfile%\.wslconfig` (`memory=6GB, processors=4, swap=2GB`) | — |
 | mem_limits | bật (bảng §2, tổng ~4GB) | nới lỏng ×2 |
-| api workers | 1–2 | 2×vCPU |
+| api workers | 1 | 1 (scale bằng nhiều instance sau khi đưa trạng thái ra Redis, chưa làm) |
 | crawl4ai concurrency | 2, 1 browser instance | 4–6 |
 | Observability profile | tắt | bật khi cần |
 | LLM | cloud API (Ollama 3B chỉ experimental offline) | cloud API hoặc vLLM/Ollama tự host |
@@ -111,7 +111,7 @@ flowchart LR
 | crawl4ai | ghcr.io/unclecode/crawl4ai:latest | 1.5g | Playwright/Chromium sẵn trong image; concurrency 2 |
 | redis | redis:7-alpine | 256m | `--maxmemory 256mb --maxmemory-policy allkeys-lru` |
 | postgres | pgvector/pgvector:pg16 | 768m | volume `pgdata`; `shared_buffers=256MB` |
-| api | build `./api` | 512m | env từ `.env`; uvicorn 1–2 workers |
+| api | build `./api` | 512m | env từ `.env`; uvicorn `--workers 1` |
 | worker | build `./api` | 512m | cùng image, command khác |
 | frontend | build `./frontend` | 256m | Next.js standalone |
 | (profile: observability) | langfuse, prometheus, grafana | — | bật khi cần (prod) |
@@ -151,7 +151,7 @@ curl -X POST http://localhost:8000/v1/search -H 'Content-Type: application/json'
 
 - **Backup**: `pg_dump` nightly → S3/rclone; Redis không cần backup (cache).
 - **Log**: stdout JSON → docker logs / Loki; request_id xuyên suốt.
-- **Alerts** (Prometheus): error rate > 5% trong 5m; p95 answer > 15s; engine success < 90%; disk > 80%.
+- **Alerts** (Prometheus, `deploy/prometheus/alerts.yml`): lỗi 5xx > 5% trong 5 phút; p95 answer > 15 s; event loop p99 > 250 ms; breaker mở > 10 phút; hàng đợi persist > 500, ghi bị bỏ, ghi lỗi > 10/15 phút. Chưa có alert disk (để cho node exporter).
 - **Cập nhật giants**: `docker compose pull searxng crawl4ai && docker compose up -d searxng crawl4ai` (monthly) — engine upstream đổi cấu trúc chỉ cần nâng image, orchestration không đổi.
-- **Retention job** (worker, nightly): xóa `search_results`/`answers` > 90 ngày; vacuum.
+- **Retention**: Lite chạy trong tiến trình API mỗi `RETENTION_INTERVAL_S` (mặc định 3600 s). Postgres chưa có job tự chạy: đặt cron `python -m app.cli retention` (thử trước với `--dry-run`). Thời hạn (`RETENTION_DAYS`): queries, search_results, answers, citations 90 ngày; nội dung chunk 30 ngày (giữ hàng cho citation); engine_health 14 ngày.
 - **Health checks**: compose `healthcheck` cho postgres/redis/searxng; api `/readyz` check dependencies.

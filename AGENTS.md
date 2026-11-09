@@ -13,11 +13,20 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-02 — v1.3.1 Financial Data Integrity, Real Market OHLCV & 3-Round Expert Audit)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-09 — v2.0.0 Readiness cho hệ thống bên ngoài)
 
+- ✅ **Readiness cho hệ thống bên ngoài (v2.0.0)** — chi tiết và số đo ở [CHANGELOG.md](CHANGELOG.md):
+  - **Breaking:** `/v1/context` mặc định chỉ `chunks` + `sources` (xin thêm qua `include`); BYO LLM tắt mặc định; cách ly dữ liệu theo key; vài route chỉ admin; SuperAgent tắt mặc định.
+  - Không còn số liệu tài chính ước lượng hay bảng tĩnh trong runtime; mọi kết quả, chunk có mốc nguồn và thời gian.
+  - Ngân sách theo request, admission control, single-flight, lớp HTTP dùng chung, CPU ra khỏi event loop.
+  - Metric + alert, ghi DB qua hàng đợi có giới hạn, retention, `/readyz` có nghĩa, Lite chạy Alembic.
+  - Lite trên Windows như dịch vụ (`scripts/windows/`); hợp đồng tích hợp `docs/15-integration-guide.md`.
+  - CI: lockfile `uv`, mypy (`app/core`, `app/api`), coverage ≥ 84%, gitleaks, promtool, nightly.
+  - Đo trên harness: search c=1 p95 197 ms (trước 875 ms), c=20 0% lỗi (trước 100%), Lite context c=10 0% lỗi (trước 100%). Chưa đo Postgres/Redis/SearXNG thật, Linux, soak dài.
+- **Ghi chú cho các mục cũ dưới đây:** "hơn 1,600 mã" thực tế là 1.518 mã; "nghiêm cấm ngụy tạo" ở v1.3.1 chỉ thật từ v2.0.0; SuperAgent (v1.3.0) là thử nghiệm, tắt mặc định.
 - ✅ **Financial Data Integrity & Real Market OHLCV Grounding (v1.3.1)**:
   - Loại bỏ triệt để và vĩnh viễn các hàm giả lập nến `sin/cos` (`_build_stock_ohlcv_series`, `_build_asset_fallback_series`).
-  - Kết nối trực tiếp dữ liệu nến thật từ **VNDIRECT dchart TradingView Feed** cho hơn 1,600 mã chứng khoán Việt Nam (HSX, HNX, UPCOM) và chỉ số thị trường (`VNINDEX`, `VN30`).
+  - Kết nối trực tiếp dữ liệu nến thật từ **VNDIRECT dchart TradingView Feed** cho 1.518 mã chứng khoán Việt Nam (HSX, HNX, UPCOM; danh mục `app/retrieval/data/vn_tickers.json`, có ngày `as_of`) và chỉ số thị trường (`VNINDEX`, `VN30`).
   - Kết nối dữ liệu cơ bản thực tế từ **Simplize API** với thuật toán động `_build_dynamic_company_financials`.
   - Chuẩn hóa 100% nhãn thời gian `published_at` từ timestamp nến EOD thực tế và ngày cập nhật BCTC, nghiêm cấm ngụy tạo `datetime.now(UTC)`.
   - Ngăn chặn hành vi tự ý inject mã cổ phiếu vào các truy vấn thị trường chung qua bộ lọc `_VIET_STOCK_STOP_WORDS`.
@@ -28,7 +37,7 @@ orchestration không đổi.
   - Triết lý **"Quiet Autonomy" & Escalation Queue**: Agent im lặng thực thi ReAct, chỉ thông báo khi có thành phẩm (`SuperAgentArtifact`) hoặc đưa vào `EscalationRequest` khi cần con người phê duyệt.
   - **Observe Mode (Shadow Evaluation)**: Chế độ shadow plan thẩm định không tiêu tốn quota live.
   - **Proactive Event Ingestion**: Tự động kích hoạt tickets từ luồng sự kiện (BCTC mới, CVE, market feed).
-  - **Watchdog Supervisor & Circuit Breaker**: Giám sát heartbeat, tự ngắt mạch khi phát hiện worker bị treo hoặc token burst (`383+ unit & E2E tests pass`).
+  - **Watchdog Supervisor & Circuit Breaker** (thử nghiệm, **tắt mặc định** `SUPERAGENT_ENABLED=false`; chưa sinh báo cáo thật): giám sát heartbeat, ngắt mạch khi worker treo hoặc token burst (`383+ unit & E2E tests pass`).
 - ✅ **Multi-Platform Matrix CI (Windows, macOS, Linux) & Pre-Commit Hardening (v1.2.1)**:
   - Cấu hình GitHub Actions CI Matrix đa nền tảng (`ubuntu-latest`, `windows-latest`, `macos-latest`) thực thi song song trên **mọi commit** và PR (4 jobs: backend matrix, frontend matrix, release pipeline gate, docker smoke).
   - Tự động hóa hook `.githooks/pre-commit` nhận diện runtime Python đa nền tảng (`.venv/Scripts/python.exe`, `.venv/bin/python3`, PATH `python3`), tự động cấp quyền `chmod +x` trên Unix, cưỡng chế 7 Quality Gates.
@@ -126,6 +135,12 @@ docs/            01-12 thiết kế + adr/ (8 ADR) — 12-roadmap-plan.md là so
   `pinning.build_pinned_request`; redirect re-check từng hop; cap 5MB.
 - **Code style**: `ruff check` + `ruff format` (line 100, py312) phải sạch;
   `bandit -q -r app -x tests` phải 0 issue; comment tiếng Anh, tài liệu tiếng Việt.
+- **Không ngụy tạo dữ liệu**: không ước lượng, không bảng tĩnh, không giá trị mặc định
+  giả làm số thật. Thiếu nguồn thì trả `null` hoặc rỗng, kèm mốc `source_url`, `as_of`.
+- **Không dựng client HTTP tại chỗ**: dùng pool trong `app/http.py` (`search`, `scrape`,
+  `llm`, `internal`); dựng client mới tốn hàng trăm ms và làm hỏng giới hạn kết nối.
+- **Không chạy việc CPU nặng trên event loop**: parse HTML, chunk, score, rerank đi qua
+  `app.core.offload.run_cpu`; có test spy để đặt lại lên loop là đỏ.
 - **Tests**: pytest-asyncio auto mode; fakes inject qua `app.api.deps`
   (xem `tests/test_api_v1.py` fixture `stack`); DNS được fake trong conftest;
   integration test gated `METASEARCH_INTEGRATION=1`.
