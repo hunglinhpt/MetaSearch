@@ -48,7 +48,7 @@ dev = [
 # (CONTEXT_TOKENIZER=tiktoken). Falls back to word counting without it.
 tokens = ["tiktoken>=0.7"]
 # Optional: MCP server (docs/07) — `python -m app.mcp` after install.
-mcp = ["mcp>=1.2"]
+mcp = ["mcp>=1.2,<2"]  # 2.x renamed FastMCP to MCPServer; app/mcp/server.py uses the 1.x API
 # Optional: OpenTelemetry tracing (OTEL_ENABLED=true + OTEL_* env vars).
 otel = [
     "opentelemetry-sdk>=1.25",
