@@ -30,14 +30,7 @@ jobs:
         run: |
           docker compose up -d api
           for i in $(seq 1 120); do
-            if curl -sf http://127.0.0.1:8000/readyz; then
-              # Auth is on in compose: the tests need a key (admin, for the engine config test).
-              KEY=$(docker compose exec -T api python -m app.cli keys create ci-nightly --role admin | awk '/^key:/{print $2}')
-              [ -n "$KEY" ] || { echo "could not create an API key"; exit 1; }
-              echo "::add-mask::$KEY"
-              echo "METASEARCH_API_KEY=$KEY" >> "$GITHUB_ENV"
-              exit 0
-            fi
+            curl -sf http://127.0.0.1:8000/readyz && exit 0
             sleep 5
           done
           echo "api did not become ready"; exit 1
@@ -50,9 +43,15 @@ jobs:
         env:
           METASEARCH_INTEGRATION: "1"
           METASEARCH_URL: http://127.0.0.1:8000
+        # Auth is on in compose, so the tests need a key (admin, for the engine config test).
+        # It lives only in this shell: through GITHUB_ENV it was printed in the next step's
+        # env block. The stack, and the key with it, is removed at the end of the job.
         run: |
           uv sync --locked --extra dev
-          uv run --locked python -m pytest tests/integration -q
+          KEY=$(cd ../deploy && docker compose exec -T api python -m app.cli keys create ci-nightly --role admin | awk '/^key:/{print $2}')
+          [ -n "$KEY" ] || { echo "could not create an API key"; exit 1; }
+          echo "::add-mask::$KEY"
+          METASEARCH_API_KEY="$KEY" uv run --locked python -m pytest tests/integration -q -rs
       - name: Compose logs on failure
         if: failure()
         working-directory: deploy
