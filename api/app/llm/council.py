@@ -44,7 +44,9 @@ from app.retrieval.domain_intelligence import (
 
 logger = get_logger(__name__)
 
-_QUANT_TOKEN_RE = re.compile(r"\b\d+(?:[.,]\d+)?(?:\s*%|\s*x|\s*tỷ|\s*triệu|\s*bps|\b)", re.I)
+_QUANT_TOKEN_RE = re.compile(
+    r"\b\d+(?:[.,]\d+)?(?:\s*%|\s*x|\s*tỷ|\s*triệu|\s*bps|\b)", re.IGNORECASE
+)
 
 
 def extract_json_object(text: str) -> dict[str, Any] | None:

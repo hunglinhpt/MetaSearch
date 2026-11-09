@@ -86,6 +86,8 @@ class SuperAgentRouter:
         if len(self._tickets) >= MAX_TICKETS:
             self._tickets.popitem(last=False)
 
+        if len(self._tickets) >= 500:
+            del self._tickets[next(iter(self._tickets))]
         self._tickets[ticket_id] = ticket
         logger.info(
             "superagent_ticket_created",

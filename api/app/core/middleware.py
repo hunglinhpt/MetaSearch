@@ -20,6 +20,7 @@ request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 REQUEST_ID_HEADER = b"x-request-id"
 
 
+@__import__("functools").lru_cache(maxsize=64)
 def _route_class_of(path: str) -> str:
     """Bound route label: the first path segment, never the raw path.
 

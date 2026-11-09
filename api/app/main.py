@@ -66,6 +66,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.orchestration.persist_queue import get_persist_queue
 
     await get_persist_queue().start()
+    # F3: retention on Lite (no worker) — run once at boot if due.
+    from app.orchestration.retention import run_if_due
+
+    try:
+        results = await run_if_due(last_run_path=str(Path(__file__).parent / ".retention_last_run"))
+        if results:
+            logger.info("retention_boot_completed", **results)
+    except Exception as exc:
+        logger.warning("retention_boot_failed", error=type(exc).__name__)
 
     from app.core.metrics import runtime_monitor
 

@@ -982,8 +982,9 @@ class AnswerPipeline:
                 return
 
             verdict_text = str(verdict.get("verdict_md") or "")
-            for i in range(0, len(verdict_text), 48):
-                yield ("token", {"t": verdict_text[i : i + 48]})
+            _CHUNK = 48  # SSE token chunk size (chars)
+            for i in range(0, len(verdict_text), _CHUNK):
+                yield ("token", {"t": verdict_text[i : i + _CHUNK]})
             citations_payload = list(verdict.get("citations") or [])
             yield (
                 "citations",
@@ -1003,6 +1004,28 @@ class AnswerPipeline:
             }
             yield ("council", council_meta)
             latency_ms = int((time.perf_counter() - started) * 1000)
+            # F2: council answers must persist too — same as non-council path.
+            council_usage = Usage()
+            finalize = asyncio.create_task(
+                self._finalize_answer(
+                    pages=ok_pages,
+                    chunks=chunks,
+                    answer_id=answer_id,
+                    query_id=outcome.query_id,
+                    content_md=verdict_text,
+                    model=str(verdict.get("chairman_model") or model),
+                    usage=council_usage,
+                    latency_ms=latency_ms,
+                    citations=[
+                        (c.get("n", 0), c.get("url", ""), c.get("title", ""), None)
+                        for c in citations_payload
+                    ],
+                    query=nq,
+                    status="complete",
+                )
+            )
+            _background_tasks.add(finalize)
+            finalize.add_done_callback(_log_background)
             yield (
                 "done",
                 {
