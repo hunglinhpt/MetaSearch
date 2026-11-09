@@ -79,7 +79,7 @@ def search(
         try:
             body = resp.json()
             if isinstance(body, dict):
-                if "query_id" in body and body["query_id"]:
+                if body.get("query_id"):
                     last_request_id = str(body["query_id"])
                 err = body.get("error")
                 if isinstance(err, dict) and err.get("request_id"):

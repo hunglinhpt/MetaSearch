@@ -2,14 +2,22 @@
 
 > Hệ thống tìm kiếm đa nguồn & phân tích định lượng phục vụ AI: **Meta-Search (SearXNG 70+ engines + 14 Vertical Engines) → Crawl & Extract → Dedup/Consensus/Rerank → Synthesize có trích dẫn `[n]`**, đóng gói thành REST API + SSE Streaming + MCP Server + Automated Daily Briefings Blog + Web UI.
 
-Trạng thái: **v1.3.1 — Financial Data Integrity, Real Market OHLCV & Autonomous Super-Agent Engine**:
+Trạng thái: **v2.0.0 — Readiness cho hệ thống bên ngoài (an toàn, liêm chính dữ liệu, tải, quan sát, vận hành, CI)**:
+- **Sẵn sàng cho hệ thống bên ngoài (`v2.0.0`)**:
+  - `/v1/context` mặc định chỉ trả `chunks` + `sources` (xin thêm qua `include`); BYO LLM tắt mặc định; cách ly dữ liệu theo API key; vài route chỉ admin; SuperAgent tắt mặc định.
+  - Không số liệu tài chính ước lượng hay bảng tĩnh trong runtime; mọi kết quả, chunk có mốc nguồn (`source_url`, `as_of`) và thời gian.
+  - Ngân sách theo request, admission control, single-flight, lớp HTTP dùng chung, CPU ra khỏi event loop.
+  - Metric + alert, ghi DB qua hàng đợi có giới hạn, retention, `/readyz` có nghĩa, Lite chạy Alembic.
+  - Lite trên Windows như dịch vụ (`scripts/windows/`); hợp đồng tích hợp `docs/15-integration-guide.md`.
+  - CI: lockfile `uv`, mypy (`app/core`, `app/api`), coverage ≥ 84%, gitleaks, promtool, nightly.
+  - Đo trên harness: search c=1 p95 197 ms (trước 875 ms), c=20 0% lỗi (trước 100%), Lite context c=10 0% lỗi (trước 100%). Chưa đo Postgres/Redis/SearXNG thật, Linux, soak dài.
 - **Liêm Chính Dữ Liệu Tài Chính & Nguồn Công Khai Thực Tế (`v1.3.1`)**:
-  - Loại bỏ triệt để 100% các chuỗi nến giả lập bằng hàm `sin/cos` (`_build_stock_ohlcv_series`, `_build_asset_fallback_series`), kiên quyết thực hiện nguyên tắc **Zero-Hallucination & Grounded Data**.
+  - Loại bỏ triệt để 100% các chuỗi nến giả lập bằng hàm `sin/cos`, kiên quyết thực hiện nguyên tắc **Zero-Hallucination & Grounded Data**.
   - Kết nối trực tiếp dữ liệu nến thật từ **VNDIRECT dchart TradingView Feed** cho 1.518 mã chứng khoán Việt Nam (HSX, HNX, UPCOM; danh mục `app/retrieval/data/vn_tickers.json`, có ngày `as_of`) và chỉ số thị trường (`VNINDEX`, `VN30`).
   - Kết nối dữ liệu cơ bản thực tế từ **Simplize API** với thuật toán động `_build_dynamic_company_financials`.
   - Chuẩn hóa liêm chính mốc thời gian `published_at` theo ngày nến EOD thực tế và ngày cập nhật BCTC, nghiêm cấm ngụy tạo `datetime.now(UTC)`.
   - Bộ lọc `_VIET_STOCK_STOP_WORDS` ngăn chặn việc tự ý inject mã cổ phiếu vào các truy vấn thị trường chung.
-  - Hoàn tất **3-Round Expert Audit** (Solution Architect, Financial Quant / BA, QA/Security/Perf), 374 unit & E2E tests pass 100%, 7 Quality Gates passed.
+  - Hoàn tất **3-Round Expert Audit** (Solution Architect, Financial Quant / BA, QA/Security/Perf), 698 unit & E2E tests pass 100%, 7 Quality Gates passed.
 - **Kiến Trúc Autonomous Super-Agent Engine (`v1.3.0`)**: Tích hợp các tinh hoa kiến trúc từ nguyên mẫu **`deepseek-ai/dsh-superagent-prototype`** kết hợp với nền tảng MetaSearch:
   - **Router - Worker Decoupling (`app.orchestration.superagent.router`)**: Tách biệt Bộ điều phối trung tâm (`SuperAgentRouter`) quản lý hàng đợi tickets khỏi các công nhân tính toán độc lập (`IsolatedSuperAgentWorker`), giải quyết nút thắt chú ý của con người.
   - **Triết Lý "Quiet Autonomy" & Human Escalation**: Agent tự chủ im lặng thực thi đa bước ReAct và chỉ thông báo khi có thành phẩm hoàn chỉnh (`SuperAgentArtifact`) hoặc phát sinh tình huống rủi ro cao cần con người ra quyết định (`EscalationRequest`).
