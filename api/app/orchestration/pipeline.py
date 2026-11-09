@@ -1020,7 +1020,7 @@ class AnswerPipeline:
                         (c.get("n", 0), c.get("url", ""), c.get("title", ""), None)
                         for c in citations_payload
                     ],
-                    query=nq,
+                    query=normalize_query(params.query),
                     status="complete",
                 )
             )

@@ -45,4 +45,5 @@ Thumbs.db
 dist/
 build/
 *.log
+.retention_last_run
 coverage/
