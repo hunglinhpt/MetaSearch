@@ -217,6 +217,12 @@ def _make_rss_reader():
                 return None
 
         return read_proc
+    if sys.platform == "darwin":
+        import resource
+
+        # macOS has no /proc; ru_maxrss is in bytes there. It is the peak resident size,
+        # which is what a leak or a slow climb shows up in anyway.
+        return lambda: float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     return None
 
 
