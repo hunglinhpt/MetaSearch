@@ -78,7 +78,14 @@ def test_answer_stream_events(client: httpx.Client):
         for line in resp.text.splitlines()
         if line.startswith("event:")
     }
-    assert {"status", "sources", "token", "done"} <= events
+    # The search half needs no LLM and must always stream.
+    assert {"status", "sources"} <= events, events
+    if "token" not in events:
+        # No usable LLM in this stack (no key, or the keyless provider is down): the stream
+        # must say so with an error event instead of ending silently.
+        assert "error" in events, events
+        pytest.skip("no usable LLM in this compose stack; search half verified")
+    assert "done" in events, events
 
 
 def test_engine_hot_config_roundtrip(client: httpx.Client):
