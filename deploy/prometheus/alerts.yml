@@ -1,4 +1,4 @@
-# Prometheus alert rules (WP-12, docs/14 03-work-packages.md)
+# Prometheus alert rules for MetaSearch
 groups:
   - name: metasearch
     rules:
@@ -30,3 +30,19 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "Circuit breaker open for {{ $labels.engine }} over 10 minutes"
+      - alert: PersistQueueBacklog
+        expr: max(metasearch_background_queue_depth{queue="persist"}) > 500
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Persist queue above half its capacity (1000) for 5 minutes: the database is slow or stalled"
+      - alert: PersistWritesDropped
+        expr: increase(metasearch_persist_dropped_total[10m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Persist queue full: history writes are being dropped"
+      - alert: PersistWritesFailing
+        expr: increase(metasearch_persist_failed_total[15m]) > 10
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 10 persist writes failed in 15 minutes"

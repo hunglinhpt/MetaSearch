@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.logging import get_logger
-from app.core.metrics import BACKGROUND_QUEUE_DEPTH
+from app.core.metrics import BACKGROUND_QUEUE_DEPTH, PERSIST_DROPPED, PERSIST_FAILED
 
 logger = get_logger(__name__)
 
@@ -66,6 +66,7 @@ class PersistQueue:
             try:
                 self._discard(self._queue.get_nowait())
                 self._dropped += 1
+                PERSIST_DROPPED.inc()
                 logger.warning("persist_queue_dropped_oldest", total_dropped=self._dropped)
                 self._queue.put_nowait(item)
             except asyncio.QueueEmpty:
@@ -92,6 +93,7 @@ class PersistQueue:
                 await item.fn(*item.args, **item.kwargs)
                 processed += 1
             except Exception as exc:
+                PERSIST_FAILED.inc()
                 logger.warning("persist_drain_failed", label=item.label, error=type(exc).__name__)
         BACKGROUND_QUEUE_DEPTH.labels(queue="persist").set(self._queue.qsize())
         return processed
@@ -122,10 +124,13 @@ class PersistQueue:
                 if item is None:
                     return
                 batch.append(item)
+            # The gauge must fall as the consumer drains, not only rise on enqueue.
+            BACKGROUND_QUEUE_DEPTH.labels(queue="persist").set(self._queue.qsize())
             for item in batch:
                 try:
                     await item.fn(*item.args, **item.kwargs)
                 except Exception as exc:
+                    PERSIST_FAILED.inc()
                     logger.warning(
                         "persist_batch_item_failed", label=item.label, error=type(exc).__name__
                     )

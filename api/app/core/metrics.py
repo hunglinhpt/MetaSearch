@@ -118,6 +118,16 @@ BACKGROUND_QUEUE_DEPTH = Gauge(
     labelnames=("queue",),
     registry=REGISTRY,
 )
+PERSIST_DROPPED = Counter(
+    "metasearch_persist_dropped_total",
+    "Persist writes dropped because the bounded queue was full",
+    registry=REGISTRY,
+)
+PERSIST_FAILED = Counter(
+    "metasearch_persist_failed_total",
+    "Persist writes that raised while being written",
+    registry=REGISTRY,
+)
 ADMISSION_REJECTED = Counter(
     "metasearch_admission_rejected_total",
     "Requests rejected by admission control",

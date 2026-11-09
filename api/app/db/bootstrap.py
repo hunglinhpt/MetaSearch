@@ -1,16 +1,25 @@
 """SQLite bootstrap for the Lite profile (docs/08).
 
-Postgres uses Alembic migrations; SQLite (no Docker) creates its schema
-directly from the models at startup. For existing databases, missing columns
-are auto-detected by comparing ``Base.metadata`` against the live schema
-(via ``PRAGMA table_info``) and added with ``ALTER TABLE``.
+Lite runs the same Alembic migrations as Postgres (they are dialect-aware), so an
+old Lite database gets new indexes and data changes, not only new columns:
+
+* empty database, or one Alembic already manages: ``alembic upgrade head``;
+* database made by an older build with ``create_all`` (tables, no
+  ``alembic_version``): bring it to the model shape (create missing tables, add
+  missing columns via ``PRAGMA table_info`` + ``ALTER TABLE``), then
+  ``alembic stamp head`` so later migrations apply;
+* in-memory database, or the migration scripts are missing or fail: the
+  ``create_all`` path, so a broken migration never stops Lite from starting.
 
 Idempotent — cheap to call every boot.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import func, text, update
+import asyncio
+from pathlib import Path
+
+from sqlalchemy import func, inspect, text, update
 
 from app.core.logging import get_logger
 from app.db.base import Base
@@ -75,17 +84,64 @@ def _column_default(column) -> str:
     return f" DEFAULT '{escaped}'"
 
 
+_SCRIPT_DIR = Path(__file__).resolve().parents[2] / "alembic"
+
+
+def _alembic(action: str) -> None:
+    """Run ``alembic upgrade|stamp head`` (in a worker thread: env.py calls asyncio.run)."""
+    from alembic.config import Config
+
+    from alembic import command
+
+    if not (_SCRIPT_DIR / "env.py").is_file():
+        raise FileNotFoundError(_SCRIPT_DIR)
+    cfg = Config()  # no ini file: its logging section would reset the app's logging
+    cfg.set_main_option("script_location", str(_SCRIPT_DIR))
+    cfg.set_main_option("path_separator", "os")
+    if action == "upgrade":
+        command.upgrade(cfg, "head")
+    else:
+        command.stamp(cfg, "head")
+
+
+def _schema_mode(engine, tables: set[str]) -> str:
+    database = engine.url.database or ""
+    if database in {"", ":memory:"} or "mode=memory" in str(engine.url):
+        return "create_all"  # Alembic opens its own engine: it would not see this database
+    if not tables or "alembic_version" in tables:
+        return "upgrade"
+    return "legacy"
+
+
 async def ensure_schema() -> bool:
-    """Create all tables and add missing columns. Returns True if applied."""
+    """Bring the SQLite schema to head. Returns True if applied (False: not SQLite)."""
     engine = get_engine()
     if engine.dialect.name != "sqlite":
         return False
+    async with engine.connect() as conn:
+        tables = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))
+    mode = _schema_mode(engine, tables)
+    if mode == "upgrade":
+        try:
+            await asyncio.to_thread(_alembic, "upgrade")
+        except Exception as exc:  # a broken migration must not stop Lite from starting
+            logger.error("sqlite_migration_failed", error=f"{type(exc).__name__}: {exc}")
+            mode = "create_all"
+    # Always repair drift as well (a table, column or index the models declare but the file
+    # lacks); after a clean upgrade this finds nothing.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _add_missing_columns(conn)
+        await conn.run_sync(_add_missing_indexes)
+    if mode == "legacy":
+        try:
+            await asyncio.to_thread(_alembic, "stamp")
+        except Exception as exc:
+            logger.error("sqlite_stamp_failed", error=f"{type(exc).__name__}: {exc}")
+    async with engine.begin() as conn:
         # WAL keeps concurrent reads cheap on a laptop disk.
         await conn.execute(text("PRAGMA journal_mode=WAL"))
-    logger.info("sqlite_schema_ready")
+    logger.info("sqlite_schema_ready", mode=mode)
     return True
 
 
@@ -112,3 +168,10 @@ async def _add_missing_columns(conn) -> None:
                     .values({column.name: func.current_timestamp()})
                 )
             logger.info("sqlite_column_added", table=table_name, column=column.name)
+
+
+def _add_missing_indexes(sync_conn) -> None:
+    """create_all skips indexes of tables that already exist; add the ones a model declares."""
+    for table in Base.metadata.tables.values():
+        for index in table.indexes:
+            index.create(sync_conn, checkfirst=True)

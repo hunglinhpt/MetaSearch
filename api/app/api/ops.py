@@ -62,13 +62,17 @@ async def _check_postgres() -> dict[str, Any]:
 async def _check_redis() -> dict[str, Any]:
     global _redis_probe
     settings = get_settings()
+    url = (settings.redis_url or "").strip()
+    if not url:
+        # No Redis configured (the Lite example): cache and rate limit run in process.
+        return {"ok": True, "skipped": "redis_not_configured"}
+    # Below the outer probe limit, so a silent Redis ends here and the Lite branch can run.
+    socket_s = settings.readiness_timeout_s * 0.8
     try:
         if _redis_probe is None:
             # One client for every probe; a short socket timeout so a silent Redis cannot hang it.
             _redis_probe = Redis.from_url(
-                settings.redis_url,
-                socket_connect_timeout=settings.readiness_timeout_s,
-                socket_timeout=settings.readiness_timeout_s,
+                url, socket_connect_timeout=socket_s, socket_timeout=socket_s
             )
         await _redis_probe.ping()
         return {"ok": True}

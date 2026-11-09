@@ -39,11 +39,22 @@ function Wait-Ready([int]$LimitSec) {
     return -1
 }
 
+# The PID file holds the venv launcher (about 5 MB, idle); the server is the python.exe it
+# starts. Measure and kill the server itself, or the numbers describe the launcher.
+function Get-ServerProcess([int]$LauncherId) {
+    $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$LauncherId" |
+        Where-Object { $_.Name -eq "python.exe" } | Select-Object -First 1
+    if ($child) { return Get-Process -Id $child.ProcessId }
+    return Get-Process -Id $LauncherId
+}
+
 $procId = [int](Get-Content $PidFile | Select-Object -First 1)
+$server = Get-ServerProcess $procId
+Write-Host ("measuring server PID {0} (launcher {1})" -f $server.Id, $procId)
 
 switch ($Mode) {
     "idle" {
-        $proc = Get-Process -Id $procId
+        $proc = $server
         $cpu0 = $proc.TotalProcessorTime.TotalSeconds
         $peak = 0
         for ($i = 0; $i -lt ($Minutes * 6); $i++) {
@@ -55,7 +66,15 @@ switch ($Mode) {
         Write-Result ("idle {0} min: peak RSS {1:N0} MB, CPU {2:N2}% of the machine" -f $Minutes, ($peak / 1MB), $cpu)
     }
     "restart" {
-        Stop-Process -Id $procId -Force
+        Stop-Process -Id $server.Id -Force
+        # Wait until it is really down, so the time below is the restart, not the old process.
+        $down = [Diagnostics.Stopwatch]::StartNew()
+        while ($down.Elapsed.TotalSeconds -lt 30) {
+            try {
+                Invoke-WebRequest -Uri "http://127.0.0.1:$Port/readyz" -TimeoutSec 2 -UseBasicParsing | Out-Null
+                Start-Sleep -Milliseconds 300
+            } catch { break }
+        }
         $sec = Wait-Ready 600
         Write-Result ("restart after kill: /readyz back in {0:N1} s (-1 = not within 10 min)" -f $sec)
     }

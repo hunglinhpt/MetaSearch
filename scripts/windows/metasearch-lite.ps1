@@ -76,14 +76,12 @@ function Test-Ready([int]$TimeoutSec) {
 }
 
 function Import-EnvFile([string]$Path) {
+    # The app reads the file itself (METASEARCH_ENV_FILE, after api\.env), with the same
+    # dotenv parser as api\.env. Parsing it here went wrong twice: inline comments became
+    # values, and an empty value deleted the variable, so the built-in default came back.
     if (-not $Path) { return }
     if (-not (Test-Path $Path)) { throw "env file not found: $Path" }
-    foreach ($line in Get-Content $Path) {
-        $t = $line.Trim()
-        if (-not $t -or $t.StartsWith("#") -or -not $t.Contains("=")) { continue }
-        $k, $v = $t.Split("=", 2)
-        [Environment]::SetEnvironmentVariable($k.Trim(), $v.Trim().Trim('"'), "Process")
-    }
+    $env:METASEARCH_ENV_FILE = (Resolve-Path $Path).Path
 }
 
 function Start-Lite {

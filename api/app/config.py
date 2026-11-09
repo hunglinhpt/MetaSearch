@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -296,5 +297,13 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return the process-wide settings singleton."""
+    """Return the process-wide settings singleton.
+
+    ``METASEARCH_ENV_FILE`` names one more dotenv file, read after ``.env`` (the Windows
+    service script passes its ``-EnvFile`` this way, so empty values and comments are
+    parsed exactly as in ``.env``). Real environment variables still win.
+    """
+    extra = os.environ.get("METASEARCH_ENV_FILE", "").strip()
+    if extra:
+        return Settings(_env_file=(".env", extra))  # type: ignore[call-arg]
     return Settings()

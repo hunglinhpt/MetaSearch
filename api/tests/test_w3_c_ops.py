@@ -203,8 +203,9 @@ async def test_redis_probe_has_a_read_timeout(monkeypatch):
     get_settings.cache_clear()
     async with _client() as c:
         await c.get("/readyz")
-    assert seen.get("socket_timeout") == 0.4, "a silent Redis must not hold the probe"
-    assert seen.get("socket_connect_timeout") == 0.4
+    # Below the outer 0.4 s limit, so the probe's own Lite branch decides, not the outer timeout.
+    assert 0 < seen.get("socket_timeout", 0) < 0.4, "a silent Redis must not hold the probe"
+    assert 0 < seen.get("socket_connect_timeout", 0) < 0.4
 
 
 async def test_shutdown_closes_the_redis_probe(monkeypatch):
@@ -216,3 +217,42 @@ async def test_shutdown_closes_the_redis_probe(monkeypatch):
             await c.get("/readyz")
         assert ops._redis_probe is not None
     assert ops._redis_probe is None
+
+
+async def test_lite_without_redis_is_ready(monkeypatch):
+    # The Lite example leaves REDIS_URL empty: that is a supported setup, not a fault.
+    made = []
+    monkeypatch.setattr(ops.Redis, "from_url", lambda *a, **k: made.append(1))
+    monkeypatch.setenv("REDIS_URL", "")
+    get_settings.cache_clear()
+    async with _client() as c:
+        r = await c.get("/readyz")
+    body = r.json()
+    assert body["checks"]["redis"] == {"ok": True, "skipped": "redis_not_configured"}
+    assert made == []
+    assert r.status_code == 200 and body["status"] == "ready", body
+
+
+async def test_lite_with_a_silent_redis_is_ready(monkeypatch):
+    # A Redis that accepts and never answers: the probe's own timeout must fire first,
+    # so Lite reports Redis as optional instead of the outer probe reporting "timeout".
+    held = []
+
+    async def silent(reader, writer):
+        held.append(writer)
+        await asyncio.sleep(30)
+
+    server = await asyncio.start_server(silent, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setenv("REDIS_URL", f"redis://127.0.0.1:{port}/0")
+    monkeypatch.setenv("READINESS_TIMEOUT_S", "0.5")
+    get_settings.cache_clear()
+    try:
+        async with _client() as c:
+            body = (await c.get("/readyz")).json()
+    finally:
+        for w in held:
+            w.close()
+        server.close()
+    assert body["checks"]["redis"]["ok"] is True, body
+    assert body["checks"]["redis"]["skipped"] == "optional_in_lite_mode"
