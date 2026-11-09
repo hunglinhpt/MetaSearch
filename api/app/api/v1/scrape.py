@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app.api import deps
 from app.api.v1.schemas import ScrapeItem, ScrapeRequest
+from app.extraction.scraper import PageContent
 
 router = APIRouter(tags=["scrape"])
 
@@ -26,7 +27,7 @@ async def scrape(request: ScrapeRequest) -> list[ScrapeItem]:
             pages = await deps.get_scraper().scrape_many(request.urls, timeout_s=effective_timeout)
     items: list[ScrapeItem] = []
     for page in pages:
-        if hasattr(page, "markdown"):  # PageContent
+        if isinstance(page, PageContent):
             md = page.markdown
             is_truncated = False
             if len(md) > request.max_chars:

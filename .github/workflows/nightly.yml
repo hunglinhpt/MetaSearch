@@ -1,0 +1,93 @@
+name: Nightly (integration, perf smoke, live smoke)
+
+# Heavier checks that do not gate a merge: the full compose stack, a short load run on the
+# bench harness, and a live search against real engines (report only).
+on:
+  schedule:
+    - cron: "30 19 * * *"   # 02:30 Asia/Ho_Chi_Minh
+  workflow_dispatch:
+
+jobs:
+  integration:
+    name: Integration tests against the compose stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare compose environment
+        working-directory: deploy
+        run: |
+          cp .env.example .env
+          {
+            echo "POSTGRES_PASSWORD=ci-$(openssl rand -hex 8)"
+            echo "SEARXNG_SECRET=$(openssl rand -hex 16)"
+          } >> .env
+      - name: Start the stack
+        working-directory: deploy
+        run: |
+          docker compose up -d api
+          for i in $(seq 1 120); do
+            curl -sf http://127.0.0.1:8000/readyz && exit 0
+            sleep 5
+          done
+          echo "api did not become ready"; exit 1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Integration tests
+        working-directory: api
+        env:
+          METASEARCH_INTEGRATION: "1"
+          METASEARCH_URL: http://127.0.0.1:8000
+        run: |
+          uv sync --locked --extra dev
+          uv run --locked python -m pytest tests/integration -q
+      - name: Compose logs on failure
+        if: failure()
+        working-directory: deploy
+        run: docker compose logs --tail 200
+      - name: Stop the stack
+        if: always()
+        working-directory: deploy
+        run: docker compose down -v
+
+  perf-smoke:
+    name: Perf smoke on the bench harness (fake upstream)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --extra dev
+      - name: Search scenario on the harness
+        run: |
+          uv run --locked python -m scripts.perf.upstream --port 18766 &
+          uv run --locked python -m scripts.perf.server --profile memory --port 18765 --upstream-port 18766 &
+          uv run --locked python -m scripts.perf.load --profile memory --scenario search \
+            --port 18765 --upstream-port 18766 --out perf-smoke.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf-smoke
+          path: api/perf-smoke.json
+
+  live-smoke:
+    name: Live smoke against real engines (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --extra dev
+      - run: uv run --locked python ../docs/14-readiness/evidence/live_smoke.py

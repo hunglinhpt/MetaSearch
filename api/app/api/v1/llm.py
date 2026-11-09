@@ -72,12 +72,16 @@ ContextPart = Literal[
 ]
 
 
+def _default_context_parts() -> list[ContextPart]:
+    return ["chunks", "sources"]
+
+
 class ContextRequest(SearchRequest):
     budget: int | None = Field(default=None, ge=200, le=50_000)
     domain: str = Field(default="auto", max_length=60)
     # Parts of the payload to return. The default keeps it small: chunks and sources carry
     # everything; context_md and messages repeat the chunk text for callers that want it.
-    include: list[ContextPart] = Field(default_factory=lambda: ["chunks", "sources"])
+    include: list[ContextPart] = Field(default_factory=_default_context_parts)
 
 
 class ContextChunkInput(BaseModel):
@@ -230,7 +234,7 @@ async def reset_llm_config() -> dict[str, Any]:
     summary="Hot-configure the multi-endpoint panel used by the LLM Council",
 )
 async def patch_council_endpoints(request: CouncilEndpointsPatchRequest) -> dict[str, Any]:
-    coerced = coerce_council_endpoints(request.endpoints)
+    coerced = coerce_council_endpoints(list(request.endpoints or []))
     get_runtime_llm_store().set_council_endpoints(coerced)
     summary = _active_config_summary()
     summary["count"] = len(coerced)
@@ -316,7 +320,7 @@ async def run_llm_council(request: CouncilRequest, raw_request: Request) -> dict
         ctx = await deps.get_answer_pipeline().prepare_context(
             params, budget=request.budget, domain=request.domain
         )
-        raw_chunks = list(ctx.get("chunks") or [])  # type: ignore[arg-type]
+        raw_chunks: list[Any] = list(ctx.get("chunks") or [])  # type: ignore[call-overload]
         included = [
             (
                 int(c["n"]),
@@ -332,10 +336,10 @@ async def run_llm_council(request: CouncilRequest, raw_request: Request) -> dict
             )
             for c in raw_chunks
         ]
-        sources = list(ctx.get("sources") or [])  # type: ignore[arg-type]
+        sources = list(ctx.get("sources") or [])  # type: ignore[call-overload]
 
     engine = DreamRSICouncilEngine(settings, gateway)
-    coerced_eps = coerce_council_endpoints(request.endpoints) if request.endpoints else None
+    coerced_eps = coerce_council_endpoints(list(request.endpoints)) if request.endpoints else None
     try:
         result = await engine.run_council(
             request.query,
@@ -469,7 +473,7 @@ async def build_external_llm_context(request: ContextRequest) -> dict[str, Any]:
                 exclude_domains=request.exclude_domains,
             )
             return await deps.get_answer_pipeline().prepare_context(
-                params, budget=request.budget, domain=request.domain, include=request.include
+                params, budget=request.budget, domain=request.domain, include=list(request.include)
             )
 
 

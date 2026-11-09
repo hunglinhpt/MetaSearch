@@ -194,7 +194,8 @@ def _unauthorized(message: str) -> MetaSearchError:
 # -- sliding window rate limit -------------------------------------------------
 
 
-_local_windows: dict[str, deque[float]] = {}
+# Each hit is (timestamp, cost); older entries may still be bare timestamps.
+_local_windows: dict[str, deque[tuple[float, int] | float]] = {}
 _LOCAL_WINDOW_MAX = 10_000
 
 

@@ -65,7 +65,7 @@ def _extra_run_kwargs(request: AnswerRequest) -> dict[str, Any]:
     if request.council_mode:
         kwargs["council_mode"] = True
     if request.council_endpoints:
-        kwargs["council_endpoints"] = coerce_council_endpoints(request.council_endpoints)
+        kwargs["council_endpoints"] = coerce_council_endpoints(list(request.council_endpoints))
     if request.domain and request.domain != "auto":
         kwargs["domain"] = request.domain
     return kwargs
@@ -162,11 +162,12 @@ async def _json(
                 "Request deadline exceeded before answer completed",
                 status_code=504,
             )
-        if (error or {}).get("code") == ErrorCode.OVERLOADED.value:
-            wait = math.ceil(float(error.get("retry_after_s") or 1))
+        err = error or {}
+        if err.get("code") == ErrorCode.OVERLOADED.value:
+            wait = math.ceil(float(err.get("retry_after_s") or 1))
             raise MetaSearchError(
                 ErrorCode.OVERLOADED,
-                error.get("message", "LLM providers are cooling down"),
+                err.get("message", "LLM providers are cooling down"),
                 status_code=503,
                 headers={"Retry-After": str(max(1, wait))},
             )
