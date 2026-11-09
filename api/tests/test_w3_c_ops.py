@@ -187,3 +187,32 @@ def test_cli_max_concurrent_help():
         text=True,
     ).stdout
     assert "every route" in out and "research jobs" not in out
+
+
+async def test_redis_probe_has_a_read_timeout(monkeypatch):
+    seen = {}
+    real = ops.Redis.from_url
+
+    def capture(url, **kwargs):
+        seen.update(kwargs)
+        return real(url, **kwargs)
+
+    monkeypatch.setattr(ops.Redis, "from_url", capture)
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:9/0")
+    monkeypatch.setenv("READINESS_TIMEOUT_S", "0.4")
+    get_settings.cache_clear()
+    async with _client() as c:
+        await c.get("/readyz")
+    assert seen.get("socket_timeout") == 0.4, "a silent Redis must not hold the probe"
+    assert seen.get("socket_connect_timeout") == 0.4
+
+
+async def test_shutdown_closes_the_redis_probe(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:9/0")
+    monkeypatch.setenv("READINESS_TIMEOUT_S", "0.3")
+    get_settings.cache_clear()
+    async with app.router.lifespan_context(app):
+        async with _client() as c:
+            await c.get("/readyz")
+        assert ops._redis_probe is not None
+    assert ops._redis_probe is None
