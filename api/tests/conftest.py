@@ -29,12 +29,15 @@ _PUBLIC_TEST_IP = "93.184.216.34"
 
 
 @pytest.fixture(autouse=True)
-def fake_dns(monkeypatch):
+def fake_dns(request, monkeypatch):
     """Resolve every hostname to a public IP so SSRF/scrape tests stay offline.
 
     Individual tests may re-patch ``socket.getaddrinfo`` to simulate private
     DNS responses; their patch wins because it runs after this fixture.
+    Integration tests talk to the real compose stack, so they keep real DNS.
     """
+    if "integration" in request.node.path.parts:
+        return
 
     def fake_getaddrinfo(host, port, *args, **kwargs):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_PUBLIC_TEST_IP, port or 0))]

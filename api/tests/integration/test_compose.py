@@ -25,7 +25,9 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def client() -> httpx.Client:
-    with httpx.Client(base_url=BASE_URL, timeout=30) as c:
+    key = os.environ.get("METASEARCH_API_KEY", "")
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    with httpx.Client(base_url=BASE_URL, timeout=30, headers=headers) as c:
         yield c
 
 

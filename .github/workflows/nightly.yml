@@ -27,7 +27,14 @@ jobs:
         run: |
           docker compose up -d api
           for i in $(seq 1 120); do
-            curl -sf http://127.0.0.1:8000/readyz && exit 0
+            if curl -sf http://127.0.0.1:8000/readyz; then
+              # Auth is on in compose: the tests need a key (admin, for the engine config test).
+              KEY=$(docker compose exec -T api python -m app.cli keys create ci-nightly --role admin | awk '/^key:/{print $2}')
+              [ -n "$KEY" ] || { echo "could not create an API key"; exit 1; }
+              echo "::add-mask::$KEY"
+              echo "METASEARCH_API_KEY=$KEY" >> "$GITHUB_ENV"
+              exit 0
+            fi
             sleep 5
           done
           echo "api did not become ready"; exit 1
@@ -67,9 +74,14 @@ jobs:
       - run: uv sync --locked --extra dev
       - name: Search scenario on the harness
         run: |
-          uv run --locked python -m scripts.perf.upstream --port 18766 &
-          uv run --locked python -m scripts.perf.server --profile memory --port 18765 --upstream-port 18766 &
-          uv run --locked python -m scripts.perf.load --profile memory --scenario search \
+          # The venv's python, not `uv run`: servers left running under `uv run` hold the uv
+          # cache lock, and setup-uv's cache prune then times out after the job.
+          .venv/bin/python -m scripts.perf.upstream --port 18766 &
+          UP=$!
+          .venv/bin/python -m scripts.perf.server --profile memory --port 18765 --upstream-port 18766 &
+          SRV=$!
+          trap 'kill $SRV $UP' EXIT
+          .venv/bin/python -m scripts.perf.load --profile memory --scenario search \
             --port 18765 --upstream-port 18766 --out perf-smoke.json
       - uses: actions/upload-artifact@v4
         with:
