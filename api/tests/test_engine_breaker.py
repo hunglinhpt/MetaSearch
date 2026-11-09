@@ -175,7 +175,10 @@ async def test_fanout_budget_holds_with_slow_store() -> None:
     out = await pipe.run(SearchParams(query="test budget"))
     elapsed = time.perf_counter() - t0
 
-    assert elapsed <= settings.search_fanout_budget_s + 0.05
+    # A store write on the fan-out path would add its 0.5 s (elapsed >= 0.7 s). The margin
+    # is wide enough for a shared CI runner (macOS once took 0.277 s); the +50 ms target
+    # itself (B13) is measured on the bench harness, not here.
+    assert elapsed <= settings.search_fanout_budget_s + 0.25
     assert len(out.statuses) == 1
     assert out.statuses[0].status == "timeout"
 
