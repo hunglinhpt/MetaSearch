@@ -834,7 +834,7 @@ async def test_upstream_timeout_without_budget_is_negative_cached():
         ssrf.resolve_and_check = orig_resolve
 
 
-# -- audit 15 (docs/14-readiness/15-audit-w2b-2026-11-08.md) -------------------------
+# -- audit 15 (readiness audit 15) -------------------------
 
 
 class _LongGateway(_TestGateway):

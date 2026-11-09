@@ -2,8 +2,6 @@
 
 Tài liệu này dành cho đội tích hợp một hệ thống bên ngoài với MetaSearch qua REST `/v1`. MetaSearch chỉ cung cấp công cụ tìm kiếm và ngữ cảnh dùng chung; nghiệp vụ của hệ thống gọi tới nằm ở phía hệ thống đó, không nằm trong repo này. Hợp đồng được khóa bằng snapshot `api/tests/contract/openapi_v1.json`; đổi hợp đồng phải cập nhật snapshot và ghi vào mục 9 dưới đây.
 
-> **Trạng thái:** chương trình readiness (`docs/14-readiness/`) chưa xong. Đọc `docs/14-readiness/README.md` trước khi nối hệ thống thật.
-
 ## 1. Quy trình tiếp nhận
 
 1. Thống nhất endpoint, tải dự kiến (request đồng thời, request/phút) và SLO ở mục 6.
@@ -102,7 +100,7 @@ Theo thứ tự, từ nhanh nhất:
 
 ## 6. SLO đề xuất
 
-Theo `docs/14-readiness/04-quality-checklist.md` §4.1, Lite trên một tiến trình:
+Lite trên một tiến trình:
 
 | Chỉ số | Mục tiêu |
 |---|---|

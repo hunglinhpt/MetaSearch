@@ -1,4 +1,4 @@
-"""End-to-end request budget and deadline propagation (docs/14-readiness WP-07)."""
+"""End-to-end request budget and deadline propagation (readiness WP-07)."""
 
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def create_budget_for_route(
     settings: Any = None,
 ) -> RequestBudget:
     """Factory creating RequestBudget with standard route defaults or explicit timeout_ms."""
-    # Standard route defaults per docs/14-readiness WP-07
+    # Standard route defaults per readiness WP-07
     # /v1/search: total 5.0s, search 3.5s
     # /v1/context: total 12.0s, search 3.5s, scrape 6.0s
     # /v1/answer: total 12.0s to first token, search 3.5s, scrape 5.0s

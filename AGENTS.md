@@ -3,13 +3,6 @@
 Tài liệu này cho agent (và người mới) bức tranh đúng nhất về repo: đang ở đâu,
 quy ước gì, làm việc tiếp từ đâu. Cập nhật tài liệu này khi phase thay đổi.
 
-> **⛔ ĐỌC TRƯỚC (deep review 2026-11-02):** hệ thống **chưa sẵn sàng** cho external caller hay
-> hệ thống ngoài nào. Chương trình sửa ở [docs/14-readiness/README.md](docs/14-readiness/README.md).
-> Agent implement **phải nhận việc** theo
-> [docs/14-readiness/05-agent-protocol.md](docs/14-readiness/05-agent-protocol.md), kết quả
-> phải qua audit mới được merge. Một số claim ở §2 dưới đây **không khớp thực tế**,
-> xem `docs/14-readiness/01-findings.md` §7.
-
 ## 1. MetaSearch là gì?
 
 **AI meta-search & deep research engine**: SearXNG (70+ engines) → crawl &
@@ -161,8 +154,6 @@ METASEARCH_INTEGRATION=1 pytest tests/integration -q   # từ api/
 
 ## 6. Nhận việc — checklist
 
-0. Trong khi chương trình `docs/14-readiness/` chưa xong: việc mới phải thuộc một WP ở đó và
-   làm theo `docs/14-readiness/05-agent-protocol.md`. Các bước dưới vẫn áp dụng cho phần còn lại.
 1. Đọc `docs/12-roadmap-plan.md` (plan + KPI + rủi ro) và mục 2 ở trên.
 2. Việc mới thuộc phase nào? Nếu phase trước còn nợ (mục "Cần cải thiện"),
    cân nhắc xử lý nợ trước khi mở phase mới.

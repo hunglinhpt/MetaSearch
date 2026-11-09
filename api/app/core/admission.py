@@ -1,4 +1,4 @@
-"""Admission control and concurrency gating by request tier (docs/14-readiness WP-07)."""
+"""Admission control and concurrency gating by request tier (readiness WP-07)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from app.core.metrics import ADMISSION_REJECTED
 
 logger = get_logger(__name__)
 
-# Concurrency limits and queue wait timeouts (docs/14-readiness/03-work-packages.md WP-07)
+# Concurrency limits and queue wait timeouts (readiness WP-07)
 # search: 64 concurrent, 1.0s queue wait
 # context: 16 concurrent, 1.0s queue wait
 # answer: 16 concurrent, 1.0s queue wait

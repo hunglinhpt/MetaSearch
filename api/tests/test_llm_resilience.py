@@ -1,4 +1,4 @@
-"""WP-08 LLM gateway resilience tests (docs/14-readiness/03-work-packages.md).
+"""WP-08 LLM gateway resilience tests (readiness work packages).
 
 REL-10: bounded attempts, error classification, Retry-After.
 DAT-07: finish_reason="length" -> status="truncated" end to end.

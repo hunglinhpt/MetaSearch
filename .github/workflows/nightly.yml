@@ -90,4 +90,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --extra dev
-      - run: uv run --locked python ../docs/14-readiness/evidence/live_smoke.py
+      - run: uv run --locked python scripts/live_smoke.py

@@ -60,7 +60,7 @@ FAKE_RESULTS = [
 def assert_port_available(host: str, port: int) -> None:
     """Verify that host:port is free before launching test services.
 
-    Prevents hammering foreign services (another local service) or failing unexpectedly.
+    Prevents hammering another local service on the port, or failing unexpectedly.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.2)

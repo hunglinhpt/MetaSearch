@@ -12,7 +12,7 @@ Supports:
 Streaming yields ``StreamDelta`` so SSE can forward tokens as they arrive and
 still record token usage + estimated cost afterwards.
 
-WP-08 resilience (docs/14-readiness/03-work-packages.md):
+WP-08 resilience (readiness work packages):
 - Errors are classified: 400/401/403/404 are **non-retryable** and never
   fail over (same key would fail the same way); 429 honors ``Retry-After``;
   5xx/timeout/transport fail over to the next candidate.

@@ -1,4 +1,4 @@
-"""Offload CPU-bound synchronous work to worker threads (docs/14-readiness WP-05)."""
+"""Offload CPU-bound synchronous work to worker threads (readiness WP-05)."""
 
 from __future__ import annotations
 
