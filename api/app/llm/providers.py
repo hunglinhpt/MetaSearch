@@ -640,12 +640,11 @@ def validate_llm_base_url(
                 ErrorCode.INVALID_REQUEST,
                 f"LLM base_url host '{host}' is not in allowed hosts: {allowed_hosts}",
             )
-    elif allowed_list:
-        if not any(host == ah or host.endswith(f".{ah}") for ah in allowed_list):
-            raise MetaSearchError(
-                ErrorCode.INVALID_REQUEST,
-                f"LLM base_url host '{host}' is not in allowed hosts: {allowed_hosts}",
-            )
+    elif allowed_list and not any(host == ah or host.endswith(f".{ah}") for ah in allowed_list):
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            f"LLM base_url host '{host}' is not in allowed hosts: {allowed_hosts}",
+        )
 
     # If private host is explicitly allowed (e.g. server env / admin PATCH /v1/llm/config)
     if allow_private:
