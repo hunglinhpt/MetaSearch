@@ -86,8 +86,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         and settings.database_url.startswith("sqlite")
         and not settings.is_test
     ):
-        from pathlib import Path
-
         from app.orchestration.retention import retention_loop
 
         db_path = settings.database_url.split("///", 1)[-1]
