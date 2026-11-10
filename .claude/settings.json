@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/guard_local_data.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking local runtime data guard"
+          }
+        ]
+      }
+    ]
+  }
+}

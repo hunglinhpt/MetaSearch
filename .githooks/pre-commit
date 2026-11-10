@@ -4,6 +4,18 @@
 
 set -e
 
+# Local runtime data (SQLite DBs, retention markers, api/.env.*) must never reach the public
+# repo, even with `git add -f` (AGENTS.md, "Local runtime data").
+LOCAL_DATA=$(git diff --cached --name-only --diff-filter=ACMR |
+    grep -E '(\.db|\.db-wal|\.db-shm|\.sqlite3|\.retention)$|(^|/)\.env\.[^/]+$' |
+    grep -vE '\.example$' || true)
+if [ -n "$LOCAL_DATA" ]; then
+    echo "==> [Pre-Commit Gate] BLOCKED: local runtime data is staged (live keys/users/history):"
+    echo "$LOCAL_DATA" | sed 's/^/    /'
+    echo "    Unstage with: git restore --staged <file>   (do NOT delete the file)"
+    exit 1
+fi
+
 echo "==> [Pre-Commit Gate] Running mandatory Unit + End-to-End (E2E) verification before commit..."
 
 if [ -x "api/.venv/Scripts/python.exe" ]; then

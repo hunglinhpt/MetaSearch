@@ -28,10 +28,15 @@ out/
 data/
 searxng-data/
 !api/app/retrieval/data/
+# Local runtime data (live keys, users, history of integrated systems): never commit,
+# never delete without the owner's confirmation (AGENTS.md, "Local runtime data").
 *.sqlite3
 *.db
 *.db-wal
 *.db-shm
+*.retention
+api/.env.*
+!api/.env.*.example
 qdrant_storage/
 
 # IDE / OS

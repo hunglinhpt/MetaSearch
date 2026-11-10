@@ -141,6 +141,15 @@ docs/            01-12 thiết kế + adr/ (8 ADR) — 12-roadmap-plan.md là so
   `llm`, `internal`); dựng client mới tốn hàng trăm ms và làm hỏng giới hạn kết nối.
 - **Không chạy việc CPU nặng trên event loop**: parse HTML, chunk, score, rerank đi qua
   `app.core.offload.run_cpu`; có test spy để đặt lại lên loop là đỏ.
+- **Dữ liệu chạy cục bộ (Local runtime data) — KHÔNG commit, KHÔNG xoá khi chủ chưa xác nhận**:
+  các DB SQLite trong `api/` (`*.db`, `*.db-wal`, `*.db-shm`, `*.sqlite3`), tệp mốc `*.retention` và
+  `api/.env.*` (trừ `*.example`) là dữ liệu THẬT của các hệ thống tích hợp (khoá API, user, lịch sử),
+  không phải tệp tạm, dù đã gitignore. Xoá một DB là khoá mọi client tích hợp ra ngoài (401) tới khi cấp
+  và triển khai lại khoá — đã xảy ra 10/11/2026 khi dọn dẹp. Quy tắc cho mọi agent và người:
+  không xoá, di chuyển, `git clean -x/-X`, hay `keys revoke` các tệp/khoá này khi chủ chưa xác nhận
+  trong cuộc trò chuyện; dọn dẹp thì liệt kê và hỏi trước. Không commit chúng lên repo public (kể cả
+  `git add -f`). Chốt: `.gitignore`, cổng `.githooks/pre-commit` từ chối khi stage các tệp này,
+  hook Claude Code `scripts/guard_local_data.py` (`.claude/settings.json`) buộc hỏi chủ trước lệnh xoá.
 - **Tests**: pytest-asyncio auto mode; fakes inject qua `app.api.deps`
   (xem `tests/test_api_v1.py` fixture `stack`); DNS được fake trong conftest;
   integration test gated `METASEARCH_INTEGRATION=1`.
