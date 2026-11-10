@@ -24,6 +24,12 @@ from typing import Any
 import httpx
 
 from app.http import get_http_client
+from app.retrieval.fa_sources import (
+    AggregatedFinancials,
+    SourceOHLCV,
+    build_default_aggregator,
+)
+from app.retrieval.fa_sources.aggregator import FAAggregator
 from app.retrieval.financial_forensics import (
     analyze_balance_sheet_forensics,
 )
@@ -39,6 +45,7 @@ from app.retrieval.technical_analysis import (
 from app.retrieval.vn_tickers import (
     _VIET_STOCK_STOP_WORDS,
     is_vn_ticker,
+    load_vn_tickers,
 )
 
 logger = logging.getLogger(__name__)
@@ -355,6 +362,77 @@ def _build_dynamic_company_financials(
     )
 
 
+def _build_financials_from_aggregated(
+    sym: str,
+    agg: AggregatedFinancials,
+    latest_close: float = 0.0,
+) -> CompanyFinancials | None:
+    """Builds a grounded CompanyFinancials from multi-source aggregated fields.
+
+    docs/15 §8.2: name/exchange come from the DAT-06 ticker registry (real
+    records, never invented); payloads without provenance URLs are refused;
+    forensics stays off (has_full_statements=False) because scattered ratios
+    are not audited statements.
+    """
+    if not agg.fields or not agg.source_urls:
+        return None
+
+    rec = load_vn_tickers().get(sym) or {}
+    name = str(rec.get("company_name") or "").strip() or f"Công ty Cổ phần {sym}"
+    exchange = str(rec.get("exchange") or "").strip() or "VN"
+
+    g = agg.get
+    pe = g("pe")
+    pb = g("pb")
+    eps = g("eps_vnd")
+    roe = g("roe_pct")
+    roa = g("roa_pct")
+    de = g("debt_to_equity")
+    profit_growth = g("profit_growth_pct")
+    revenue_growth = g("revenue_growth_pct")
+    div_yield = g("dividend_yield_pct")
+
+    n_validated = sum(1 for fv in agg.fields.values() if fv.validated)
+    catalysts = (
+        f"Nguồn FA đa nguồn: {', '.join(agg.sources_used)} · "
+        f"{len(agg.fields)} chỉ số có mốc nguồn, {n_validated} đối chiếu chéo."
+    )
+    if pe is not None and pb is not None:
+        catalysts += f" Định giá P/E {pe:.1f}x, P/B {pb:.2f}x."
+    if profit_growth is not None:
+        catalysts += f" Tăng trưởng LNNT: {profit_growth:.1f}%."
+    if revenue_growth is not None:
+        catalysts += f" Tăng trưởng doanh thu: {revenue_growth:.1f}%."
+
+    return CompanyFinancials(
+        symbol=sym,
+        name=name,
+        exchange=exchange,
+        industry="Doanh nghiệp niêm yết",  # registry has no industry column
+        market_cap_vnd_bil=round(g("market_cap_vnd_bil") or 0.0, 1),
+        price_ref_vnd=latest_close,
+        pe=round(pe, 2) if pe is not None else None,
+        pb=round(pb, 2) if pb is not None else None,
+        eps_vnd=round(eps, 0) if eps is not None else None,
+        roe_pct=round(roe, 2) if roe is not None else None,
+        roa_pct=round(roa, 2) if roa is not None else None,
+        debt_to_equity=round(de, 2) if de is not None else None,
+        free_float_pct=g("free_float_pct"),
+        yoy_profit_growth_pct=(round(profit_growth, 1) if profit_growth is not None else None),
+        dividend_policy=(f"Tỷ suất cổ tức hiện tại: {div_yield:.1f}%" if div_yield else None),
+        core_catalysts=catalysts,
+        ir_url=None,  # no grounded IR page in this path — None beats invention
+        has_full_statements=False,
+    )
+
+
+def _ohlcv_tuple(
+    src: SourceOHLCV,
+) -> tuple[list[float], list[float], list[float], list[float], list[float], int | None]:
+    """Adapt a SourceOHLCV to the legacy (o, h, l, c, v, last_ts) tuple shape."""
+    return (src.opens, src.highs, src.lows, src.closes, src.volumes, src.last_ts)
+
+
 class VietStockAdapter:
     """Dedicated search engine adapter for Vietnamese equities on HSX and HNX."""
 
@@ -369,6 +447,44 @@ class VietStockAdapter:
         self.vndirect_url = vndirect_url
         self.simplize_url = simplize_url
         self._client = client
+        self._fa_agg: FAAggregator | None = None
+
+    def _fa_aggregator(self) -> FAAggregator:
+        """Multi-source FA fallback, built once per adapter.
+
+        The adapter is instantiated once per registry build, so per-source
+        breakers (fa:ssi/tcbs/fireant) persist across requests just like
+        engine-level breakers.
+        """
+        if self._fa_agg is None:
+            self._fa_agg = build_default_aggregator(client=self._client)
+        return self._fa_agg
+
+    async def _fetch_ohlcv_fallback(self, sym: str, timeout_s: float) -> SourceOHLCV | None:
+        """VNDIRECT down -> fan out to direct OHLCV sources (SSI first)."""
+        try:
+            src = await self._fa_aggregator().fetch_ohlcv(sym, timeout_s=timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("fa_ohlcv_fallback_failed for %s: %s", sym, exc)
+            return None
+        return src
+
+    async def _fetch_financials_fallback(
+        self, sym: str, timeout_s: float
+    ) -> AggregatedFinancials | None:
+        """Simplize down -> cross-source fan-out (TCBS, FireAnt, ...)."""
+        try:
+            agg = await self._fa_aggregator().fetch_financials(sym, timeout_s=timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("fa_financials_fallback_failed for %s: %s", sym, exc)
+            return None
+        if agg is None or not agg.fields:
+            return None
+        return agg
 
     async def search(
         self,
@@ -419,8 +535,37 @@ class VietStockAdapter:
                 logger.debug("simplize_gather_exception: %s", simp_data)
                 simp_data = None
 
+            # Provenance for every candle served: primary VNDIRECT, else the
+            # winning fallback source (docs/15 §8.2). Defaults MUST come before
+            # the fallback block, which overrides them on success.
+            ohlcv_source_name = "VNDIRECT"
+            ohlcv_url = f"https://dchart.vndirect.com.vn/?symbol={sym}"
+
+            # Multi-source fallback (docs/15 §8.2): a dead primary leg fans
+            # out to the direct FA sources CONCURRENTLY — never two sequential
+            # round-trips on the request budget. Indices only need OHLCV.
+            is_index = sym in ("VNINDEX", "VN30", "HNX", "HNX-INDEX", "UPCOM")
+            agg_fin: AggregatedFinancials | None = None
+            need_ohlcv_fb = ohlcv_res is None
+            need_fa_fb = simp_data is None and not is_index
+            if need_ohlcv_fb or need_fa_fb:
+                fallback_coros: dict[str, Any] = {}
+                if need_ohlcv_fb:
+                    fallback_coros["ohlcv"] = self._fetch_ohlcv_fallback(sym, timeout_s)
+                if need_fa_fb:
+                    fallback_coros["fa"] = self._fetch_financials_fallback(sym, timeout_s)
+                keys = list(fallback_coros)
+                values = await asyncio.gather(*fallback_coros.values())
+                for key, value in zip(keys, values, strict=True):
+                    if key == "ohlcv" and value is not None:
+                        ohlcv_res = _ohlcv_tuple(value)
+                        ohlcv_source_name = value.source_id.upper()
+                        ohlcv_url = value.source_url
+                    elif key == "fa" and value is not None:
+                        agg_fin = value
+
             # 1. Handle Market Index (e.g. VNINDEX, VN30, HNX)
-            if sym in ("VNINDEX", "VN30", "HNX", "HNX-INDEX", "UPCOM"):
+            if is_index:
                 if ohlcv_res:
                     opens, highs, lows, closes, volumes, last_ts = ohlcv_res
                     idx_pub_dt = datetime.fromtimestamp(last_ts, tz=UTC) if last_ts else None
@@ -452,7 +597,7 @@ class VietStockAdapter:
                     )
                     results.append(
                         RawResult(
-                            url=f"https://dchart.vndirect.com.vn/?symbol={sym}",
+                            url=ohlcv_url,
                             title=(
                                 f"Chỉ Số {sym} - Dữ Liệu Giao Dịch & Phân Tích Kỹ Thuật Thị Trường"
                             ),
@@ -461,8 +606,8 @@ class VietStockAdapter:
                             adapter=self.id,
                             source_engines=[self.id],
                             published_at=idx_pub_dt,
-                            source_url=f"https://dchart.vndirect.com.vn/?symbol={sym}",
-                            source_name="VNDIRECT",
+                            source_url=ohlcv_url,
+                            source_name=ohlcv_source_name,
                             as_of=idx_pub_dt,
                             data_kind="observed",
                         )
@@ -470,11 +615,13 @@ class VietStockAdapter:
                     rank += 1
                 continue
 
-            # 2. Check if stock can be dynamically built from Simplize live data
+            # 2. Check if stock can be dynamically built from live data
             stock: CompanyFinancials | None = None
             latest_c = ohlcv_res[3][-1] if ohlcv_res else 0.0
             if simp_data:
                 stock = _build_dynamic_company_financials(sym, simp_data, latest_c)
+            elif agg_fin is not None:
+                stock = _build_financials_from_aggregated(sym, agg_fin, latest_c)
 
             if not stock and not ohlcv_res:
                 # No grounded data available -> fail gracefully without synthesizing fake data
@@ -495,6 +642,18 @@ class VietStockAdapter:
                     fa_pub_dt = None
             if not fa_pub_dt:
                 fa_pub_dt = candle_pub_dt
+            # Aggregated path: prefer the statements' own grounded report date.
+            if agg_fin is not None and agg_fin.as_of is not None:
+                fa_pub_dt = agg_fin.as_of
+
+            # Provenance-aware result metadata: Simplize when it served, else
+            # the winning FA source(s) (docs/15 §8.2).
+            fa_url = f"https://simplize.vn/co-phieu/{sym}"
+            fa_source_name = "Simplize"
+            if agg_fin is not None:
+                if agg_fin.source_urls:
+                    fa_url = agg_fin.source_urls[0]
+                fa_source_name = "FA-Aggregator(" + "+".join(agg_fin.sources_used) + ")"
 
             # Intent classification
             is_forensic = any(
@@ -573,7 +732,7 @@ class VietStockAdapter:
 
                 results.append(
                     RawResult(
-                        url=f"https://simplize.vn/co-phieu/{stock.symbol}",
+                        url=fa_url,
                         title=(
                             f"[{stock.exchange}:{stock.symbol}] {stock.name} - "
                             "Báo Cáo Phân Tích Cơ Bản (FA) & Chỉ Số Định Giá"
@@ -583,8 +742,8 @@ class VietStockAdapter:
                         adapter=self.id,
                         source_engines=[self.id],
                         published_at=fa_pub_dt,
-                        source_url=f"https://simplize.vn/co-phieu/{stock.symbol}",
-                        source_name="Simplize",
+                        source_url=fa_url,
+                        source_name=fa_source_name,
                         as_of=fa_pub_dt,
                         data_kind="observed",
                     )
@@ -641,7 +800,7 @@ class VietStockAdapter:
                     )
                     results.append(
                         RawResult(
-                            url=f"https://simplize.vn/co-phieu/{stock.symbol}",
+                            url=fa_url,
                             title=(
                                 f"{stock.symbol} - Thẩm Định Pháp Y BCTC: Cấu Trúc Nợ, "
                                 "Chất Lượng Phải Thu & Dòng Tiền Thật"
@@ -651,8 +810,8 @@ class VietStockAdapter:
                             adapter=self.id,
                             source_engines=[self.id],
                             published_at=fa_pub_dt,
-                            source_url=f"https://simplize.vn/co-phieu/{stock.symbol}",
-                            source_name="Simplize",
+                            source_url=fa_url,
+                            source_name=fa_source_name,
                             as_of=fa_pub_dt,
                             data_kind="derived",
                         )
@@ -697,7 +856,7 @@ class VietStockAdapter:
                 sym_label = stock.symbol if stock else sym
                 tech_snippet = (
                     f"[{sym_label} KỸ THUẬT NÂNG CAO & FIBONACCI · "
-                    f"Real VNDIRECT TradingView EOD · {date_label}] "
+                    f"Real {ohlcv_source_name} TradingView EOD · {date_label}] "
                     f"Giá: {real_curr_p:,.0f} đ ({sign}{pct_chg:.2f}%) · "
                     f"Cấu trúc: {trendline.trend_type} ({trendline.channel_slope_deg}°, "
                     f"R²={trendline.r_squared:.2f}) · "
@@ -710,18 +869,18 @@ class VietStockAdapter:
                 )
                 results.append(
                     RawResult(
-                        url=f"https://dchart.vndirect.com.vn/?symbol={sym}",
+                        url=ohlcv_url,
                         title=(
                             f"{sym_label} - Phân Tích Kỹ Thuật Nâng Cao, Fibonacci, "
-                            "Mây Ichimoku & Mẫu Hình Hình Học (VNDIRECT)"
+                            f"Mây Ichimoku & Mẫu Hình Hình Học ({ohlcv_source_name})"
                         ),
                         snippet=tech_snippet,
                         rank=rank,
                         adapter=self.id,
                         source_engines=[self.id],
                         published_at=candle_pub_dt,
-                        source_url=f"https://dchart.vndirect.com.vn/?symbol={sym}",
-                        source_name="VNDIRECT",
+                        source_url=ohlcv_url,
+                        source_name=ohlcv_source_name,
                         as_of=candle_pub_dt,
                         data_kind="observed",
                     )

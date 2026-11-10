@@ -163,6 +163,8 @@ class Settings(BaseSettings):
     pubmed_api_key: str = ""
     semanticscholar_api_key: str = ""
     sec_edgar_user_agent: str = "MetaSearch info@metasearch.ai"
+    # FireAnt Bearer JWT (docs/15 §5.5). Empty = FireAnt source disabled.
+    fa_fireant_token: str = ""
 
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------
     reranker: Literal["heuristic", "onnx", "api"] = "heuristic"

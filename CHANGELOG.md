@@ -4,6 +4,36 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [2.1.0] — 2026-11-11 — Multi-source FA: bỏ điểm hụt đơn nguồn VNDIRECT/Simplize
+
+### Added
+- Package `app/retrieval/fa_sources/` — adapter **trực tiếp từng nguồn** (không qua
+  vnstock/wrapper, đúng quy ước giants-first), mỗi nguồn một module tự chứa:
+  **SSI iBoard** dchart TradingView (OHLCV, keyless), **TCBS stock-insight**
+  financial-ratio (keyless, map phòng thủ biến thể key — key lạ bỏ qua tuyệt đối),
+  **FireAnt** income/balance statement (Bearer JWT qua `FA_FIREANT_TOKEN`, rỗng là
+  nguồn tự tắt; 401/403 mở breaker). Chi tiết nguồn (21 nguồn đã thẩm định) ở
+  `docs/15-fa-sources-plan.md`.
+- `FAAggregator`: fan-out breaker-gated (`fa:{source_id}`, metric
+  `metasearch_breaker_state{engine="fa:..."}`), per-source timeout, cross-validate
+  (đồng ý ≥2 nguồn trong dung sai 0.5% → `validated`), xung đột ưu tiên nguồn
+  priority cao + log `fa_conflict`, hết nguồn → fields rỗng + `missing_fields`
+  (không ngụy tạo). Mọi field merged có `{value, source, as_of}`.
+- Tích hợp vào `VietStockAdapter` làm **fallback đồng thời** (không cộng dồn độ
+  trễ happy path): VNDIRECT chết → nến từ SSI; Simplize chết → FA từ TCBS/FireAnt;
+  `name`/`exchange` tra từ registry DAT-06; provenance kết quả ghi đúng nguồn thật
+  (`source_name` "SSI"/"FA-Aggregator(tcbs)"), không còn gắn cứng "VNDIRECT".
+- Config `FA_FIREANT_TOKEN`; guard `ensure_symbol` chặn ký tự lạ trước khi nội
+  suy vào URL path của nguồn.
+
+### Verified
+- 29 unit test mới (`tests/test_fa_sources.py`, MockTransport, không gọi live):
+  parse từng nguồn, cross-validate/conflict/missing, breaker mở sau 3 lỗi,
+  timeout không chìm fan-out, auth-fault FireAnt, fallback tích hợp adapter,
+  provenance kết quả, symbol guard. Ruff + bandit sạch; suite đầy đủ 100% pass.
+- CafeF/VietStock scraper để đợt sau — phải probe HTML schema thật trước khi
+  parse, không parse đoán mò (quy tắc không ngụy tạo).
+
 ## [2.0.0] — 2026-11-09 — Readiness cho hệ thống bên ngoài: an toàn, liêm chính dữ liệu, tải, quan sát, vận hành, CI
 
 Bản này gom chương trình readiness (đợt 1-4). Bản MAJOR vì có thay đổi phá vỡ tương thích ở REST API (xem mục đầu). Mọi số đo nêu dưới đây là số đo thật trên harness `api/scripts/perf/` hoặc trên máy chạy Lite; mục nào chưa đo được ghi rõ.

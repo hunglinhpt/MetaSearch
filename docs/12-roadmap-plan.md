@@ -185,6 +185,13 @@
 | Cost / quick query | ≤ $0.005 | LLM metering |
 | RAM stack (dev 16GB) | ≤ 4GB trong WSL2 6GB | `docker stats` |
 
+### Bổ sung sau v2.0.0: Multi-source FA (v2.1.0 — 2026-11-11)
+
+- [x] Thẩm định 21 nguồn FA Việt Nam, plan tích hợp ([15-fa-sources-plan.md](15-fa-sources-plan.md)).
+- [x] Adapter trực tiếp (không qua vnstock): SSI (OHLCV), TCBS (ratios), FireAnt (BCTC, JWT) + `FAAggregator` breaker-gated, cross-validate 0.5%, provenance từng field.
+- [x] Fallback đồng thời trong `VietStockAdapter`: VNDIRECT chết → SSI; Simplize chết → TCBS/FireAnt; provenance kết quả ghi đúng nguồn thật.
+- [ ] Wave 3: cache TTL field-level, batch fetch, FA snapshot; CafeF/VietStock scraper sau khi probe HTML schema thật.
+
 ## 4. Rủi ro thực thi
 
 | Rủi ro | Giảm thiểu |
