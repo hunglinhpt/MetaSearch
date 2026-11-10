@@ -7,6 +7,7 @@ constructor ``client=`` param — no vnstock, no live calls.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -102,17 +103,14 @@ def test_ensure_symbol_normalizes_and_rejects():
     assert ensure_symbol("") is None
 
 
-def test_adapters_reject_unsafe_symbol_without_network():
+async def test_adapters_reject_unsafe_symbol_without_network():
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError("unsafe symbol must not reach the network")
 
-    async def checks():
-        async with _client(handler) as client:
-            assert await SSIFASource(client=client).fetch_ohlcv("../etc") is None
-            assert await TCBSFASource(client=client).fetch_financials("A/B") is None
-            assert await FireAntFASource(token="t", client=client).fetch_financials("A?B") is None
-
-    asyncio.run(checks())
+    async with _client(handler) as client:
+        assert await SSIFASource(client=client).fetch_ohlcv("../etc") is None
+        assert await TCBSFASource(client=client).fetch_financials("A/B") is None
+        assert await FireAntFASource(token="t", client=client).fetch_financials("A?B") is None
 
 
 # --- SSI ----------------------------------------------------------------------
@@ -261,9 +259,13 @@ class _FakeSource:
         ohlcv: SourceOHLCV | None = None,
         error: FASourceError | None = None,
         calls: list[str] | None = None,
+        can_financials: bool = True,
+        can_ohlcv: bool = True,
     ) -> None:
         self.source_id = sid
         self.priority = priority
+        self.can_financials = can_financials
+        self.can_ohlcv = can_ohlcv
         self._financials = financials
         self._ohlcv = ohlcv
         self._error = error
@@ -391,7 +393,9 @@ class TestVietStockAdapterFallback:
         assert "tcbs" in fa[0].source_name
         assert fa[0].source_url.startswith("https://api.tcbs.com.vn/")
         assert "P/E: 12.5" in fa[0].snippet
-        assert "Nguồn FA đa nguồn" in fa[0].snippet
+        assert "Nguồn FA: tcbs (đơn nguồn)" in fa[0].snippet
+        assert "chưa đối chiếu chéo" in fa[0].snippet
+        assert "mốc dữ liệu: tcbs 2024-12-31" in fa[0].snippet
         assert fa[0].as_of == datetime(2024, 12, 31, tzinfo=UTC)
 
     async def test_index_result_served_by_ssi_fallback(self):
@@ -408,3 +412,299 @@ class TestVietStockAdapterFallback:
         adapter = VietStockAdapter(client=_client(dead_route))
         results = await adapter.search("HPG", max_results=10)
         assert results == []  # graceful degradation, zero invention
+
+
+# --- audit round-2 hardening: capability fan-out, half-open, units, dates -----
+
+
+_VNDIRECT_BODY = {
+    "s": "ok",
+    "t": _SSI_BODY["t"],
+    "o": [21.2] * 6,
+    "h": [21.4] * 6,
+    "l": [20.8] * 6,
+    "c": [21.25] * 6,  # scaled feed: x1000 -> 21,250 VND native (probed 2026-11-11)
+    "v": [1_000_000.0] * 6,
+}
+
+_SIMPLIZE_BODY = {
+    "status": 200,
+    "data": {
+        "marketCap": 3.2e13,
+        "peRatio": 12.5,
+        "pbRatio": 2.0,
+        "epsRatio": 5000,
+        "roe": 15.3,
+        "roa": 7.0,
+        "priceClose": 21250.0,
+        "nameVi": "Công ty Cổ phần Hòa Phát",
+        "stockExchange": "HSX",
+        "industryActivity": "Thép",
+        "analysisUpdated": "01/01/2025",
+    },
+}
+
+
+class TestCapabilityFanout:
+    async def test_stub_legs_never_probed_nor_recorded(self):
+        fin_calls: list[str] = []
+        ohlc_calls: list[str] = []
+        fin_only = _FakeSource(
+            "fin", 1.0, _fin("fin", {"pe": 10.0}), calls=fin_calls, can_ohlcv=False
+        )
+        ohlc_only = _FakeSource(
+            "ohlc",
+            0.5,
+            ohlcv=SourceOHLCV("ohlc", closes=[1, 2, 3, 4, 5]),
+            calls=ohlc_calls,
+            can_financials=False,
+        )
+        agg = FAAggregator([fin_only, ohlc_only])
+
+        await agg.fetch_financials("HPG")
+        assert ohlc_calls == []  # OHLCV-only stub never probed for financials
+        fin_calls_after_financials = len(fin_calls)
+
+        await agg.fetch_ohlcv("HPG")
+        assert len(fin_calls) == fin_calls_after_financials  # no extra probe
+
+    async def test_vacuous_empty_does_not_reset_failure_streak(self):
+        calls: list[str] = []
+        err = FASourceError("fin", "upstream_error", "down")
+        broken_fin = _FakeSource("fin", 1.0, error=err, calls=calls, can_ohlcv=False)
+        agg = FAAggregator([broken_fin])
+        for _ in range(3):
+            await agg.fetch_financials("HPG")
+        breaker = agg._registry.get("fa:fin")
+        assert breaker.state == "open"
+        failures_before = breaker.consecutive_failures
+
+        await agg.fetch_ohlcv("HPG")  # no OHLCV-capable source at all
+        assert calls == ["fin", "fin", "fin"]  # no extra probe
+        breaker2 = agg._registry.get("fa:fin")
+        assert breaker2.state == "open"  # NOT healed by a leg it cannot serve
+        assert breaker2.consecutive_failures == failures_before
+
+
+class TestBreakerHalfOpen:
+    async def test_exactly_one_probe_after_cooldown_then_close(self):
+        err = FASourceError("a", "upstream_error", "down")
+        good = _fin("a", {"pe": 10.0})
+        src = _FakeSource("a", 1.0, good, error=err)
+        agg = FAAggregator([src])
+        for _ in range(3):
+            await agg.fetch_financials("HPG")
+        bid = "fa:a"
+        breaker = agg._registry.get(bid)
+        assert breaker.state == "open"
+
+        # Before cooldown: still open, no probe.
+        assert agg._registry.allow(bid, now=breaker.retry_at - 1) is False
+        # After cooldown: exactly ONE trial admitted.
+        assert agg._registry.allow(bid, now=breaker.retry_at + 1) is True
+        assert agg._registry.allow(bid, now=breaker.retry_at + 1) is False
+        # Simulate the trial completing (deadline/stuck-probe release), then a
+        # real fetch probes half-open and a success closes the breaker.
+        breaker.half_open_in_flight = False
+        src._error = None
+        await agg.fetch_financials("HPG")
+        assert agg._registry.get(bid).state == "closed"
+
+    async def test_all_breakers_open_returns_empty_without_fail_open(self):
+        err = FASourceError("a", "upstream_error", "down")
+        agg = FAAggregator([_FakeSource("a", 1.0, error=err)])
+        for _ in range(3):
+            await agg.fetch_financials("HPG")
+        out = await agg.fetch_financials("HPG")  # cooldown not elapsed
+        assert out.fields == {}
+        assert out.missing_fields == list(CANONICAL_FA_FIELDS)
+
+
+class TestConsensusThreeSources:
+    async def test_two_agreeing_challengers_validate_winner(self):
+        a = _FakeSource("a", 1.0, _fin("a", {"pe": 10.0}))
+        b = _FakeSource("b", 0.5, _fin("b", {"pe": 10.04}))
+        c = _FakeSource("c", 0.4, _fin("c", {"pe": 10.04}))
+        out = await FAAggregator([c, b, a]).fetch_financials("HPG")
+        assert out.fields["pe"].source == "a"
+        assert out.fields["pe"].validated is True
+
+    async def test_majority_against_winner_is_logged(self, caplog):
+        a = _FakeSource("a", 1.0, _fin("a", {"pe": 10.0}))
+        b = _FakeSource("b", 0.5, _fin("b", {"pe": 20.0}))
+        c = _FakeSource("c", 0.4, _fin("c", {"pe": 20.0}))
+        with caplog.at_level("WARNING", logger="app.retrieval.fa_sources.aggregator"):
+            out = await FAAggregator([c, b, a]).fetch_financials("HPG")
+        assert out.fields["pe"].source == "a"  # priority rule holds
+        assert any("fa_conflict_majority" in r.message for r in caplog.records)
+
+    async def test_conflict_log_carries_symbol_field_values_sources(self, caplog):
+        a = _FakeSource("a", 1.0, _fin("a", {"pe": 10.0}))
+        b = _FakeSource("b", 0.5, _fin("b", {"pe": 20.0}))
+        with caplog.at_level("WARNING", logger="app.retrieval.fa_sources.aggregator"):
+            await FAAggregator([b, a]).fetch_financials("HPG")
+        line = next(r for r in caplog.records if r.getMessage().startswith("fa_conflict:"))
+        msg = line.getMessage()
+        assert "HPG" in msg and "pe" in msg
+        assert "10.0" in msg and "20.0" in msg
+        assert "a" in msg and "b" in msg
+
+    async def test_duplicate_source_ids_raise(self):
+        with pytest.raises(ValueError):
+            FAAggregator([_FakeSource("x", 1.0), _FakeSource("x", 0.5)])
+
+
+class TestTCBSUnitGates:
+    async def test_implausible_ratio_and_caps_dropped_with_warning(self, caplog):
+        body = {
+            "data": [
+                {
+                    "date": "2024-12-31",
+                    "PE": 12.5,
+                    "ROE": 300.0,  # beyond ±200% — ratio/percent confusion
+                    "marketCap": 2.0e9,  # -> 2.0 tỷ đ, below the 5 tỷ band
+                    "EPS": 5.0e9,  # beyond ±1,000,000 VND
+                }
+            ]
+        }
+        with caplog.at_level("WARNING", logger="app.retrieval.fa_sources.tcbs"):
+            async with _client(lambda r: httpx.Response(200, json=body)) as client:
+                out = await TCBSFASource(client=client).fetch_financials("TCB")
+        assert out is not None
+        assert "roe_pct" not in out.fields
+        assert "market_cap_vnd_bil" not in out.fields
+        assert "eps_vnd" not in out.fields
+        assert out.fields["pe"] == 12.5
+        assert any("fa_suspect_unit" in r.message for r in caplog.records)
+
+    async def test_market_cap_missing_is_safe(self):
+        body = {"data": [{"date": "2024-12-31", "PE": 12.5}]}
+        async with _client(lambda r: httpx.Response(200, json=body)) as client:
+            out = await TCBSFASource(client=client).fetch_financials("TCB")
+        assert out is not None
+        assert "market_cap_vnd_bil" not in out.fields
+
+
+class TestSSIDataIntegrity:
+    async def test_nan_candles_rejected(self):
+        body = {**_SSI_BODY, "c": [float("nan")] * 6}
+        # httpx's json= rejects NaN; emit it the way a real upstream could.
+        payload = json.dumps(body).encode("utf-8")  # stdlib emits bare NaN
+        async with _client(
+            lambda r: httpx.Response(
+                200, content=payload, headers={"content-type": "application/json"}
+            )
+        ) as client:
+            with pytest.raises(FASourceError) as exc:
+                await SSIFASource(client=client).fetch_ohlcv("HPG")
+        assert "non_finite" in exc.value.detail
+
+    async def test_missing_ohlc_arrays_refused_not_filled(self):
+        body = {"s": "ok", "t": _SSI_BODY["t"], "c": _SSI_BODY["c"]}  # no o/h/l/v
+        async with _client(lambda r: httpx.Response(200, json=body)) as client:
+            out = await SSIFASource(client=client).fetch_ohlcv("HPG")
+        assert out is None  # schema drift -> honest refusal, no close-for-open fill
+
+    async def test_oversized_payload_rejected(self):
+        big = b"x" * (5 * 1024 * 1024 + 1)
+        async with _client(lambda r: httpx.Response(200, content=big)) as client:
+            with pytest.raises(FASourceError) as exc:
+                await SSIFASource(client=client).fetch_ohlcv("HPG")
+        assert "payload_too_large" in exc.value.detail
+
+
+class TestFireAntIntegrity:
+    async def test_partial_fault_flagged_and_logged(self, caplog):
+        client = _client(_fireant_route(income_status=500, balance_status=200))
+        async with client:
+            agg = FAAggregator([FireAntFASource(token="tok", client=client)])
+            # The aggregator logs fa_source_degraded once for the merged payload.
+            with caplog.at_level("WARNING", logger="app.retrieval.fa_sources.aggregator"):
+                out = await agg.fetch_financials("TCB")
+        assert out.fields  # the healthy statement still serves
+        assert out.missing_fields  # the dead statement's fields are missing
+        assert any("fa_source_degraded" in r.getMessage() for r in caplog.records)
+
+    async def test_published_at_split_from_period_end(self):
+        income = [
+            {
+                "fiscalDate": "2025-09-30",
+                "reportDate": "2025-11-05",
+                "totalRevenue": 5.2e12,
+            }
+        ]
+        balance = [{"fiscalDate": "2025-09-30", "totalEquity": 3e12, "totalDebt": 1.5e12}]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "/income-statement" in request.url.path:
+                return httpx.Response(200, json=income)
+            if "/balance-sheet" in request.url.path:
+                return httpx.Response(200, json=balance)
+            return httpx.Response(404, json=[])
+
+        async with _client(handler) as client:
+            out = await FireAntFASource(token="tok", client=client).fetch_financials("TCB")
+        assert out is not None
+        assert out.as_of == datetime(2025, 9, 30, tzinfo=UTC)  # period end
+        assert out.published_at == datetime(2025, 11, 5, tzinfo=UTC)  # publish side
+
+
+class TestVietStockMixedPrimaries:
+    async def test_vndirect_healthy_simplize_down_falls_back_to_tcbs(self):
+        def route(request: httpx.Request) -> httpx.Response:
+            host = request.url.host
+            if host == "dchart-api.vndirect.com.vn":
+                return httpx.Response(200, json=_VNDIRECT_BODY)
+            if host == "api.simplize.vn":
+                return httpx.Response(500, text="boom")
+            if host == "api.tcbs.com.vn":
+                return httpx.Response(200, json=_TCBS_BODY)
+            return httpx.Response(404, json=[])
+
+        adapter = VietStockAdapter(client=_client(route))
+        results = await adapter.search("HPG kỹ thuật", max_results=10)
+        tech = [r for r in results if "Phân Tích Kỹ Thuật" in r.title]
+        assert tech and tech[0].source_name == "VNDIRECT"
+        fa = [r for r in results if r.source_name.startswith("FA-Aggregator")]
+        assert fa and "tcbs" in fa[0].source_name
+
+    async def test_vndirect_down_simplize_healthy_keeps_simplize_provenance(self):
+        def route(request: httpx.Request) -> httpx.Response:
+            host = request.url.host
+            if host == "dchart-api.vndirect.com.vn":
+                return httpx.Response(500, text="boom")
+            if host == "api.simplize.vn":
+                return httpx.Response(200, json=_SIMPLIZE_BODY)
+            if host == "iboard.ssi.com.vn":
+                return httpx.Response(200, json=_SSI_BODY)
+            return httpx.Response(404, json=[])
+
+        adapter = VietStockAdapter(client=_client(route))
+        results = await adapter.search("HPG kỹ thuật", max_results=10)
+        tech = [r for r in results if "Phân Tích Kỹ Thuật" in r.title]
+        assert tech and tech[0].source_name == "SSI"  # candle fallback
+        fa = [r for r in results if r.source_name == "Simplize"]
+        assert fa and "simplize.vn" in fa[0].source_url  # FA primary untouched
+
+    async def test_both_primaries_healthy_aggregator_never_invoked(self):
+        def route(request: httpx.Request) -> httpx.Response:
+            host = request.url.host
+            if host == "dchart-api.vndirect.com.vn":
+                return httpx.Response(200, json=_VNDIRECT_BODY)
+            if host == "api.simplize.vn":
+                return httpx.Response(200, json=_SIMPLIZE_BODY)
+            raise AssertionError("fallback sources must not be touched")
+
+        adapter = VietStockAdapter(client=_client(route))
+        results = await adapter.search("HPG kỹ thuật", max_results=10)
+        names = {r.source_name for r in results}
+        assert "VNDIRECT" in names and "Simplize" in names
+        assert adapter._fa_agg is None  # lazy fallback never built
+
+    async def test_index_all_sources_down_returns_empty(self):
+        def dead_route(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, text="boom")
+
+        adapter = VietStockAdapter(client=_client(dead_route))
+        results = await adapter.search("VNINDEX hôm nay", max_results=10)
+        assert results == []  # graceful, no crash on the index branch

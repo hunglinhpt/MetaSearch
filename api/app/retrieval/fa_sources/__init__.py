@@ -17,6 +17,7 @@ from app.retrieval.fa_sources.aggregator import (
 )
 from app.retrieval.fa_sources.base import (
     CANONICAL_FA_FIELDS,
+    MAX_RESPONSE_BYTES,
     FASource,
     FASourceError,
     SourceFinancials,
@@ -30,16 +31,23 @@ if TYPE_CHECKING:
 
 def build_default_aggregator(
     client: httpx.AsyncClient | None = None,
+    registry: EngineBreakerRegistry | None = None,
 ) -> FAAggregator:
     """Process-default source set: SSI (OHLCV) + TCBS (ratios) + FireAnt (statements).
 
     FireAnt self-disables when ``FA_FIREANT_TOKEN`` is empty. Each source gets its
-    own breaker (``fa:{source_id}``) from a fresh registry owned by the caller
-    (one per adapter instance, so breaker state lives as long as the adapter).
+    own breaker (``fa:{source_id}``); the registry can be injected by the caller,
+    otherwise a fresh one is created with the operator's
+    ``engine_auto_disable_threshold`` so FA sources trip consistently with engines.
     """
+    from app.config import get_settings
     from app.retrieval.fa_sources.fireant import FireAntFASource
     from app.retrieval.fa_sources.ssi import SSIFASource
     from app.retrieval.fa_sources.tcbs import TCBSFASource
+
+    owned = registry
+    if owned is None:
+        owned = EngineBreakerRegistry(threshold=get_settings().engine_auto_disable_threshold)
 
     return FAAggregator(
         sources=[
@@ -47,12 +55,13 @@ def build_default_aggregator(
             TCBSFASource(client=client),
             FireAntFASource(client=client),
         ],
-        registry=EngineBreakerRegistry(),
+        registry=owned,
     )
 
 
 __all__ = [
     "CANONICAL_FA_FIELDS",
+    "MAX_RESPONSE_BYTES",
     "AggregatedFinancials",
     "FAAggregator",
     "FASource",

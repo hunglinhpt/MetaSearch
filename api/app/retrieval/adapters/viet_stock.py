@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -25,11 +26,12 @@ import httpx
 
 from app.http import get_http_client
 from app.retrieval.fa_sources import (
+    MAX_RESPONSE_BYTES,
     AggregatedFinancials,
+    FAAggregator,
     SourceOHLCV,
     build_default_aggregator,
 )
-from app.retrieval.fa_sources.aggregator import FAAggregator
 from app.retrieval.financial_forensics import (
     analyze_balance_sheet_forensics,
 )
@@ -207,6 +209,11 @@ async def _fetch_vndirect_ohlcv(
         if resp.status_code != 200:
             logger.debug("vndirect_status_%s: %s", resp.status_code, sym)
             return None
+        if len(resp.content or b"") > MAX_RESPONSE_BYTES:
+            # Same 5MB cap as the FA sources — a hostile/huge body must not
+            # stall the event loop inside resp.json().
+            logger.debug("vndirect_payload_too_large: %s", sym)
+            return None
         data = resp.json()
         if not isinstance(data, dict) or data.get("s") != "ok":
             return None
@@ -223,6 +230,12 @@ async def _fetch_vndirect_ohlcv(
 
         is_index = sym in ("VNINDEX", "VN30", "HNX", "HNX-INDEX", "UPCOM")
         multiplier = 1000.0 if not is_index and float(c_list[-1]) < 1000.0 else 1.0
+        if multiplier != 1.0:
+            # Live-probed 2026-11-11: VNDIRECT serves a /1000-scaled feed
+            # (HPG last close 21.25 = 21,250 VND native), so this correction is
+            # evidence-backed. Logged whenever it fires so a feed-state change
+            # is observable instead of silent.
+            logger.debug("vndirect_price_multiplier_applied: %s x1000", sym)
 
         opens = [round(float(x) * multiplier, 2) for x in (o_list or c_list)]
         highs = [round(float(x) * multiplier, 2) for x in (h_list or c_list)]
@@ -230,6 +243,16 @@ async def _fetch_vndirect_ohlcv(
         closes = [round(float(x) * multiplier, 2) for x in c_list]
         volumes = [round(float(x), 0) for x in (v_list or [0.0] * len(c_list))]
         last_ts = int(t_list[-1]) if t_list else None
+
+        if any(x < 0 for x in closes) or any(x < 0 for x in volumes):
+            # Mirror of the SSI guard: a negative candle is a feed fault.
+            logger.debug("vndirect_negative_values: %s", sym)
+            return None
+        if any(not math.isfinite(x) for x in closes):
+            # json.loads accepts bare NaN; a non-finite candle would poison
+            # every downstream ratio and render "nan%" into snippets.
+            logger.debug("vndirect_non_finite_closes: %s", sym)
+            return None
 
         return opens, highs, lows, closes, volumes, last_ts
     except Exception as exc:
@@ -257,6 +280,9 @@ async def _fetch_simplize_summary(
         resp = await http_client.get(url, headers=headers, follow_redirects=True, timeout=timeout_s)
         if resp.status_code != 200:
             logger.debug("simplize_status_%s: %s", resp.status_code, sym)
+            return None
+        if len(resp.content or b"") > MAX_RESPONSE_BYTES:
+            logger.debug("simplize_payload_too_large: %s", sym)
             return None
         body = resp.json()
         if (
@@ -392,11 +418,54 @@ def _build_financials_from_aggregated(
     revenue_growth = g("revenue_growth_pct")
     div_yield = g("dividend_yield_pct")
 
+    # Unit detector built from two OTHER grounded numbers: implied EPS =
+    # price / P/E. A >3x disagreement in EITHER direction means the payload's
+    # EPS unit is not VND (thousand-VND -> down-100x display, wrong scale ->
+    # up-1000x) — drop it with a warning instead of displaying a wrong figure.
+    # Pure arithmetic, nothing invented.
+    # Scale caveat: latest_close inherits the CANDLE feed's unit (VNDIRECT's
+    # /1000-scaled feed is confirmed and x1000-corrected; an unverified
+    # fallback feed would skew implied EPS by the same factor — the gate errs
+    # toward dropping, never fabricating).
+    if eps is not None and pe is not None and pe > 0 and latest_close > 0:
+        implied_eps = latest_close / pe
+        if implied_eps > 0:
+            eps_ratio = max(eps, implied_eps) / min(eps, implied_eps)
+            if eps_ratio > 3.0:
+                logger.warning(
+                    "fa_suspect_unit: %s eps_vnd=%s vs implied=%.1f — dropped",
+                    sym,
+                    eps,
+                    implied_eps,
+                )
+            eps = None
+
     n_validated = sum(1 for fv in agg.fields.values() if fv.validated)
-    catalysts = (
-        f"Nguồn FA đa nguồn: {', '.join(agg.sources_used)} · "
-        f"{len(agg.fields)} chỉ số có mốc nguồn, {n_validated} đối chiếu chéo."
+    # Advertised metric count excludes the inert FireAnt balance-sheet anchors
+    # (total_assets/equity/debt merge for provenance but render nothing).
+    n_metrics = sum(1 for k in agg.fields if not k.startswith("total_"))
+    n_sources = len(agg.sources_used)
+    source_label = (
+        f"Nguồn FA đa nguồn: {', '.join(agg.sources_used)}"
+        if n_sources >= 2
+        else f"Nguồn FA: {', '.join(agg.sources_used)} (đơn nguồn)"
     )
+    cross_label = (
+        f"{n_validated} chỉ số đối chiếu chéo"
+        if n_validated > 0
+        else "chưa đối chiếu chéo (mỗi chỉ số từ một nguồn)"
+    )
+    per_source_dates = sorted(
+        {(fv.source, fv.as_of) for fv in agg.fields.values() if fv.as_of is not None},
+        key=lambda pair: pair[0],
+    )
+    dates_label = (
+        " · mốc dữ liệu: "
+        + "; ".join(f"{src} {dt.date().isoformat()}" for src, dt in per_source_dates)
+        if per_source_dates
+        else ""
+    )
+    catalysts = f"{source_label} · {n_metrics} chỉ số có mốc nguồn, {cross_label}.{dates_label}"
     if pe is not None and pb is not None:
         catalysts += f" Định giá P/E {pe:.1f}x, P/B {pb:.2f}x."
     if profit_growth is not None:
@@ -514,6 +583,7 @@ class VietStockAdapter:
 
         for sym in tickers[:4]:
             # Fetch real candles from VNDIRECT and fundamentals from Simplize concurrently
+            primary_t0 = time.monotonic()
             vnd_task = _fetch_vndirect_ohlcv(
                 sym,
                 base_url=self.vndirect_url,
@@ -527,6 +597,7 @@ class VietStockAdapter:
                 client=self._client,
             )
             ohlcv_res, simp_data = await asyncio.gather(vnd_task, simp_task, return_exceptions=True)
+            primary_elapsed = time.monotonic() - primary_t0
 
             if isinstance(ohlcv_res, Exception):
                 logger.debug("vndirect_gather_exception: %s", ohlcv_res)
@@ -543,26 +614,60 @@ class VietStockAdapter:
 
             # Multi-source fallback (docs/15 §8.2): a dead primary leg fans
             # out to the direct FA sources CONCURRENTLY — never two sequential
-            # round-trips on the request budget. Indices only need OHLCV.
+            # round-trips on the request budget. The fallback only gets the
+            # REMAINING leg budget (primaries already spent part of the 3.5s);
+            # a fallback that cannot start inside it is skipped entirely, so
+            # the pipeline's fan-out cancel never discards a late fallback
+            # result or counts the engine as TIMEOUT. Indices only need OHLCV.
             is_index = sym in ("VNINDEX", "VN30", "HNX", "HNX-INDEX", "UPCOM")
             agg_fin: AggregatedFinancials | None = None
             need_ohlcv_fb = ohlcv_res is None
             need_fa_fb = simp_data is None and not is_index
+            remaining = timeout_s - primary_elapsed
             if need_ohlcv_fb or need_fa_fb:
-                fallback_coros: dict[str, Any] = {}
-                if need_ohlcv_fb:
-                    fallback_coros["ohlcv"] = self._fetch_ohlcv_fallback(sym, timeout_s)
-                if need_fa_fb:
-                    fallback_coros["fa"] = self._fetch_financials_fallback(sym, timeout_s)
-                keys = list(fallback_coros)
-                values = await asyncio.gather(*fallback_coros.values())
-                for key, value in zip(keys, values, strict=True):
-                    if key == "ohlcv" and value is not None:
-                        ohlcv_res = _ohlcv_tuple(value)
-                        ohlcv_source_name = value.source_id.upper()
-                        ohlcv_url = value.source_url
-                    elif key == "fa" and value is not None:
-                        agg_fin = value
+                if remaining < 0.8:
+                    # 0.8s floor (breaker fairness): a thinner window would
+                    # nearly always time out a HEALTHY fallback source and
+                    # record a non-representative TIMEOUT against its breaker
+                    # (audits N3 / SA+Finance round 2).
+                    logger.debug(
+                        "fa_fallback_skipped_no_budget: %s remaining=%.2fs", sym, remaining
+                    )
+                else:
+                    fb_timeout = min(timeout_s, remaining - 0.15)
+                    fallback_coros: dict[str, Any] = {}
+                    if need_ohlcv_fb:
+                        fallback_coros["ohlcv"] = self._fetch_ohlcv_fallback(sym, fb_timeout)
+                    if need_fa_fb:
+                        fallback_coros["fa"] = self._fetch_financials_fallback(sym, fb_timeout)
+                    keys = list(fallback_coros)
+                    values = await asyncio.gather(*fallback_coros.values())
+                    for key, value in zip(keys, values, strict=True):
+                        if key == "ohlcv" and value is not None:
+                            ohlcv_res = _ohlcv_tuple(value)
+                            ohlcv_source_name = value.source_id.upper()
+                            ohlcv_url = value.source_url
+                        elif key == "fa" and value is not None:
+                            agg_fin = value
+
+            # Feed cross-check (log-only, both sides grounded): VNDIRECT's
+            # x1000 heuristic vs Simplize's reference price must agree within
+            # 50% — a wider gap means one feed changed its scale.
+            if ohlcv_res and simp_data:
+                simp_price = simp_data.get("priceClose") or simp_data.get("priceReferrance")
+                if simp_price:
+                    last_close = ohlcv_res[3][-1]
+                    try:
+                        gap = abs(last_close - float(simp_price)) / float(simp_price)
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        gap = 0.0
+                    if gap > 0.5:
+                        logger.warning(
+                            "fa_price_mismatch: %s candle_last=%s simplize_price=%s",
+                            sym,
+                            last_close,
+                            simp_price,
+                        )
 
             # 1. Handle Market Index (e.g. VNINDEX, VN30, HNX)
             if is_index:
@@ -642,9 +747,17 @@ class VietStockAdapter:
                     fa_pub_dt = None
             if not fa_pub_dt:
                 fa_pub_dt = candle_pub_dt
-            # Aggregated path: prefer the statements' own grounded report date.
-            if agg_fin is not None and agg_fin.as_of is not None:
-                fa_pub_dt = agg_fin.as_of
+            # Aggregated path: published_at and as_of are DIFFERENT claims —
+            # publish-side date when a payload carries one (never the period
+            # end), period-end anchors as_of. When no publish-side key exists,
+            # published_at keeps the grounded CANDLE date (a real market
+            # timestamp, clearly not the period end) rather than None.
+            fa_as_of = fa_pub_dt
+            if agg_fin is not None:
+                if agg_fin.published_at is not None:
+                    fa_pub_dt = agg_fin.published_at
+                if agg_fin.as_of is not None:
+                    fa_as_of = agg_fin.as_of
 
             # Provenance-aware result metadata: Simplize when it served, else
             # the winning FA source(s) (docs/15 §8.2).
@@ -744,7 +857,7 @@ class VietStockAdapter:
                         published_at=fa_pub_dt,
                         source_url=fa_url,
                         source_name=fa_source_name,
-                        as_of=fa_pub_dt,
+                        as_of=fa_as_of,
                         data_kind="observed",
                     )
                 )
@@ -812,7 +925,7 @@ class VietStockAdapter:
                             published_at=fa_pub_dt,
                             source_url=fa_url,
                             source_name=fa_source_name,
-                            as_of=fa_pub_dt,
+                            as_of=fa_as_of,
                             data_kind="derived",
                         )
                     )

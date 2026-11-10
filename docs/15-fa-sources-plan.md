@@ -233,8 +233,9 @@ Authorization: Bearer {JWT}
   (fan-out SSI...) → chuẩn hóa về tuple `(o,h,l,c,v,last_ts)` của đường cũ.
 - **FA**: Simplize vẫn là primary. Khi Simplize fail → `aggregator.fetch_financials()`
   → `_build_financials_from_aggregated()` dựng `CompanyFinancials` chỉ từ field
-  có thật; `name`/`exchange` tra từ registry `vn_tickers.json` (DAT-06), không
-  có → để trống an toàn; `has_full_statements=False` (pháp y cần BCTC đầy đủ —
+  có thật; `name`/`exchange` tra từ registry `vn_tickers.json` (DAT-06), thiếu thì
+  dùng nhãn mặc định ("Công ty Cổ phần {sym}" / "VN") đúng quy ước đường Simplize;
+  `has_full_statements=False` (pháp y cần BCTC đầy đủ —
   không chạy trên ratio rời rạc); `source_name="FA-Aggregator(...)"` + provenance
   nguồn trong result.
 - **Latency**: aggregator chỉ chạy trên đường fallback (không tăng độ trễ happy
@@ -255,4 +256,25 @@ Authorization: Bearer {JWT}
 | Wave 2 (tcbs + fireant + breaker + tests) | ✅ (cafef/vietstock_api scraper để Wave 2b — cần probe HTML schema live trước khi parse, tránh parse đoán mò) |
 | Tích hợp vào VietStockAdapter (fallback) | ✅ |
 | Wave 3 (TTL cache, batch, snapshot) | ⏭ |
+
+## 10. Bằng chứng probe live (2026-11-11, egress máy chủ dự án)
+
+| Endpoint | Kết quả | Hệ quả thiết kế |
+|---|---|---|
+| `dchart-api.vndirect.com.vn/dchart/history` (HPG, SHB) | 200 JSON `{"s":"ok"}`; HPG close 21.25 = 21.250đ thật → **feed scaled ÷1000** | Heuristic ×1000 của đường primary là ĐÚNG (đã có bằng chứng); log khi kích hoạt + cross-check so với Simplize `priceClose` (`fa_price_mismatch`) |
+| `iboard.ssi.com.vn/dchart/api/history` | 200 **text/html** (SPA shell) trên cả 2 biến thể path | Adapter fail `bad_json` → breaker mở, graceful; **cần xác minh lại route SSI từ egress sản xuất**, chỉ cần sửa `DEFAULT_BASE_URL` khi tìm ra |
+| `api.tcbs.com.vn` | **DNS không phân giải** từ egress này; `apipubaws.tcbs.com.vn` (host trong hệ sinh thái) trả **Cloudflare challenge** | Adapter keyless giữ nguyên; challenge/HTML → `bad_json` → breaker mở. Khi có route thật, chốt schema + đơn vị (`marketCap` VND hay tỷ đ) theo §5.4 |
+| `restv2.fireant.vn` | Cần JWT — đúng thiết kế token-gated, không probe được khi chưa có token | Giữ nguyên |
+
+**Nguyên tắc đã cài theo audit vòng 2:** mọi giá trị từ API nội bộ đều qua gate
+hợp lý (`fa_suspect_unit`) — TCBS: ROE/ROA trong ±200%, market cap trong
+[5, 3.000.000] tỷ đ, EPS trong ±1.000.000đ; FireAnt: mọi khoản `_vnd_bil` trong
+[0, 3.000.000] tỷ đ, growth trong ±500%; khi có giá + P/E thì đối chiếu implied
+EPS = giá/P/E (lệch >3x là bỏ); nến NaN/âm bị từ chối; mảng o/h/l/v thiếu là từ
+chối cả chuỗi (không thay bằng close); mốc `as_of` = cuối kỳ còn `published_at` =
+ngày công bố — hai mốc không bao giờ gộp. Fallback chỉ nhận **phần ngân sách còn
+lại** của leg (primaries đã tốn bao nhiêu, fallback nhận phần đó trừ biên; sàn
+0.5s — hết ngân sách thì bỏ fallback thay vì để pipeline hủy và tính TIMEOUT).
+
+Sources: [vnstock](https://github.com/thinh-vu/vnstock), [SSI TradingView chart](https://www.ssi.com.vn/en/individual-customer/en-tradingview-chart)
 

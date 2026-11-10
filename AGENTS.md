@@ -19,7 +19,7 @@ orchestration không đổi.
   - Package `app/retrieval/fa_sources/`: adapter **trực tiếp** SSI (OHLCV), TCBS (ratios), FireAnt (BCTC, JWT `FA_FIREANT_TOKEN`) — không qua vnstock/wrapper; 21 nguồn đã thẩm định trong docs/15.
   - `FAAggregator`: fan-out breaker-gated (`fa:{source_id}`), cross-validate 0.5%, conflict ưu tiên priority + log `fa_conflict`, hết nguồn → fields rỗng + `missing_fields` (không ngụy tạo).
   - `VietStockAdapter`: fallback ĐỒNG THỜI khi VNDIRECT/Simplize chết; provenance kết quả ghi đúng nguồn thật (SSI/FA-Aggregator), `name`/`exchange` từ registry DAT-06.
-  - 29 test mới MockTransport; ruff/bandit sạch. CafeF/VietStock scraper chờ probe HTML schema thật.
+  - 48 test MockTransport (audit 3 expert: SA/QA-perf/finance + probe live, 2 vòng PASS); ruff/bandit/perf sạch. CafeF/VietStock scraper chờ probe HTML schema thật; SSI/TCBS route cần xác minh lại từ egress sản xuất (docs/15 §10).
 - ✅ **Readiness cho hệ thống bên ngoài (v2.0.0)** — chi tiết và số đo ở [CHANGELOG.md](CHANGELOG.md):
   - **Breaking:** `/v1/context` mặc định chỉ `chunks` + `sources` (xin thêm qua `include`); BYO LLM tắt mặc định; cách ly dữ liệu theo key; vài route chỉ admin; SuperAgent tắt mặc định.
   - Không còn số liệu tài chính ước lượng hay bảng tĩnh trong runtime; mọi kết quả, chunk có mốc nguồn và thời gian.

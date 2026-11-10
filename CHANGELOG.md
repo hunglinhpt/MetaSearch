@@ -26,11 +26,26 @@ version tuân theo [SemVer](https://semver.org/).
 - Config `FA_FIREANT_TOKEN`; guard `ensure_symbol` chặn ký tự lạ trước khi nội
   suy vào URL path của nguồn.
 
+### Hardening (audit 3 expert — SA, QA/perf, finance-data — 2 vòng, PASS)
+- Fallback chỉ nhận **phần ngân sách còn lại** của leg (sàn 0.8s) — không bao giờ
+  vượt fan-out budget, không tính TIMEOUT oan cho engine.
+- Capability flags `can_financials`/`can_ohlcv`: nguồn stub không bao giờ bị
+  probe/ghi EMPTY (không reset breaker của endpoint đang chết thật).
+- Gate đơn vị `fa_suspect_unit` ở cả TCBS (ROE/ROA ±200%, market cap, EPS ±1trđ,
+  implied EPS = giá/P/E hai chiều) và FireAnt (mọi khoản `_vnd_bil` trong
+  [0, 3tr] tỷ đ, growth ±500%).
+- Tách `as_of` (cuối kỳ) khỏi `published_at` (ngày công bố) qua toàn bộ chuỗi;
+  SSI từ chối nến NaN/âm/thiếu mảng o-h-l-v (không fill close); cap 5MB trước
+  `resp.json()` ở cả 5 endpoint VN; `fa_conflict_majority`, half-open recovery,
+  dup-guard; probe live ghi bằng chứng ở docs/15 §10.
+
 ### Verified
-- 29 unit test mới (`tests/test_fa_sources.py`, MockTransport, không gọi live):
-  parse từng nguồn, cross-validate/conflict/missing, breaker mở sau 3 lỗi,
-  timeout không chìm fan-out, auth-fault FireAnt, fallback tích hợp adapter,
-  provenance kết quả, symbol guard. Ruff + bandit sạch; suite đầy đủ 100% pass.
+- 48 unit test (`tests/test_fa_sources.py`, MockTransport, không gọi live):
+  parse từng nguồn, cross-validate/conflict/majority/missing, breaker mở sau 3
+  lỗi + half-open phục hồi đúng 1 probe, timeout không chìm fan-out, auth-fault
+  FireAnt, fallback tích hợp adapter (mixed primaries + happy path không đổi),
+  provenance kết quả, symbol guard, unit gates. Ruff + bandit + perf sạch
+  (p95 1.65s @ c=25, 0 lỗi); suite đầy đủ 100% pass.
 - CafeF/VietStock scraper để đợt sau — phải probe HTML schema thật trước khi
   parse, không parse đoán mò (quy tắc không ngụy tạo).
 

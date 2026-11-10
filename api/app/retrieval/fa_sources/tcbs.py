@@ -4,10 +4,19 @@ Internal API of the TCBS web platform (no official docs). Keyless. The adapter
 maps only KNOWN key variants onto canonical field names and silently skips
 anything unrecognized — when TCBS renames a field we lose one metric, never
 invent one. Schema re-probe then extends ``_RATIO_KEYS`` by one line.
+
+Live-probe note (2026-11-11, server egress): ``api.tcbs.com.vn`` did not
+resolve DNS and the ecosystem alternate ``apipubaws.tcbs.com.vn`` answers a
+Cloudflare bot challenge to non-browser clients. The adapter stays direct and
+keyless; a challenge/HTML body fails as ``bad_json`` and the breaker opens.
+Unit gates below drop any value that is implausible for the canonical field
+(e.g. a ratio-valued ROE or a market cap in the wrong scale) with a
+``fa_suspect_unit`` warning instead of serving a silently mis-scaled number.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,10 +28,13 @@ from app.retrieval.fa_sources.base import (
     FASourceError,
     SourceFinancials,
     SourceOHLCV,
+    check_payload_size,
     ensure_symbol,
     pick,
     pick_float,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.tcbs.com.vn/stock-insight/v1/stock"
 
@@ -39,12 +51,17 @@ _RATIO_KEYS: dict[str, tuple[str, ...]] = {
     "profit_growth_pct": ("profitgrowth", "netprofitgrowth", "earninggrowth"),
 }
 
+# Period-end keys anchor as_of (the data's own date). Publish-side keys
+# (reportdate/createdat) are a DIFFERENT claim and map to published_at only.
+_PERIOD_KEYS = ("enddate", "date", "period", "fiscaldate")
+_PUBLISH_KEYS = ("reportdate", "createdat")
+
 # Ratio values are taken payload-native (VN sources are VND-native; EPS in VND,
 # percentages in percent). Only unit-scale arithmetic (market cap -> billions)
-# is applied — no unit is ever guessed.
-
-# Candidate keys carrying a grounded period/report date.
-_DATE_KEYS = ("date", "createdat", "calendardate", "period", "reportdate", "enddate")
+# is applied, plus the plausibility gates below — no unit is ever guessed.
+_PCT_FIELD_BOUNDS = {"roe_pct": 200.0, "roa_pct": 200.0}
+_MARKET_CAP_VND_BIL_BAND = (5.0, 3_000_000.0)  # listed VN issuers, tỷ đ
+_EPS_VND_BOUND = 1_000_000.0
 
 
 def _extract_records(body: Any) -> list[dict[str, Any]]:
@@ -80,13 +97,23 @@ def _parse_date(value: Any) -> datetime | None:
     return None
 
 
+def _latest_by_keys(records: list[dict[str, Any]], keys: tuple[str, ...]) -> datetime | None:
+    best: datetime | None = None
+    for rec in records:
+        for key in keys:
+            dt = _parse_date(pick(rec, key))  # case-insensitive
+            if dt and (best is None or dt > best):
+                best = dt
+    return best
+
+
 def _latest_record(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Most recent record by a grounded date key; fall back to the last row."""
+    """Record with the newest PERIOD-END date; ordering is not trusted."""
     best: dict[str, Any] | None = None
     best_dt: datetime | None = None
     for rec in records:
-        for key in _DATE_KEYS:
-            dt = _parse_date(pick(rec, key))  # case-insensitive
+        for key in _PERIOD_KEYS:
+            dt = _parse_date(pick(rec, key))
             if dt and (best_dt is None or dt > best_dt):
                 best_dt = dt
                 best = rec
@@ -96,14 +123,26 @@ def _latest_record(records: list[dict[str, Any]]) -> dict[str, Any]:
     return best or {}
 
 
-def _latest_date(records: list[dict[str, Any]]) -> datetime | None:
-    best: datetime | None = None
-    for rec in records:
-        for key in _DATE_KEYS:
-            dt = _parse_date(pick(rec, key))  # case-insensitive
-            if dt and (best is None or dt > best):
-                best = dt
-    return best
+def _drop_implausible(fields: dict[str, float], sym: str) -> None:
+    """Unit-detector gates: drop + warn instead of serving a mis-scaled value."""
+    for name, bound in _PCT_FIELD_BOUNDS.items():
+        val = fields.get(name)
+        if val is not None and abs(val) > bound:
+            logger.warning("fa_suspect_unit: %s %s=%s beyond ±%s", sym, name, val, bound)
+            del fields[name]
+    mc = fields.get("market_cap_vnd_bil")
+    if mc is not None and not (_MARKET_CAP_VND_BIL_BAND[0] <= mc <= _MARKET_CAP_VND_BIL_BAND[1]):
+        logger.warning(
+            "fa_suspect_unit: %s market_cap_vnd_bil=%s outside %s",
+            sym,
+            mc,
+            _MARKET_CAP_VND_BIL_BAND,
+        )
+        del fields["market_cap_vnd_bil"]
+    eps = fields.get("eps_vnd")
+    if eps is not None and abs(eps) > _EPS_VND_BOUND:
+        logger.warning("fa_suspect_unit: %s eps_vnd=%s beyond ±%s", sym, eps, _EPS_VND_BOUND)
+        del fields["eps_vnd"]
 
 
 class TCBSFASource:
@@ -111,6 +150,8 @@ class TCBSFASource:
 
     source_id = "tcbs"
     priority = 0.8
+    can_financials = True
+    can_ohlcv = False
 
     def __init__(
         self,
@@ -145,6 +186,7 @@ class TCBSFASource:
 
         if resp.status_code != 200:
             raise FASourceError(self.source_id, "upstream_error", f"status_{resp.status_code}")
+        check_payload_size(resp, self.source_id)
         try:
             body: Any = resp.json()
         except ValueError as exc:
@@ -166,18 +208,16 @@ class TCBSFASource:
         # TCBS market cap is VND-native; converting to billions is arithmetic.
         if "market_cap_vnd_bil" in fields:
             fields["market_cap_vnd_bil"] = round(fields["market_cap_vnd_bil"] / 1e9, 1)
+        _drop_implausible(fields, sym)
+        if not fields:
+            return None
 
         return SourceFinancials(
             source_id=self.source_id,
             symbol=sym,
             fields=fields,
-            as_of=_latest_date(records),
+            as_of=_latest_by_keys(records, _PERIOD_KEYS),
+            published_at=_latest_by_keys(records, _PUBLISH_KEYS),
             source_url=url,
             statement_records=0,
         )
-
-    async def health_check(self, *, timeout_s: float = 2.0) -> bool:
-        try:
-            return await self.fetch_financials("TCB", timeout_s=timeout_s) is not None
-        except FASourceError:
-            return False

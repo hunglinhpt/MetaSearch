@@ -6,6 +6,9 @@ Requires a Bearer JWT obtained from fireant.vn login; the token is read from
 settings (``FA_FIREANT_TOKEN``) and never hardcoded. Empty token disables the
 source entirely. 401/403 raises ``FASourceError(RATE_LIMITED)`` so the breaker
 opens instead of re-probing on every request.
+
+Period-end dates (fiscalDate) anchor ``as_of``; publish-side keys (reportDate /
+createdAt) map to ``published_at`` — the two claims are never merged.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from app.retrieval.fa_sources.base import (
     FASourceError,
     SourceFinancials,
     SourceOHLCV,
+    check_payload_size,
     ensure_symbol,
     pick,
     pick_float,
@@ -46,15 +50,36 @@ _BALANCE_KEYS: dict[str, tuple[str, ...]] = {
     "total_equity_vnd_bil": ("totalequity", "equity"),
     "total_debt_vnd_bil": ("totaldebt",),
 }
-_DATE_KEYS = ("fiscaldate", "reportdate", "enddate", "date", "createdat")
-
-# statement slug -> canonical field map (zip order matches the parallel fetch).
+# statement slug -> canonical field map (order matches the parallel fetch).
 _STATEMENT_KEYMAPS: dict[str, dict[str, tuple[str, ...]]] = {
     "income-statement": _INCOME_KEYS,
     "balance-sheet": _BALANCE_KEYS,
 }
 
-_token_logged = False
+# Period-end vs publish-side date keys — different provenance claims.
+_PERIOD_KEYS = ("fiscaldate", "enddate", "date")
+_PUBLISH_KEYS = ("reportdate", "createdat")
+
+# Plausibility band for a VN issuer's VND-billion amounts (revenue, profit,
+# balance-sheet anchors) and growth percentages — mirrors the TCBS gates.
+_VND_BIL_BAND = (0.0, 3_000_000.0)  # 3,000,000 tỷ đ ≈ 120 tỷ USD
+_GROWTH_PCT_BOUND = 500.0
+
+
+def _drop_implausible_vnd_bil(fields: dict[str, float], sym: str) -> None:
+    lo, hi = _VND_BIL_BAND
+    for name in [k for k in fields if k.endswith("_vnd_bil")]:
+        val = fields[name]
+        if not (lo <= val <= hi):
+            logger.warning("fa_suspect_unit: %s %s=%s outside %s", sym, name, val, (lo, hi))
+            del fields[name]
+    for name in ("revenue_growth_pct", "profit_growth_pct"):
+        val = fields.get(name)
+        if val is not None and abs(val) > _GROWTH_PCT_BOUND:
+            logger.warning(
+                "fa_suspect_unit: %s %s=%s beyond ±%s", sym, name, val, _GROWTH_PCT_BOUND
+            )
+            del fields[name]
 
 
 def _parse_grounded_date(value: Any) -> datetime | None:
@@ -73,26 +98,26 @@ def _parse_grounded_date(value: Any) -> datetime | None:
     return None
 
 
-def _latest_record(records: list[dict]) -> dict:
-    """Pick the record with the newest grounded date; ordering is not trusted."""
-    best: dict = {}
-    best_dt: datetime | None = None
-    for rec in records:
-        rec_dt = _latest_date([rec])
-        if rec_dt and (best_dt is None or rec_dt > best_dt):
-            best_dt = rec_dt
-            best = rec
-    return best or (records[0] if records else {})
-
-
-def _latest_date(records: list[dict]) -> datetime | None:
+def _latest_by_keys(records: list[dict], keys: tuple[str, ...]) -> datetime | None:
     best: datetime | None = None
     for rec in records:
-        for key in _DATE_KEYS:
+        for key in keys:
             dt = _parse_grounded_date(pick(rec, key))  # case-insensitive (fiscalDate)
             if dt and (best is None or dt > best):
                 best = dt
     return best
+
+
+def _latest_record(records: list[dict]) -> dict:
+    """Pick the record with the newest PERIOD-END date; ordering is not trusted."""
+    best: dict = {}
+    best_dt: datetime | None = None
+    for rec in records:
+        rec_dt = _latest_by_keys([rec], _PERIOD_KEYS)
+        if rec_dt and (best_dt is None or rec_dt > best_dt):
+            best_dt = rec_dt
+            best = rec
+    return best or (records[0] if records else {})
 
 
 def _first_float(record: dict, variants: tuple[str, ...]) -> float | None:
@@ -108,6 +133,8 @@ class FireAntFASource:
 
     source_id = "fireant"
     priority = 0.7
+    can_financials = True
+    can_ohlcv = False
 
     def __init__(
         self,
@@ -118,6 +145,7 @@ class FireAntFASource:
         self._token_override = token
         self.base_url = base_url.rstrip("/")
         self._client = client
+        self._token_logged = False  # instance-scoped: no cross-test leakage
 
     def _token(self) -> str:
         if self._token_override is not None:
@@ -149,6 +177,7 @@ class FireAntFASource:
             raise FASourceError(self.source_id, "rate_limited", f"auth_{resp.status_code}")
         if resp.status_code != 200:
             raise FASourceError(self.source_id, "upstream_error", f"status_{resp.status_code}")
+        check_payload_size(resp, self.source_id)
         try:
             body = resp.json()
         except ValueError as exc:
@@ -160,15 +189,14 @@ class FireAntFASource:
     async def fetch_financials(
         self, symbol: str, *, timeout_s: float = 3.5
     ) -> SourceFinancials | None:
-        global _token_logged
         sym = ensure_symbol(symbol)
         if sym is None:
             return None
         token = self._token()
         if not token:
-            if not _token_logged:
-                _token_logged = True
-                # Once per process: the owner needs to know FireAnt is off.
+            if not self._token_logged:
+                self._token_logged = True
+                # Once per instance: the owner needs to know FireAnt is off.
                 logger.info("fa_fireant_disabled: FA_FIREANT_TOKEN is empty")
             return None
 
@@ -177,6 +205,7 @@ class FireAntFASource:
         statement_records = 0
         first_url = ""
         first_error: FASourceError | None = None
+        partial_fault = False
 
         # Both statements in parallel — never two sequential round-trips.
         results = await asyncio.gather(
@@ -196,6 +225,7 @@ class FireAntFASource:
                 # when nothing at all was fetched, so the breaker still sees a
                 # genuinely dead source.
                 first_error = first_error or result
+                partial_fault = True
                 logger.debug("fa_fireant_statement_failed: %s %s", sym, statement)
                 continue
             if isinstance(result, BaseException):  # pragma: no cover — gather contract
@@ -227,6 +257,14 @@ class FireAntFASource:
             if first_error is not None:
                 raise first_error
             return None
+        # partial_fault=True; the aggregator logs fa_source_degraded once for
+        # the merged payload (no duplicate warning here).
+
+        # Unit-detector gate (audit N1): FireAnt's unit for VND amounts is
+        # unverified (token-gated, no probe yet), so _vnd_bil amounts outside
+        # a plausible band for a VN issuer are dropped with a warning instead
+        # of serving a mis-scaled number. Growth percentages: ±500%.
+        _drop_implausible_vnd_bil(fields, sym)
 
         # Debt/Equity from the same grounded balance-sheet numbers (arithmetic).
         equity = fields.get("total_equity_vnd_bil")
@@ -238,13 +276,9 @@ class FireAntFASource:
             source_id=self.source_id,
             symbol=sym,
             fields=fields,
-            as_of=_latest_date(all_records),
+            as_of=_latest_by_keys(all_records, _PERIOD_KEYS),
+            published_at=_latest_by_keys(all_records, _PUBLISH_KEYS),
             source_url=first_url,
             statement_records=statement_records,
+            partial_fault=partial_fault,
         )
-
-    async def health_check(self, *, timeout_s: float = 2.0) -> bool:
-        try:
-            return await self.fetch_financials("TCB", timeout_s=timeout_s) is not None
-        except FASourceError:
-            return False

@@ -3,12 +3,23 @@
 Same TradingView charting payload shape as VNDIRECT dchart:
 ``{"s": "ok", "t": [...], "o": [...], "h": [...], "l": [...], "c": [...], "v": [...]}``
 Keyless, daily resolution. Unlike VNDIRECT we do NOT apply the x1000 price
-correction: there is no evidence SSI serves scaled prices, and "correcting"
-a feed we have not verified would be inventing data.
+correction — but that is a scale ASSUMPTION to re-verify, not a fact: docs/15
+§10 proves the sibling TradingView feed (VNDIRECT, same payload convention)
+serves /1000-scaled prices, which raises the prior that SSI does too. When the
+SSI route is re-probed, verifying the price scale is a MANDATORY recorded step
+(§10); until then the log-only ``fa_price_mismatch`` cross-check against
+Simplize ``priceClose`` guards the final number whenever Simplize is up.
+
+Live-probe note (2026-11-11, server egress): the historic
+``iboard.ssi.com.vn/dchart/api/history`` route currently serves the iBoard SPA
+HTML shell instead of TradingView JSON. The adapter therefore fails with
+``FASourceError(bad_json)`` and its breaker opens — graceful, by design. When
+the endpoint is re-verified, only ``DEFAULT_BASE_URL`` needs updating.
 """
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -20,8 +31,12 @@ from app.retrieval.fa_sources.base import (
     FASourceError,
     SourceFinancials,
     SourceOHLCV,
+    check_payload_size,
     ensure_symbol,
+    to_float,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://iboard.ssi.com.vn/dchart/api/history"
 
@@ -31,6 +46,8 @@ class SSIFASource:
 
     source_id = "ssi"
     priority = 0.9
+    can_financials = False
+    can_ohlcv = True
 
     def __init__(
         self,
@@ -65,6 +82,7 @@ class SSIFASource:
 
         if resp.status_code != 200:
             raise FASourceError(self.source_id, "upstream_error", f"status_{resp.status_code}")
+        check_payload_size(resp, self.source_id)
         try:
             data: Any = resp.json()
         except ValueError as exc:
@@ -77,42 +95,49 @@ class SSIFASource:
 
         t_list = data.get("t") or []
         c_list = data.get("c") or []
-        o_list = data.get("o") or c_list
-        h_list = data.get("h") or c_list
-        l_list = data.get("l") or c_list
-        v_list = data.get("v") or [0.0] * len(c_list)
+        o_list = data.get("o") or []
+        h_list = data.get("h") or []
+        l_list = data.get("l") or []
+        v_list = data.get("v") or []
 
         if len(c_list) < 5:
             return None
 
+        # STRICT arrays: a missing/mismatched o/h/l/v is schema drift — refuse
+        # the series rather than fabricating closes-for-opens or zero volumes
+        # (zero volumes would silently poison OBV/MFI and pattern detection).
+        series: dict[str, list[float]] = {}
+        for name, raw in (
+            ("opens", o_list),
+            ("highs", h_list),
+            ("lows", l_list),
+            ("volumes", v_list),
+        ):
+            if len(raw) != len(c_list):
+                logger.debug("ssi_series_schema_drift: %s field=%s", sym, name)
+                return None
+            values = [to_float(x) for x in raw]
+            if any(v is None for v in values):  # NaN/Infinity/str — json accepts NaN
+                raise FASourceError(self.source_id, "upstream_error", f"non_finite_{name}")
+            series[name] = values
+        closes = [to_float(x) for x in c_list]
+        if any(v is None for v in closes):
+            raise FASourceError(self.source_id, "upstream_error", "non_finite_closes")
         try:
-            closes = [float(x) for x in c_list]
-            opens = [float(x) for x in o_list] if len(o_list) == len(c_list) else list(closes)
-            highs = [float(x) for x in h_list] if len(h_list) == len(c_list) else list(closes)
-            lows = [float(x) for x in l_list] if len(l_list) == len(c_list) else list(closes)
-            volumes = (
-                [float(x) for x in v_list] if len(v_list) == len(c_list) else [0.0] * len(c_list)
-            )
             last_ts = int(t_list[-1]) if t_list else None
         except (TypeError, ValueError) as exc:
             raise FASourceError(self.source_id, "upstream_error", "bad_series") from exc
 
-        if any(x < 0 for x in closes) or any(x < 0 for x in volumes):
+        if any(x < 0 for x in closes) or any(x < 0 for x in series["volumes"]):
             raise FASourceError(self.source_id, "upstream_error", "negative_values")
 
         return SourceOHLCV(
             source_id=self.source_id,
-            opens=opens,
-            highs=highs,
-            lows=lows,
+            opens=series["opens"],
+            highs=series["highs"],
+            lows=series["lows"],
             closes=closes,
-            volumes=volumes,
+            volumes=series["volumes"],
             last_ts=last_ts,
             source_url=url,
         )
-
-    async def health_check(self, *, timeout_s: float = 2.0) -> bool:
-        try:
-            return await self.fetch_ohlcv("VNINDEX", timeout_s=timeout_s) is not None
-        except FASourceError:
-            return False
