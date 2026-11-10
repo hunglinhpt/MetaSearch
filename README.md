@@ -224,7 +224,7 @@ MetaSearch không phát minh lại bánh xe — thiết kế này tổng hợp t
 
 ## 7. License & Đóng góp (Contributions)
 
-Dự án được phát hành dưới giấy phép mã nguồn mở **MIT License**.
+Dự án được phát hành dưới giấy phép mã nguồn mở **GNU General Public License v3.0 (GPL-3.0-or-later)**.
 
 Chúng tôi rất hoan nghênh và chào đón mọi sự đóng góp từ cộng đồng (Issues, Feature Requests, Pull Requests)! Vui lòng xem hướng dẫn chi tiết tại [CONTRIBUTING.md](CONTRIBUTING.md) để bắt đầu thiết lập môi trường phát triển, nắm rõ workflow và quy ước kiểm thử chất lượng trước khi gửi đóng góp.
 
