@@ -47,6 +47,7 @@ Script trong `scripts/windows/`, chạy được trên PowerShell 5.1:
 
 - Log ở `api\.lite.log`, `api\.lite.err.log`, xoay khi quá 10 MB; nhật ký của script ở `api\.lite.manager.log`.
 - `check` khởi động lại dịch vụ khi `/readyz` không trả 200 trong 30 giây.
+- An toàn tiến trình: `metasearch-lite.ps1` và `measure-lite.ps1` luôn kiểm tra dòng lệnh tiến trình qua Win32_Process (`uvicorn ... app.main:app` và `--port`) trước khi dừng hoặc đo đạc, loại bỏ hoàn toàn rủi ro PID file cũ sau khi crash/reboot trỏ nhầm và kill tiến trình Python khác.
 - Đo trên máy chạy thật (`04-quality-checklist` C11-C13): `measure-lite.ps1 idle`, `restart`, và `wake` sau mỗi lần máy thức. Kết quả nối vào `api\.lite.measure.log`.
 
 ### `/readyz`

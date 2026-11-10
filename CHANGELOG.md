@@ -46,6 +46,8 @@ Bản này gom chương trình readiness (đợt 1-4). Bản MAJOR vì có thay 
 - Monitor RSS không còn import mỗi nhịp (từng làm treo lúc tắt); đọc RSS được trên macOS.
 - Extra `mcp` ghim `<2`: `mcp` 2.x đổi tên API làm `python -m app.mcp` lỗi.
 - Vá `postcss` (high) trong frontend.
+- `metasearch-lite.ps1` & `measure-lite.ps1`: kiểm tra dòng lệnh tiến trình qua Win32_Process (`uvicorn ... app.main:app` và `--port`), ngăn chặn việc nhầm lẫn hoặc dừng nhầm tiến trình Python khác khi Windows tái sử dụng PID sau sự cố/khởi động lại máy.
+- Giải quyết triệt để 13 phát hiện kiểm toán F1–F13: lưu trữ bền vững phán quyết LLM Council (`council.py`), cơ chế đánh dấu chu kỳ dọn dẹp dữ liệu (`.retention_last_run`), tối ưu hóa imports module tránh lỗi F823 trong lifespan, và dọn dẹp các tham chiếu `nq` còn sót lại trong pipeline.
 
 ### Đo được (harness, upstream giả, Windows 11, 2026-11-09)
 | Kịch bản | Trước (1.3.1) | Bây giờ |

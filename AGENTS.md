@@ -13,15 +13,15 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-09 — v2.0.0 Readiness cho hệ thống bên ngoài)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-10 — v2.0.0 Readiness cho hệ thống bên ngoài)
 
 - ✅ **Readiness cho hệ thống bên ngoài (v2.0.0)** — chi tiết và số đo ở [CHANGELOG.md](CHANGELOG.md):
   - **Breaking:** `/v1/context` mặc định chỉ `chunks` + `sources` (xin thêm qua `include`); BYO LLM tắt mặc định; cách ly dữ liệu theo key; vài route chỉ admin; SuperAgent tắt mặc định.
   - Không còn số liệu tài chính ước lượng hay bảng tĩnh trong runtime; mọi kết quả, chunk có mốc nguồn và thời gian.
   - Ngân sách theo request, admission control, single-flight, lớp HTTP dùng chung, CPU ra khỏi event loop.
-  - Metric + alert, ghi DB qua hàng đợi có giới hạn, retention, `/readyz` có nghĩa, Lite chạy Alembic.
-  - Lite trên Windows như dịch vụ (`scripts/windows/`); hợp đồng tích hợp `docs/15-integration-guide.md`.
-  - CI: lockfile `uv`, mypy (`app/core`, `app/api`), coverage ≥ 84%, gitleaks, promtool, nightly.
+  - Metric + alert, ghi DB qua hàng đợi có giới hạn, retention, `/readyz` có nghĩa, Lite chạy Alembic; hoàn tất khắc phục 13 phát hiện kiểm toán F1–F13 (lưu trữ phán quyết council, chu kỳ retention, tối ưu imports).
+  - Lite trên Windows như dịch vụ (`scripts/windows/`), kiểm tra dòng lệnh tiến trình qua Win32_Process chống xung đột tái sử dụng PID; hợp đồng tích hợp `docs/15-integration-guide.md`.
+  - CI: lockfile `uv`, mypy (`app/core`, `app/api`), coverage ≥ 84%, gitleaks, promtool, nightly; 594 unit & E2E tests pass 100%.
   - Đo trên harness: search c=1 p95 197 ms (trước 875 ms), c=20 0% lỗi (trước 100%), Lite context c=10 0% lỗi (trước 100%). Chưa đo Postgres/Redis/SearXNG thật, Linux, soak dài.
 - **Ghi chú cho các mục cũ dưới đây:** "hơn 1,600 mã" thực tế là 1.518 mã; "nghiêm cấm ngụy tạo" ở v1.3.1 chỉ thật từ v2.0.0; SuperAgent (v1.3.0) là thử nghiệm, tắt mặc định.
 - ✅ **Financial Data Integrity & Real Market OHLCV Grounding (v1.3.1)**:
