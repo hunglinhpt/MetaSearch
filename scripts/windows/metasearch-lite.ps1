@@ -43,12 +43,27 @@ function Invoke-LogRotation {
     }
 }
 
+function Test-LiteCommandLine([int]$ProcId) {
+    # A PID alone is not proof: after a reboot or a crash Windows reuses PIDs, and another
+    # python process on this machine (a different app, a test run) can get the one in the PID
+    # file. Only a process started as this server on this port counts; anything else, or a
+    # command line we cannot read, is not ours and must never be stopped by this script.
+    $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcId" -ErrorAction SilentlyContinue
+    if (-not $cim -or -not $cim.CommandLine) { return $false }
+    $cmd = $cim.CommandLine
+    return ($cmd -like "*uvicorn*app.main:app*") -and ($cmd -match "--port\s+$Port(\s|$)")
+}
+
 function Get-LiteProcess {
     if (-not (Test-Path $PidFile)) { return $null }
     $procId = (Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
     if (-not $procId) { return $null }
     $proc = Get-Process -Id ([int]$procId) -ErrorAction SilentlyContinue
-    if ($proc -and $proc.ProcessName -match "python") { return $proc }
+    if (-not $proc) { return $null }
+    if (Test-LiteCommandLine $proc.Id) { return $proc }
+    # Stale PID file pointing at someone else's process: forget it, leave that process alone.
+    Write-Log "PID file names PID $($proc.Id) ($($proc.ProcessName)), which is not MetaSearch Lite on port $Port; ignoring it"
+    Remove-Item $PidFile -ErrorAction SilentlyContinue
     return $null
 }
 

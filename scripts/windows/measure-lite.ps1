@@ -49,6 +49,14 @@ function Get-ServerProcess([int]$LauncherId) {
 }
 
 $procId = [int](Get-Content $PidFile | Select-Object -First 1)
+# The PID file can be stale and name someone else's process (PIDs are reused); "restart" kills
+# what it finds, so refuse unless the launcher really is this server on this port.
+$launcher = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
+if (-not $launcher -or -not ($launcher.CommandLine -like "*uvicorn*app.main:app*") -or
+        -not ($launcher.CommandLine -match "--port\s+$Port(\s|$)")) {
+    Write-Host "PID $procId in $PidFile is not MetaSearch Lite on port $Port; start it with metasearch-lite.ps1 first"
+    exit 2
+}
 $server = Get-ServerProcess $procId
 Write-Host ("measuring server PID {0} (launcher {1})" -f $server.Id, $procId)
 
