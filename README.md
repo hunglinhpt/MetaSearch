@@ -2,8 +2,13 @@
 
 > Hệ thống tìm kiếm đa nguồn & phân tích định lượng phục vụ AI: **Meta-Search (SearXNG 70+ engines + 14 Vertical Engines) → Crawl & Extract → Dedup/Consensus/Rerank → Synthesize có trích dẫn `[n]`**, đóng gói thành REST API + SSE Streaming + MCP Server + Automated Daily Briefings Blog + Web UI.
 
-Trạng thái: **v2.0.0 — Readiness cho hệ thống bên ngoài (an toàn, liêm chính dữ liệu, tải, quan sát, vận hành, CI)**:
-- **Sẵn sàng cho hệ thống bên ngoài (`v2.0.0`)**:
+English version: [README.en.md](README.en.md)
+
+Trạng thái: **v2.2.0 — Web UI tab Tin tức + đọc máy tiếng Việt (TTS); cửa sổ thời gian map server-side; 2 vòng audit đối kháng PASS**:
+- **Tab Tin tức + TTS tiếng Việt (`v2.2.0`)**: 6 mục preset (kinh tế vĩ mô, tài chính–chứng khoán, kinh doanh, công nghệ–AI, ngân hàng–tiền tệ, kinh tế thế giới) gọi `/v1/search` với `engines=["google_news"]`, `news: true`; **cửa sổ thời gian do backend map `freshness_days` → `when:{n}d` server-side** (guard end-anchored ASCII không nhân đôi operator; client chỉ gửi param có cấu trúc, không nhét operator vào query). Đọc máy qua Web Speech API (voice stack của OS, free, không egress backend) cho câu trả lời + cả bản tin/từng tin; UI công khai đúng giọng đang dùng là **local** (giữ trên máy) hay **online** (gửi tới máy chủ TTS). `safeHref()` gói mọi href từ payload. Chi tiết: [docs/16-web-ui-news-tts.md](docs/16-web-ui-news-tts.md).
+- **Process hardening (`v2.2.0`)**: pre-commit gate kiểm tra `api/uv.lock` khớp version với `pyproject.toml` (fail-closed); `clean_workspace` không bao giờ xoá dữ liệu runtime local (`api/*.db*`, `*.retention`, `api/.env.*`) và không crash khi file bị tiến trình local giữ lock; CI thêm `npm audit` cả dev deps + vitest (16 test) vào frontend matrix 3 OS.
+- **Multi-source FA, bỏ điểm hụt đơn nguồn (`v2.1.0`)**: adapter **trực tiếp** SSI (OHLCV), TCBS (ratios), FireAnt (BCTC, JWT `FA_FIREANT_TOKEN`) — không qua vnstock/wrapper; `FAAggregator` fan-out breaker-gated, cross-validate 0.5%, hết nguồn thì trả trường rỗng + `missing_fields` (không ngụy tạo); `VietStockAdapter` fallback đồng thời VNDIRECT→SSI, Simplize→TCBS/FireAnt, provenance ghi đúng nguồn thật. Chi tiết: [docs/15-fa-sources-plan.md](docs/15-fa-sources-plan.md).
+- **Sẵn sàng cho hệ thống bên ngoài (`v2.0.0`)**: Readiness: an toàn, liêm chính dữ liệu, tải, quan sát, vận hành, CI — giữ nguyên như cũ:
   - `/v1/context` mặc định chỉ trả `chunks` + `sources` (xin thêm qua `include`); BYO LLM tắt mặc định; cách ly dữ liệu theo API key; vài route chỉ admin; SuperAgent tắt mặc định.
   - Không số liệu tài chính ước lượng hay bảng tĩnh trong runtime; mọi kết quả, chunk có mốc nguồn (`source_url`, `as_of`) và thời gian.
   - Ngân sách theo request, admission control, single-flight, lớp HTTP dùng chung, CPU ra khỏi event loop.
@@ -34,7 +39,7 @@ Trạng thái: **v2.0.0 — Readiness cho hệ thống bên ngoài (an toàn, li
 - **Kiến Trúc Universal Multi-Domain Deep Intelligence**: Khả năng thẩm định bản chất chuyên sâu đa lĩnh vực với **Tài chính & Pháp y BCTC (`financial`)** giữ vai trò **Flagship Pilot** cùng 7 gói chuyên sâu (`biomedical_health`, `technology_ai`, `academic_research`, `legal_macro_policy`, `eastern_metaphysics`, `news_geopolitics`, `general_discovery`).
 - **Thẩm Định Pháp Y BCTC Chuyên Sâu (`financial_forensics.py`)**: Phân nhánh theo đặc thù ngành — **Ngân hàng (CAMELS / Basel II-III: CAR, NPL, Nợ nhóm 2, LLR, NIM, CASA, LDR, CIR)**, **Chứng khoán (Margin/VCSH so với trần 200%, FVTPL/HTM/AFS, Tỷ lệ an toàn tài chính)**, **Bất động sản & KCN (Người mua trả tiền trước / Của để dành, Tồn kho/Tài sản)**, **Sản xuất (Cấu trúc nợ, DSO, CFO/Net Income)** kèm **Altman Z-Score**, **Beneish M-Score**, **Piotroski F-Score (9 tiêu chí)**.
 - **Phân Tích Kỹ Thuật Định Lượng (`technical_analysis.py`)**: **Fibonacci Retracement & Golden Pocket (`61.8%–65.0%`) + Extensions (`127.2%`, `261.8%`)**, **Ichimoku Kinko Hyo (Tenkan/Kijun/Senkou A-B/Chikou Span)**, **True EMA-based MACD**, **Wilder's RSI & 2x ATR Trailing Stop**, **Stochastic (`%K`, `%D`)**, **Multi-EMA Ribbon (`20/50/200`)**, **Kênh hồi quy tuyến tính $\pm 2\sigma$ ($R^2$)**, **8 mẫu hình giá/nến**, và **Custom Indicator Query Parser** (`RSI 9`, `MACD 8 21 5`, `Bollinger 15 2.5`...).
-- **Quy Trình Pre-Commit & Release Nghiêm Ngặt**: Cưỡng chế bắt buộc hook `.githooks/pre-commit` chặn mọi commit nếu trượt bất kỳ kiểm định nào; **594 unit & E2E tests PASS**, `ruff` 0 lỗi, `bandit` 0 lỗi bảo mật, Next.js 15 build sạch. Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
+- **Quy Trình Pre-Commit & Release Nghiêm Ngặt**: Cưỡng chế bắt buộc hook `.githooks/pre-commit` chặn mọi commit nếu trượt bất kỳ kiểm định nào (kiểm tra `uv.lock` trước tiên); **770 backend tests + 16 frontend tests (vitest) PASS**, `ruff` 0 lỗi, `bandit` 0 lỗi bảo mật, Next.js 15 build sạch, CI 13/13 jobs xanh trên 3 OS. Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
 
 ---
 
@@ -145,9 +150,10 @@ Web UI: mở `http://localhost:3000` — chọn chuyên mục (Tài chính & C�
 MetaSearch/
 ├── README.md                  ← bạn đang ở đây
 ├── AGENTS.md                  ← hướng dẫn AI agent nhận việc (trạng thái, quy ước, checklist)
-├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — v1.0.0)
+├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — hiện tại v2.2.0)
 ├── CONTRIBUTING.md            ← guideline setup + workflow + gate
-├── docs/                      ← thiết kế chi tiết (12 tài liệu + 8 ADR)
+├── README.en.md               ← English version of this README
+├── docs/                      ← thiết kế chi tiết (16 tài liệu + ADR)
 │   ├── 01-product-requirements.md
 │   ├── 02-system-architecture.md
 │   ├── 03-search-pipeline.md
@@ -159,8 +165,12 @@ MetaSearch/
 │   ├── 09-observability-eval.md
 │   ├── 10-security-compliance.md
 │   ├── 11-testing-strategy.md
-│   ├── 12-roadmap-plan.md     ← plan chi tiết Phase 0–5 (gồm KPI + verify matrix)
-│   └── adr/                   ← 8 Architecture Decision Records
+│   ├── 12-roadmap-plan.md     ← plan chi tiết Phase 0–5 + KPI + verify matrix (source of truth)
+│   ├── 13-versioning-and-release.md
+│   ├── 15-fa-sources-plan.md  ← 21 nguồn FA VN + adapter trực tiếp SSI/TCBS/FireAnt (v2.1.0)
+│   ├── 15-integration-guide.md ← hợp đồng tích hợp hệ thống ngoài (v2.0.0)
+│   ├── 16-web-ui-news-tts.md  ← tab Tin tức + TTS tiếng Việt, map when:Nd server-side (v2.2.0)
+│   └── adr/                   ← Architecture Decision Records
 ├── api/                       ← FastAPI orchestration + Quantitative Engines
 │   ├── app/
 │   │   ├── core/              ← auth (API key + RBAC + sliding-window), errors, logging, middleware, metrics
@@ -174,16 +184,20 @@ MetaSearch/
 │   ├── alembic/versions/      ← migrations (Postgres + pgvector / SQLite auto-bootstrap)
 │   ├── evals/golden.json      ← 40 golden evaluation queries đa miền (EN + VI)
 │   ├── scripts/               ← eval_run.py (--judge-faithfulness) + perf_load.py
-│   ├── tests/                 ← 333 unit tests (+ 7 integration tests gated)
+│   ├── tests/                 ← 770 tests (integration gated bằng METASEARCH_INTEGRATION=1)
 │   └── pyproject.toml
-├── frontend/                  ← Next.js 15 + React 19 (Web UI streaming + Category Chips + Markdown Table + Blog Reader)
-│   ├── app/ · lib/api.ts      ← SSE client + ApiError + Digests API
+├── frontend/                  ← Next.js 15 + React 19 (Web UI streaming + Category Chips + News tab + TTS + Blog Reader)
+│   ├── app/ · lib/api.ts      ← SSE client + ApiError + Digests API + safeHref
+│   ├── lib/tts.ts             ← Web Speech API TTS tiếng Việt (+ test vitest)
+│   ├── components/NewsPanel.tsx ← tab Tin tức 6 mục + đọc bản tin/từng tin
 │   └── package.json
 ├── deploy/
 │   ├── docker-compose.yml     ← stack đầy đủ + profile observability
 │   ├── searxng/ · prometheus/ · grafana/ · k6/
 │   └── .env.example · .env.lite.example
-└── .github/workflows/ci.yml   ← CI: lint + unit test + security scan + build
+├── scripts/                   ← release.py (pre-commit gate + release) · guard_local_data.py
+├── .githooks/pre-commit       ← gate bắt buộc: kiểm tra uv.lock → ruff → bandit → E2E → full pytest
+└── .github/workflows/ci.yml   ← CI matrix 3 OS: backend + frontend (vitest, npm audit cả dev) + pipeline gate + gitleaks/promtool/docker smoke
 ```
 
 ## 5. Bản đồ tài liệu
@@ -200,9 +214,12 @@ MetaSearch/
 | [08 Deployment](docs/08-deployment.md) | Lite profile (không Docker) vs Docker Compose dev 16GB / prod VPS? |
 | [09 Observability & Eval](docs/09-observability-eval.md) | Trace/metrics/log, eval 40 golden queries + faithfulness judge? |
 | [10 Security & Compliance](docs/10-security-compliance.md) | SSRF IP-pinning, RBAC admin, robots.txt, rate limit, secrets? |
-| [11 Testing Strategy](docs/11-testing-strategy.md) | Test strategy, 333 unit tests, golden set, đo citation accuracy? |
-| [12 Roadmap & Plan](docs/12-roadmap-plan.md) | **Plan chi tiết Phase 0–5 (v1.0.0), KPI, rủi ro & mitigation** |
+| [11 Testing Strategy](docs/11-testing-strategy.md) | Test strategy, 770 backend + 16 frontend tests, golden set, đo citation accuracy? |
+| [12 Roadmap & Plan](docs/12-roadmap-plan.md) | **Plan chi tiết Phase 0–5, KPI, rủi ro & mitigation, trạng thái các version sau v2.0.0** |
 | [13 Versioning & Release](docs/13-versioning-and-release.md) | **Quy chuẩn SemVer, Quality Gates, script release tự động & CI/CD** |
+| [15 FA Sources Plan](docs/15-fa-sources-plan.md) | 21 nguồn dữ liệu tài chính VN đã thẩm định; adapter trực tiếp SSI/TCBS/FireAnt, `FAAggregator` cross-validate (v2.1.0)? |
+| [15 Integration Guide](docs/15-integration-guide.md) | Hợp đồng cho hệ thống ngoài: auth, rate limit, error model, Lite trên Windows như dịch vụ (v2.0.0)? |
+| [16 Web UI News + TTS](docs/16-web-ui-news-tts.md) | Tab Tin tức 6 mục + TTS tiếng Việt; map `freshness_days`→`when:Nd` server-side; chính sách riêng tư giọng đọc (v2.2.0)? |
 
 ## 6. Đứng trên vai người khổng lồ
 

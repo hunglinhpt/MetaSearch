@@ -164,14 +164,16 @@
   - Bổ sung hệ thống CSS đầy đủ trong `frontend/app/globals.css`, thanh chọn chuyên ngành `CATEGORY_CHIPS`, render bảng biểu Markdown `<table>` và tiêu đề `<h2>`-`<h4>`.
   - Nâng cấp `eval_run.py` (`--judge-faithfulness`, `--concurrency`) và mở rộng `golden.json` lên 40 golden queries.
 
-**Trạng thái verify (v1.0.0 Institutional Release):**
+**Trạng thái verify mới nhất (v2.2.0; số tại v1.0.0 là 333 passed):**
 
 | Hạng mục | Lệnh | Kết quả |
 |---|---|---|
-| Unit test | `pytest -q` | **333 passed**, 7 skipped (integration gated) |
-| Lint & Format | `ruff check` + `ruff format --check` | **All checks passed** (127 files clean) |
+| Backend tests | `pytest -q` | **770 passed** (integration gated bằng `METASEARCH_INTEGRATION=1`) |
+| Lint & Format | `ruff check` + `ruff format --check` | **All checks passed** |
 | Security scan | `bandit -q -r app -x tests` | **0 issues** (exit 0) |
-| Frontend | `npm run typecheck` + `npm run build` | **exit 0** (Next.js 15.5.28 static build clean) |
+| Frontend | `npm run test` + `npm run typecheck` + `npm run build` | **vitest 16/16 PASS**, `tsc` exit 0, Next.js build clean |
+| Dependency audit | `npm audit --audit-level=high` (cả dev deps) | **0 vulnerabilities** |
+| CI | GitHub Actions matrix 3 OS | **13/13 jobs success** (backend ×3, frontend ×3, pipeline gate ×3, gitleaks, promtool, docker smoke, windows scripts) |
 
 ## 3. KPI nghiệm thu (từ [01](01-product-requirements.md))
 
@@ -192,6 +194,14 @@
 - [x] Adapter trực tiếp (không qua vnstock): SSI (OHLCV), TCBS (ratios), FireAnt (BCTC, JWT) + `FAAggregator` breaker-gated, cross-validate 0.5%, provenance từng field.
 - [x] Fallback đồng thời trong `VietStockAdapter`: VNDIRECT chết → SSI; Simplize chết → TCBS/FireAnt; provenance kết quả ghi đúng nguồn thật.
 - [ ] Wave 3: cache TTL field-level, batch fetch, FA snapshot; CafeF/VietStock scraper sau khi probe HTML schema thật.
+
+### Bổ sung sau v2.1.0: Web UI Tin tức + TTS tiếng Việt (v2.2.0 — 2026-11-11)
+
+- [x] Tab Tin tức 6 mục preset qua `google_news` + `news: true`; **cửa sổ thời gian do backend map `freshness_days` → `when:{n}d` server-side** (guard end-anchored ASCII; client chỉ gửi param có cấu trúc) — [16-web-ui-news-tts.md](16-web-ui-news-tts.md).
+- [x] TTS vi-VN qua Web Speech API (voice stack của OS, free, không egress backend): đọc câu trả lời + cả bản tin/từng tin; UI công khai đúng giọng đang dùng là local hay online (riêng tư); strip markdown/URL/`[n]`, chunk ≤220 ký tự, một speaker tại một thời điểm, generation guard.
+- [x] `safeHref()` cho mọi href từ payload; toolbar trung thực về cửa sổ thời gian (phát hiện `when:` nhúng trong truy vấn tự do); `age_s` fallback `published_at` cho tin (/v1/search + /v1/context).
+- [x] Process: pre-commit gate kiểm tra `api/uv.lock` khớp version (fail-closed, parser neo đúng section); `clean_workspace` không xoá dữ liệu runtime local (`api/*.db*`, `*.retention`, `api/.env.*`) và skip file bị lock thay vì crash; CI `npm audit` cả dev deps; vitest (16 test) vào frontend matrix 3 OS.
+- [x] Audit đối kháng 2 vòng (mỗi vòng 3 expert: perf / quality / data-sec): vòng 1 phát hiện 2 P2 + các P3 → fix hết; vòng 2 xác nhận 8/8 FIXED, verdict **PASS ×3**, không P1/P2 mới. Backend 770 tests + frontend 16 tests xanh; CI 13/13 jobs success.
 
 ## 4. Rủi ro thực thi
 

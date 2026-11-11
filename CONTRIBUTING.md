@@ -1,5 +1,7 @@
 # Contributing — MetaSearch
 
+English overview: [README.en.md](README.en.md)
+
 Nguyên tắc số 1: **giants-first** — đừng tự chế lại bánh xe. Đọc
 [AGENTS.md](AGENTS.md) cho bức tranh tổng và [docs/](docs/) cho thiết kế.
 

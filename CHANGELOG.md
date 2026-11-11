@@ -6,6 +6,12 @@ version tuân theo [SemVer](https://semver.org/).
 
 ## [2.2.0] — 2026-11-11 — Web UI: tab Tin tức đa lĩnh vực + đọc máy tiếng Việt (TTS)
 
+### Docs
+- README.md cập nhật đúng trạng thái hiện tại (v2.2.0: tab Tin tức + TTS, map `when:{n}d`
+  server-side, process hardening; số test 770 backend + 16 frontend; bản đồ docs đủ 16 tài
+  liệu) và có thêm **bản tiếng Anh `README.en.md`** (link chéo 2 chiều với README.md và
+  CONTRIBUTING.md). `docs/12-roadmap-plan.md` cập nhật verify matrix + mục v2.2.0.
+
 ### Added
 - Tab **Tin tức** mới trên Web UI (`frontend/components/NewsPanel.tsx`): 6 mục preset
   (Kinh tế vĩ mô, Tài chính–Chứng khoán, Kinh doanh–Doanh nghiệp, Công nghệ–AI,

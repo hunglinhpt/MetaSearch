@@ -124,7 +124,7 @@ api/app/
   orchestration/ pipeline.py (search + answer, event generator) · persist.py · engine_store.py
 frontend/        app/page.tsx (UI) · lib/api.ts (SSE client + ApiError)
 deploy/          docker-compose.yml · searxng/ · prometheus/ · grafana/ · k6/
-docs/            01-12 thiết kế + adr/ (8 ADR) — 12-roadmap-plan.md là source of truth
+docs/            01-16 thiết kế + adr/ — 12-roadmap-plan.md là source of truth; README.en.md là bản tiếng Anh của README.md
 ```
 
 ## 4. Quy ước bắt buộc
