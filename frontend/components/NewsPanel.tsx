@@ -19,7 +19,23 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { safeHref, SearchHit, search, ttsCapabilities } from "../lib/api";
+import {
+  addWatchlist,
+  createPodcastBriefing,
+  listWatchlist,
+  podcastBriefingStatus,
+  podcastFeedUrl,
+  podcastLatestUrl,
+  removeWatchlist,
+  safeHref,
+  SearchHit,
+  search,
+  ttsCapabilities,
+  watchlistAlerts,
+  type WatchlistAlertsResponse,
+  type WatchlistItem,
+  type PodcastBriefingStatus,
+} from "../lib/api";
 import {
   dictationIsSupported,
   mergeTranscripts,
@@ -155,6 +171,16 @@ export default function NewsPanel() {
   const [listening, setListening] = useState(false);
   const micHandleRef = useRef<DictationHandle | null>(null);
   const micBaseRef = useRef("");
+  // Watchlist + alerts (docs/18 C) — poll-on-demand, no background poller.
+  const [watchItems, setWatchItems] = useState<WatchlistItem[]>([]);
+  const [alerts, setAlerts] = useState<WatchlistAlertsResponse | null>(null);
+  const [checkingAlerts, setCheckingAlerts] = useState(false);
+  const [watchError, setWatchError] = useState("");
+  // Podcast briefing (docs/18 D) — VoiceStudio-only, 503 otherwise.
+  const [podcast, setPodcast] = useState<PodcastBriefingStatus | null>(null);
+  const [podcastBusy, setPodcastBusy] = useState(false);
+  const [podcastError, setPodcastError] = useState("");
+  const podcastPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     // Voices/SpeechSynthesis exist only client-side — gate after mount to
@@ -173,12 +199,25 @@ export default function NewsPanel() {
       setHasViVoice(ttsHasVietnameseVoice());
       setVoiceMode(ttsVietnameseVoiceMode());
     });
+    // Watchlist load is best-effort: a dead backend must not brick the tab.
+    listWatchlist()
+      .then((r) => {
+        setWatchItems(r.items);
+        if (r.storage === "memory") {
+          setWatchError("Backend đang mất kết nối DB — watchlist tạm thời lưu trong bộ nhớ của server.");
+        }
+      })
+      .catch(() => setWatchItems([]));
+    podcastBriefingStatus()
+      .then(setPodcast)
+      .catch(() => setPodcast(null));
     return () => {
       offVoices();
       ttsStop();
       ttsHandleRef.current?.cancel();
       abortRef.current?.abort();
       micHandleRef.current?.stop();
+      if (podcastPollRef.current) clearInterval(podcastPollRef.current);
     };
   }, []);
 
@@ -203,6 +242,112 @@ export default function NewsPanel() {
   };
 
   const activeCat = NEWS_CATEGORIES.find((c) => c.id === activeCatId) ?? NEWS_CATEGORIES[0];
+
+  // --- watchlist handlers (docs/18 C) ---------------------------------------
+  const refreshWatchlist = useCallback(async () => {
+    try {
+      const r = await listWatchlist();
+      setWatchItems(r.items);
+      setWatchError(r.storage === "memory" ? "Watchlist đang lưu tạm trong bộ nhớ (DB lỗi)." : "");
+    } catch (e) {
+      setWatchError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const addCurrentToWatchlist = useCallback(async () => {
+    const q = (customQuery.trim() || appliedQuery || "").trim();
+    if (!q) return;
+    try {
+      await addWatchlist(q, activeCat.label);
+      await refreshWatchlist();
+      setWatchError("");
+    } catch (e) {
+      setWatchError(e instanceof Error ? e.message : String(e));
+    }
+  }, [customQuery, appliedQuery, activeCat.label, refreshWatchlist]);
+
+  const deleteWatchItem = useCallback(
+    async (id: string) => {
+      try {
+        await removeWatchlist(id);
+        await refreshWatchlist();
+      } catch (e) {
+        setWatchError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [refreshWatchlist]
+  );
+
+  const checkAlerts = useCallback(async () => {
+    setCheckingAlerts(true);
+    try {
+      const resp = await watchlistAlerts();
+      setAlerts(resp);
+      setWatchError("");
+    } catch (e) {
+      setWatchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCheckingAlerts(false);
+    }
+  }, []);
+
+  // Plain function (not useCallback): it closes over speakText/stopSpeaking,
+  // which are re-created each render and must never go stale here.
+  const speakNewItems = () => {
+    if (!alerts) return;
+    if (speakingId === "__alerts__") {
+      stopSpeaking();
+      return;
+    }
+    const lines: string[] = [];
+    for (const item of alerts.items) {
+      for (const n of item.new_items) lines.push(n.title || n.url);
+    }
+    if (!lines.length) return;
+    stopSpeaking();
+    ttsHandleRef.current = speakText(`Có ${alerts.total_new} tin mới. ${lines.join(". ")}.`, {
+      onStart: () => setSpeakingId("__alerts__"),
+      onEnd: () => setSpeakingId(null),
+      onError: () => setSpeakingId(null),
+    });
+  };
+
+  // --- podcast handlers (docs/18 D) ------------------------------------------
+  const startPodcast = useCallback(async () => {
+    setPodcastBusy(true);
+    setPodcastError("");
+    try {
+      const st = await createPodcastBriefing();
+      setPodcast(st);
+      if (st.status === "ready") return;
+      if (podcastPollRef.current) clearInterval(podcastPollRef.current);
+      let consecutiveErrors = 0;
+      podcastPollRef.current = setInterval(async () => {
+        try {
+          consecutiveErrors = 0;
+          const s = await podcastBriefingStatus();
+          setPodcast(s);
+          if (s.status === "ready" || s.status === "error") {
+            if (podcastPollRef.current) clearInterval(podcastPollRef.current);
+            podcastPollRef.current = null;
+          }
+        } catch {
+          // Backend down mid-poll: stop after 5 consecutive failures instead
+          // of polling every 2s forever.
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= 5) {
+            if (podcastPollRef.current) clearInterval(podcastPollRef.current);
+            podcastPollRef.current = null;
+            setPodcastError("Mất kết nối backend khi chờ bản tin — thử lại sau.");
+          }
+        }
+      }, 2000);
+    } catch (e) {
+      setPodcastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPodcastBusy(false);
+    }
+  }, []);
 
   // VoiceStudio configured on the backend wins over the browser engine.
   const effectiveEngine: TtsEngine =
@@ -379,7 +524,7 @@ export default function NewsPanel() {
             onClick={toggleMic}
             aria-pressed={listening}
             aria-label={listening ? "Dừng ghi âm giọng nói" : "Nói truy vấn bằng giọng nói"}
-            title={listening ? "Đang nghe... bấm để dừng" : "Nói truy vấn bằng giọng nói (tiếng Việt)"}
+            title={listening ? "Đang nghe... bấm để dừng" : "Nói truy vấn bằng giọng nói (tiếng Việt). Lưu ý riêng tư: Chrome gửi audio lên máy chủ nhận diện giọng nói để chuyển thành chữ."}
           >
             {listening ? "⏹" : "🎙️"}
           </button>
@@ -390,6 +535,19 @@ export default function NewsPanel() {
       </form>
 
       <div className="news-toolbar">
+        <button
+          type="button"
+          className="tts-btn"
+          onClick={startPodcast}
+          disabled={podcastBusy}
+          title={
+            vsEnabled
+              ? "Tạo bản tin audio trong ngày bằng VoiceStudio (server-side) và phát trong tab này; RSS feed để nghe bằng app podcast."
+              : "Cần cấu hình VOICESTUDIO_URL ở backend (docs/17) — hiện tại đang dùng đọc bằng trình duyệt."
+          }
+        >
+          {podcastBusy ? "Đang tạo bản tin..." : "🎙️ Bản tin audio"}
+        </button>
         <label className="news-tts-engine">
           Giọng đọc:{" "}
           <select
@@ -465,6 +623,107 @@ export default function NewsPanel() {
         )}
         {ttsReady && voiceMode === "local" && (
           <span className="news-tts-hint">🔒 Giọng đọc nội bộ — nội dung không rời khỏi máy.</span>
+        )}
+      </div>
+
+      {podcastError && <p className="error">Bản tin audio: {podcastError}</p>}
+      {podcast && podcast.status === "ready" && (
+        <div className="podcast-player">
+          <audio controls preload="none" src={podcastLatestUrl()} style={{ width: "100%" }}>
+            Trình duyệt không hỗ trợ audio.
+          </audio>
+          <span className="muted small">
+            Bản tin ngày {podcast.date} · {podcast.audio_bytes} byte ·{" "}
+            <a href={podcastFeedUrl()} target="_blank" rel="noreferrer">RSS feed</a>
+          </span>
+        </div>
+      )}
+      {podcast && (podcast.status === "pending" || podcast.status === "running") && (
+        <p className="news-loading">Đang tổng hợp và đọc bản tin ngày {podcast.date}...</p>
+      )}
+      {podcast && podcast.status === "error" && (
+        <p className="error">Bản tin lỗi: {podcast.error ?? "không rõ"}</p>
+      )}
+
+      <div className="watchlist-block">
+        <div className="watchlist-head">
+          <strong>Theo dõi truy vấn</strong>
+          <button type="button" className="tts-btn" onClick={addCurrentToWatchlist}>
+            + Theo dõi truy vấn này
+          </button>
+          <button
+            type="button"
+            className="tts-btn"
+            onClick={checkAlerts}
+            disabled={checkingAlerts || watchItems.length === 0}
+          >
+            {checkingAlerts ? "Đang kiểm tra..." : "Kiểm tra tin mới"}
+          </button>
+          {alerts && alerts.total_new > 0 && (
+            <>
+              <span className="chip chip-toggle on">Mới: {alerts.total_new}</span>
+              {(ttsReady || vsEnabled) && (
+                <button
+                  type="button"
+                  className={`tts-btn ${speakingId === "__alerts__" ? "speaking" : ""}`}
+                  onClick={speakNewItems}
+                  aria-label="Đọc các tin mới"
+                  title="Đọc các tin mới bằng giọng tiếng Việt"
+                >
+                  {speakingId === "__alerts__" ? "⏹" : "🔊"}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        {watchError && <p className="error">{watchError}</p>}
+        {watchItems.length > 0 && (
+          <ul className="watchlist-items">
+            {watchItems.map((w) => (
+              <li key={w.id}>
+                <code>{w.query}</code>
+                {w.label && <span className="muted"> · {w.label}</span>}
+                <button
+                  type="button"
+                  className="tts-btn"
+                  onClick={() => void deleteWatchItem(w.id)}
+                  aria-label={`Xoá theo dõi ${w.query}`}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {alerts && alerts.items.length > 0 && (
+          <div className="watchlist-alerts">
+            {alerts.items.map((a) => (
+              <div key={a.id} className="watchlist-alert">
+                <strong>{a.query}</strong>
+                {a.error ? (
+                  <span className="error"> lỗi: {a.error}</span>
+                ) : a.baseline_set ? (
+                  <span className="muted"> · đã lưu mốc nền (lần kiểm tra đầu)</span>
+                ) : a.new_items.length === 0 ? (
+                  <span className="muted"> · không có tin mới</span>
+                ) : (
+                  <ul>
+                    {a.new_items.map((n) => (
+                      <li key={n.url}>
+                        <a href={safeHref(n.url)} target="_blank" rel="noreferrer">
+                          {n.title || n.url}
+                        </a>{" "}
+                        <span className="muted small">
+                          {n.domain}
+                          {n.published_at ? ` · ${n.published_at.slice(0, 10)}` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

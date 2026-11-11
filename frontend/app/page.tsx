@@ -4,6 +4,7 @@ import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import NewsPanel from "../components/NewsPanel";
 import ResearchPanel from "../components/ResearchPanel";
+import ComparePanel from "../components/ComparePanel";
 import { dictationIsSupported, mergeTranscripts, startDictation, type DictationHandle } from "../lib/dictation";
 import AnswerMarkdown from "../components/AnswerMarkdown";
 import {
@@ -57,7 +58,7 @@ import {
 } from "../lib/api";
 
 type Mode = "answer" | "raw";
-type AppTab = "search" | "news" | "research" | "blog" | "superagent" | "llm";
+type AppTab = "search" | "news" | "research" | "compare" | "blog" | "superagent" | "llm";
 
 const CATEGORY_CHIPS = [
   { id: "auto", label: "⚡ Tự động (Universal Domain Intelligence)" },
@@ -330,6 +331,7 @@ export default function HomePage() {
   // Web Speech API only exists in the browser — gate after mount (SSR safe).
   useEffect(() => {
     setTtsReady(ttsIsSupported());
+    setMicReady(dictationIsSupported());
     setVoiceMode(ttsVietnameseVoiceMode());
     setTtsEngine(getPreferredEngine());
     ttsCapabilities()
@@ -623,6 +625,12 @@ export default function HomePage() {
             🔬 Deep Research (Tự trị)
           </button>
           <button
+            className={`nav-tab ${activeTab === "compare" ? "active" : ""}`}
+            onClick={() => setActiveTab("compare")}
+          >
+            ⚖️ So sánh mã
+          </button>
+          <button
             className={`nav-tab ${activeTab === "blog" ? "active" : ""}`}
             onClick={() => setActiveTab("blog")}
           >
@@ -645,6 +653,7 @@ export default function HomePage() {
 
       {/* --- TAB 1B: NEWS FEED + VIETNAMESE TTS --- */}
       {activeTab === "news" && <NewsPanel />}
+      {activeTab === "compare" && <ComparePanel />}
       {activeTab === "research" && <ResearchPanel />}
 
       {/* --- TAB 1: SEARCH & ANSWER --- */}
@@ -672,7 +681,7 @@ export default function HomePage() {
                     onClick={toggleMic}
                     aria-pressed={listening}
                     aria-label={listening ? "Dừng ghi âm giọng nói" : "Nói truy vấn bằng giọng nói"}
-                    title={listening ? "Đang nghe... bấm để dừng" : "Nói truy vấn bằng giọng nói (tiếng Việt)"}
+                    title={listening ? "Đang nghe... bấm để dừng" : "Nói truy vấn bằng giọng nói (tiếng Việt). Lưu ý riêng tư: Chrome gửi audio lên máy chủ nhận diện giọng nói để chuyển thành chữ."}
                   >
                     {listening ? "⏹ Đang nghe" : "🎙️ Nói"}
                   </button>

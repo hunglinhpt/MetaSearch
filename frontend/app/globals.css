@@ -758,3 +758,114 @@ a {
   padding-left: 1.2rem;
   color: var(--muted);
 }
+
+/* --- Wave B/C/D: compare table + chart + watchlist + podcast (docs/18) ------ */
+
+.compare-table td .field-src {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.compare-footer {
+  margin-top: 0.5rem;
+}
+
+.small {
+  font-size: 0.75rem;
+}
+
+.chart-picker {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.8rem 0 0.4rem;
+}
+
+.chart-panel {
+  margin-top: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem;
+  background: var(--card);
+}
+
+.chart-toolbar {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.chart-source {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.chart-days {
+  margin-left: auto;
+  display: flex;
+  gap: 0.3rem;
+}
+
+.chart-stats {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+
+.chart-container {
+  width: 100%;
+}
+
+.watchlist-block {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.8rem;
+}
+
+.watchlist-head {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.watchlist-items {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.watchlist-items li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.watchlist-alerts {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.watchlist-alert ul {
+  margin: 0.2rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.podcast-player {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}

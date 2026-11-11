@@ -443,6 +443,9 @@ export async function streamAnswer(
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  // Same bound as streamSse: a peer that never sends a blank line must not
+  // grow the buffer forever.
+  const MAX_SSE_BUFFER = 1024 * 1024;
 
   const dispatch = (eventName: string, dataText: string) => {
     if (!eventName || !dataText) return;
@@ -481,22 +484,43 @@ export async function streamAnswer(
     }
   };
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // sse-starlette separates frames with CRLF ("\r\n\r\n"), which contains no
+      // "\n\n" — normalize line endings first or every frame piles up in the
+      // buffer until the stream closes.
+      buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      // Overflow check AFTER normalization, so a valid >1MB frame separated
+      // only by CRLF does not false-positive.
+      if (buffer.length > MAX_SSE_BUFFER && !buffer.includes("\n\n")) {
+        throw new Error("SSE stream overflow: no event boundary within 1MB");
+      }
 
-    let sep: number;
-    // SSE frames are separated by a blank line.
-    while ((sep = buffer.indexOf("\n\n")) !== -1) {
-      const frame = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      dispatchFrame(frame);
+      let sep: number;
+      // SSE frames are separated by a blank line.
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        if (frame.length > MAX_SSE_BUFFER) {
+          throw new Error("SSE event exceeds 1MB cap");
+        }
+        dispatchFrame(frame);
+      }
+    }
+  } finally {
+    // Always release the connection back to the pool, even on early throw.
+    try {
+      await reader.cancel();
+    } catch {
+      // already closed
     }
   }
   // Flush a trailing frame that was not terminated by a blank line.
   if (buffer.trim()) {
-    dispatchFrame(buffer);
+    dispatchFrame(buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n"));
   }
 
   function dispatchFrame(frame: string) {
@@ -838,23 +862,44 @@ export async function streamSse(
   }
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    buffer = buffer.replace(/\r\n/g, "\n");
-    let sep = buffer.indexOf("\n\n");
-    while (sep >= 0) {
-      const block = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      let name = "message";
-      const dataLines: string[] = [];
-      for (const line of block.split("\n")) {
-        if (line.startsWith("event:")) name = line.slice(6).trim();
-        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+  // A peer that never sends a blank line must not grow the buffer forever.
+  const MAX_SSE_BUFFER = 1024 * 1024;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // Normalize CRLF (sse-starlette) BEFORE the overflow check, otherwise a
+      // valid >1MB block separated only by \r\n\r\n would false-positive.
+      buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      if (buffer.length > MAX_SSE_BUFFER && !buffer.includes("\n\n")) {
+        throw new Error("SSE stream overflow: no event boundary within 1MB");
       }
-      if (dataLines.length) handlers.onEvent(name, dataLines.join("\n"));
-      sep = buffer.indexOf("\n\n");
+      let sep = buffer.indexOf("\n\n");
+      while (sep >= 0) {
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        // A single event larger than the cap is refused even though it has a
+        // boundary — otherwise one giant frame still buffers whole.
+        if (block.length > MAX_SSE_BUFFER) {
+          throw new Error("SSE event exceeds 1MB cap");
+        }
+        let name = "message";
+        const dataLines: string[] = [];
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) name = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+        }
+        if (dataLines.length) handlers.onEvent(name, dataLines.join("\n"));
+        sep = buffer.indexOf("\n\n");
+      }
+    }
+  } finally {
+    // Always release the connection back to the pool, even on early throw.
+    try {
+      await reader.cancel();
+    } catch {
+      /* stream already closed */
     }
   }
 }
@@ -862,4 +907,175 @@ export async function streamSse(
 /** SSE URL for a research job's event stream. */
 export function researchEventsUrl(id: string): string {
   return `${API_BASE_URL}/v1/research/${encodeURIComponent(id)}/events`;
+}
+
+// --- v2.3.0 market compare + OHLCV chart (docs/18 B1/B2) ---------------------
+
+export type FaField = {
+  value: number;
+  source: string;
+  as_of: string | null;
+  validated: boolean;
+};
+
+export type FaSymbolResult = {
+  symbol: string;
+  name: string | null;
+  exchange: string | null;
+  fields: Record<string, FaField>;
+  missing_fields: string[];
+  sources_used: string[];
+  source_urls: string[];
+  as_of: string | null;
+  published_at: string | null;
+};
+
+export type FaCompareResponse = { results: FaSymbolResult[]; latency_ms: number };
+
+export async function faCompare(
+  symbols: string[],
+  signal?: AbortSignal
+): Promise<FaCompareResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/fa/compare`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbols }),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export type OhlcvCandle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export type MarketOhlcvResponse = {
+  symbol: string;
+  candles: OhlcvCandle[];
+  source_name: string;
+  source_url: string;
+  as_of: string | null;
+  days: number;
+  latency_ms: number;
+};
+
+export async function marketOhlcv(
+  symbol: string,
+  days: number,
+  signal?: AbortSignal
+): Promise<MarketOhlcvResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/market/ohlcv`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, days }),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+// --- v2.3.0 watchlist + alerts (docs/18 C) ------------------------------------
+
+export type WatchlistItem = {
+  id: string;
+  query: string;
+  label: string | null;
+  created_at: string | null;
+  last_checked_at: string | null;
+  last_hash: string | null;
+};
+
+export type WatchlistAlertItem = {
+  id: string;
+  query: string;
+  label: string | null;
+  baseline_set: boolean;
+  new_items: { url: string; title: string; published_at: string | null; domain: string }[];
+  checked_at: string | null;
+  error: string | null;
+};
+
+export type WatchlistListResponse = {
+  items: WatchlistItem[];
+  storage: string; // "db" | "memory" — memory means the backend DB is down
+};
+
+export type WatchlistAlertsResponse = {
+  items: WatchlistAlertItem[];
+  total_new: number;
+  latency_ms: number;
+  storage: string;
+};
+
+async function wlFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const resp = await fetch(`${API_BASE_URL}${path}`, init);
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export function listWatchlist(signal?: AbortSignal): Promise<WatchlistListResponse> {
+  return wlFetch("/v1/watchlist", { signal });
+}
+
+export function addWatchlist(
+  query: string,
+  label?: string,
+  signal?: AbortSignal
+): Promise<WatchlistItem> {
+  return wlFetch("/v1/watchlist", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, label: label ?? null }),
+    signal,
+  });
+}
+
+export function removeWatchlist(id: string, signal?: AbortSignal): Promise<{ deleted: string }> {
+  return wlFetch(`/v1/watchlist/${encodeURIComponent(id)}`, { method: "DELETE", signal });
+}
+
+export function watchlistAlerts(signal?: AbortSignal): Promise<WatchlistAlertsResponse> {
+  return wlFetch("/v1/watchlist/alerts", { signal });
+}
+
+// --- v2.3.0 podcast briefing (docs/18 D) ---------------------------------------
+
+export type PodcastBriefingStatus = {
+  date: string;
+  status: string;
+  error: string | null;
+  chars: number;
+  audio_bytes: number;
+  created_at: string | null;
+};
+
+export async function createPodcastBriefing(signal?: AbortSignal): Promise<PodcastBriefingStatus> {
+  const resp = await fetch(`${API_BASE_URL}/v1/podcast/briefing`, {
+    method: "POST",
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function podcastBriefingStatus(
+  signal?: AbortSignal
+): Promise<PodcastBriefingStatus> {
+  const resp = await fetch(`${API_BASE_URL}/v1/podcast/briefing/status`, { signal });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export function podcastLatestUrl(): string {
+  return `${API_BASE_URL}/v1/podcast/briefing/latest`;
+}
+
+export function podcastFeedUrl(): string {
+  return `${API_BASE_URL}/v1/podcast/briefing/feed.xml`;
 }

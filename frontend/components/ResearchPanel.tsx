@@ -58,6 +58,7 @@ export default function ResearchPanel() {
   const abortRef = useRef<AbortController | null>(null);
   const sectionsRef = useRef<{ title: string; text: string }[]>([]);
   const reportRef = useRef("");
+  const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
     setTtsReady(ttsIsSupported());
@@ -68,6 +69,7 @@ export default function ResearchPanel() {
       abortRef.current?.abort();
       ttsHandleRef.current?.cancel();
       ttsStop();
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
   }, []);
 
@@ -125,52 +127,9 @@ export default function ResearchPanel() {
       );
       setJobId(created.research_id);
       setStage("Đang lên kế hoạch nghiên cứu...");
-      await streamSse(
-        researchEventsUrl(created.research_id),
-        {
-          onEvent: (name, dataJson) => {
-            if (controller.signal.aborted) return;
-            if (name === "status") {
-              try {
-                const d = JSON.parse(dataJson) as { stage?: string; detail?: string };
-                setStage([d.stage, d.detail].filter(Boolean).join(" — "));
-              } catch {
-                /* partial event: ignore, next one carries the payload */
-              }
-            } else if (name === "report_token") {
-              try {
-                const d = JSON.parse(dataJson) as { t?: string };
-                if (d.t) {
-                  reportRef.current += d.t;
-                  setReportMd(reportRef.current);
-                }
-              } catch {
-                /* ignore malformed token */
-              }
-            } else if (name === "error") {
-              try {
-                const d = JSON.parse(dataJson) as { message?: string };
-                setError(d.message ?? "Job lỗi không rõ nguyên nhân");
-              } catch {
-                setError("Job lỗi không rõ nguyên nhân");
-              }
-              setPhase("error");
-            } else if (name === "done") {
-              void finalize(created.research_id, controller.signal);
-            }
-          },
-          onError: (err) => {
-            if (controller.signal.aborted) return;
-            setError(err instanceof Error ? err.message : String(err));
-            setPhase("error");
-          },
-        },
-        controller.signal
-      );
-      // Stream closed: if no done event arrived but a job id exists, poll once.
-      if (!controller.signal.aborted && phaseRef.current === "running" && created.research_id) {
-        await finalize(created.research_id, controller.signal);
-      }
+      // attachStream re-attaches on a dropped connection (the backend replays
+      // its event buffer) and only settles on a TERMINAL job status.
+      await attachStream(created.research_id, controller.signal, 3);
     } catch (e) {
       if (controller.signal.aborted) return;
       setError(e instanceof Error ? e.message : String(e));
@@ -184,20 +143,41 @@ export default function ResearchPanel() {
     phaseRef.current = phase;
   }, [phase]);
 
-  const finalize = async (id: string, signal: AbortSignal) => {
+  /** Poll the job status; only a TERMINAL status settles the phase — a
+   * still-running job after a dropped stream is re-attached to SSE (the
+   * backend replays its event buffer) up to `reattachLeft` times. */
+  const finalize = async (id: string, signal: AbortSignal, reattachLeft = 0, expectDone = false) => {
     try {
-      const status: ResearchStatus = await getResearch(id, signal);
-      setReportMd(status.report_md ?? "");
-      reportRef.current = status.report_md ?? "";
-      setCitations(status.citations ?? []);
-      setLearnings(status.learnings ?? []);
-      if (status.error) {
-        setError(status.error);
-        setPhase("error");
-      } else {
+      let status: ResearchStatus | null = null;
+      // After a "done" SSE event the DB status can lag a beat behind the event
+      // bus — poll a few times before concluding the job is stuck.
+      for (let attempt = 0; attempt < (expectDone ? 3 : 1); attempt++) {
+        status = await getResearch(id, signal);
+        if (status.status === "done" || status.status === "failed" || status.error) break;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 400));
+      }
+      status = status!;
+      if (status.status === "done") {
+        setReportMd(status.report_md ?? "");
+        reportRef.current = status.report_md ?? "";
+        setCitations(status.citations ?? []);
+        setLearnings(status.learnings ?? []);
         setStage("");
         setPhase("done");
+        return;
       }
+      if (status.status === "failed" || status.error) {
+        setError(status.error || "Job nghiên cứu thất bại");
+        setPhase("error");
+        return;
+      }
+      // Still queued/running: never mark "done" with an empty report.
+      if (reattachLeft > 0 && !signal.aborted) {
+        await attachStream(id, signal, reattachLeft - 1);
+        return;
+      }
+      setStage(`Job vẫn đang chạy (${status.status}) — mở lại tab để tiếp tục theo dõi.`);
+      setPhase("error");
     } catch (e) {
       if (!signal.aborted) {
         setError(e instanceof Error ? e.message : String(e));
@@ -206,8 +186,74 @@ export default function ResearchPanel() {
     }
   };
 
+  /** Attach (or re-attach) to the job's SSE stream; resolves when it closes.
+   * The backend replays its whole event buffer from seq 0 on every attach, so
+   * the report accumulator MUST reset here — otherwise tokens duplicate. */
+  const attachStream = async (id: string, signal: AbortSignal, reattachLeft: number) => {
+    reportRef.current = "";
+    try {
+      await streamSse(
+      researchEventsUrl(id),
+      {
+        onEvent: (name, dataJson) => {
+          if (signal.aborted) return;
+          if (name === "status") {
+            try {
+              const d = JSON.parse(dataJson) as { stage?: string; detail?: string };
+              setStage([d.stage, d.detail].filter(Boolean).join(" — "));
+            } catch {
+              /* partial event */
+            }
+          } else if (name === "report_token") {
+            try {
+              const d = JSON.parse(dataJson) as { t?: string };
+              if (d.t) {
+                reportRef.current += d.t;
+                if (rafRef.current === null) {
+                  rafRef.current = requestAnimationFrame(() => {
+                    rafRef.current = null;
+                    setReportMd(reportRef.current);
+                  });
+                }
+              }
+            } catch {
+              /* ignore */
+            }
+          } else if (name === "error") {
+            try {
+              const d = JSON.parse(dataJson) as { message?: string };
+              setError(d.message ?? "Job lỗi không rõ nguyên nhân");
+            } catch {
+              setError("Job lỗi không rõ nguyên nhân");
+            }
+            setPhase("error");
+          } else if (name === "done") {
+            void finalize(id, signal, 0, true);
+          }
+        },
+        onError: (err) => {
+          if (signal.aborted) return;
+          setError(err instanceof Error ? err.message : String(err));
+          setPhase("error");
+        },
+      },
+      signal
+      );
+    } catch (e) {
+      // A dropped connection (TCP reset mid-read) must not kill the panel:
+      // fall through to the re-attach/finalize path unless we aborted on purpose.
+      if (signal.aborted) return;
+      setStage("Mất kết nối — đang thử kết nối lại...");
+    }
+    if (!signal.aborted && phaseRef.current === "running") {
+      await finalize(id, signal, reattachLeft);
+    }
+  };
+
   const sections = splitReportSections(reportMd);
-  sectionsRef.current = sections;
+  useEffect(() => {
+    sectionsRef.current = sections;
+  }, [sections]);
 
   return (
     <section className="card">
@@ -296,15 +342,26 @@ export default function ResearchPanel() {
                   </button>
                 )}
                 {playingSection !== null && (
-                  <button
-                    type="button"
-                    className="tts-btn"
-                    onClick={() => speakSectionAt(playingSection + 1)}
-                    aria-label="Phần tiếp theo"
-                    disabled={playingSection + 1 >= sections.length}
-                  >
-                    ⏭ Phần tiếp
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="tts-btn"
+                      onClick={() => speakSectionAt(playingSection - 1)}
+                      aria-label="Phần trước"
+                      disabled={playingSection - 1 < 0}
+                    >
+                      ⏮ Phần trước
+                    </button>
+                    <button
+                      type="button"
+                      className="tts-btn"
+                      onClick={() => speakSectionAt(playingSection + 1)}
+                      aria-label="Phần tiếp theo"
+                      disabled={playingSection + 1 >= sections.length}
+                    >
+                      ⏭ Phần tiếp
+                    </button>
+                  </>
                 )}
               </span>
             )}

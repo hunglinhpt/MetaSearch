@@ -76,7 +76,15 @@ export function startDictation(opts: DictationOptions): DictationHandle | null {
   recognition.interimResults = true;
 
   let stopped = false;
+  let ended = false; // onerror + onend can BOTH fire for one failure — report once
   let finalSoFar = "";
+
+  const finish = (reason: string) => {
+    if (ended) return;
+    ended = true;
+    opts.onUpdate(finalSoFar, "");
+    opts.onEnd?.(reason);
+  };
 
   recognition.onresult = (event: SpeechRecognitionEventLike) => {
     let interim = "";
@@ -94,14 +102,13 @@ export function startDictation(opts: DictationOptions): DictationHandle | null {
 
   recognition.onerror = (event: { error?: string }) => {
     if (stopped) return; // our own stop() can surface "aborted"
-    opts.onEnd?.(dictationErrorReason(event.error ?? ""));
+    finish(dictationErrorReason(event.error ?? ""));
   };
 
   recognition.onend = () => {
     if (stopped) return;
     // Natural stop (silence / server cut): report the accumulated text once.
-    opts.onUpdate(finalSoFar, "");
-    opts.onEnd?.("finished");
+    finish("finished");
   };
 
   try {
@@ -120,8 +127,7 @@ export function startDictation(opts: DictationOptions): DictationHandle | null {
       } catch {
         // already stopped by the engine
       }
-      opts.onUpdate(finalSoFar, "");
-      opts.onEnd?.("stopped");
+      finish("stopped");
     },
   };
 }
