@@ -4,11 +4,14 @@ import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import NewsPanel from "../components/NewsPanel";
 import {
+  getPreferredEngine,
+  TtsEngine,
   TtsHandle,
   TtsVoiceMode,
   ttsIsSupported,
   ttsOnVoicesChanged,
   ttsSpeak,
+  ttsSpeakRemote,
   ttsStop,
   ttsVietnameseVoiceMode,
 } from "../lib/tts";
@@ -45,6 +48,7 @@ import {
   streamAnswer,
   testLLMConnection,
   triggerScan,
+  ttsCapabilities,
   updateCouncilEndpoints,
   updateLLMConfig,
 } from "../lib/api";
@@ -106,6 +110,8 @@ export default function HomePage() {
   const [answerSpeaking, setAnswerSpeaking] = useState(false);
   const [ttsReady, setTtsReady] = useState(false);
   const [voiceMode, setVoiceMode] = useState<TtsVoiceMode>("none");
+  const [ttsEngine, setTtsEngine] = useState<TtsEngine>("webspeech");
+  const [vsEnabled, setVsEnabled] = useState(false);
 
   // Blog / Daily Briefing state
   const [blogTopic, setBlogTopic] = useState<string>("all");
@@ -316,6 +322,10 @@ export default function HomePage() {
   useEffect(() => {
     setTtsReady(ttsIsSupported());
     setVoiceMode(ttsVietnameseVoiceMode());
+    setTtsEngine(getPreferredEngine());
+    ttsCapabilities()
+      .then((c) => setVsEnabled(Boolean(c.voicestudio.enabled)))
+      .catch(() => setVsEnabled(false));
     const offVoices = ttsOnVoicesChanged(() => setVoiceMode(ttsVietnameseVoiceMode()));
     return () => {
       offVoices();
@@ -324,14 +334,20 @@ export default function HomePage() {
     };
   }, []);
 
-  // Privacy wording matching the voice actually in use (local OS voice keeps
-  // the spoken text on-device; an online voice sends it to the vendor).
+  const effectiveTtsEngine: TtsEngine =
+    ttsEngine === "voicestudio" && !vsEnabled ? "webspeech" : ttsEngine;
+
+  // Privacy wording matching the engine/voice actually in use (local OS voice
+  // keeps the spoken text on-device; an online voice sends it to the vendor;
+  // VoiceStudio sends it to the configured internal server).
   const ttsPrivacyNote =
-    voiceMode === "local"
-      ? "Riêng tư: đang dùng giọng nội bộ của hệ điều hành — nội dung đọc không rời khỏi máy."
-      : voiceMode === "online"
-        ? "Riêng tư: đang dùng giọng online (Edge/Microsoft) — nội dung đọc được gửi từ trình duyệt tới máy chủ TTS."
-        : "Chưa có giọng tiếng Việt trên máy — sẽ đọc bằng giọng mặc định.";
+    effectiveTtsEngine === "voicestudio"
+      ? "Riêng tư: nội dung đọc được gửi tới máy chủ VoiceStudio nội bộ (VOICESTUDIO_URL ở backend), không ra Internet."
+      : voiceMode === "local"
+        ? "Riêng tư: đang dùng giọng nội bộ của hệ điều hành — nội dung đọc không rời khỏi máy."
+        : voiceMode === "online"
+          ? "Riêng tư: đang dùng giọng online (Edge/Microsoft) — nội dung đọc được gửi từ trình duyệt tới máy chủ TTS."
+          : "Chưa có giọng tiếng Việt trên máy — sẽ đọc bằng giọng mặc định.";
 
   // Leaving the search tab unmounts the answer controls — speech must not
   // continue uncontrolled (QA/SA audits).
@@ -352,11 +368,13 @@ export default function HomePage() {
       setAnswerSpeaking(false);
       return;
     }
-    answerTtsRef.current = ttsSpeak(answerMd, {
+    const cbs = {
       onStart: () => setAnswerSpeaking(true),
       onEnd: () => setAnswerSpeaking(false),
       onError: () => setAnswerSpeaking(false),
-    });
+    };
+    answerTtsRef.current =
+      effectiveTtsEngine === "voicestudio" ? ttsSpeakRemote(answerMd, cbs) : ttsSpeak(answerMd, cbs);
   };
 
   const handleCreateAgentTicket = async (e: React.FormEvent) => {

@@ -19,14 +19,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { safeHref, SearchHit, search } from "../lib/api";
+import { safeHref, SearchHit, search, ttsCapabilities } from "../lib/api";
 import {
+  getPreferredEngine,
+  setPreferredEngine,
+  TtsEngine,
   TtsHandle,
   TtsVoiceMode,
   ttsHasVietnameseVoice,
   ttsIsSupported,
   ttsOnVoicesChanged,
   ttsSpeak,
+  ttsSpeakRemote,
   ttsStop,
   ttsVietnameseVoiceMode,
 } from "../lib/tts";
@@ -131,6 +135,10 @@ export default function NewsPanel() {
   const [ttsReady, setTtsReady] = useState(false);
   const [hasViVoice, setHasViVoice] = useState(true);
   const [voiceMode, setVoiceMode] = useState<TtsVoiceMode>("none");
+  // Server-side TTS engine (docs/17): VoiceStudio only if the backend reports
+  // it configured; otherwise the browser Web Speech API is used.
+  const [engine, setEngine] = useState<TtsEngine>("webspeech");
+  const [vsEnabled, setVsEnabled] = useState(false);
   const ttsHandleRef = useRef<TtsHandle | null>(null);
   // Request-id + abort guard: a slow in-flight response can never overwrite a
   // newer category's feed, and a hung backend cannot leave the tab disabled.
@@ -143,6 +151,10 @@ export default function NewsPanel() {
     setTtsReady(ttsIsSupported());
     setHasViVoice(ttsHasVietnameseVoice());
     setVoiceMode(ttsVietnameseVoiceMode());
+    setEngine(getPreferredEngine());
+    ttsCapabilities()
+      .then((c) => setVsEnabled(Boolean(c.voicestudio.enabled)))
+      .catch(() => setVsEnabled(false));
     // The voice list populates asynchronously (Chrome/Safari): re-check on
     // every voiceschanged so the vi-voice hint cannot stick at the wrong value.
     const offVoices = ttsOnVoicesChanged(() => {
@@ -159,14 +171,26 @@ export default function NewsPanel() {
 
   const activeCat = NEWS_CATEGORIES.find((c) => c.id === activeCatId) ?? NEWS_CATEGORIES[0];
 
-  // Privacy wording that matches the voice actually in use — never a generic
-  // claim when the picked voice is a cloud (online) one.
+  // VoiceStudio configured on the backend wins over the browser engine.
+  const effectiveEngine: TtsEngine =
+    engine === "voicestudio" && !vsEnabled ? "webspeech" : engine;
+
+  // Privacy wording that matches the engine/voice actually in use — never a
+  // generic claim when the picked voice is a cloud (online) one.
   const privacyNote =
-    voiceMode === "local"
-      ? "Riêng tư: đang dùng giọng nội bộ của hệ điều hành — nội dung đọc không rời khỏi máy."
-      : voiceMode === "online"
-        ? "Riêng tư: đang dùng giọng online (Edge/Microsoft) — nội dung đọc được gửi từ trình duyệt tới máy chủ TTS."
-        : "Trình duyệt sẽ đọc bằng giọng mặc định vì chưa có giọng tiếng Việt trên máy.";
+    effectiveEngine === "voicestudio"
+      ? "Riêng tư: nội dung đọc được gửi tới máy chủ VoiceStudio nội bộ (cấu hình VOICESTUDIO_URL ở backend), không ra Internet."
+      : voiceMode === "local"
+        ? "Riêng tư: đang dùng giọng nội bộ của hệ điều hành — nội dung đọc không rời khỏi máy."
+        : voiceMode === "online"
+          ? "Riêng tư: đang dùng giọng online (Edge/Microsoft) — nội dung đọc được gửi từ trình duyệt tới máy chủ TTS."
+          : "Trình duyệt sẽ đọc bằng giọng mặc định vì chưa có giọng tiếng Việt trên máy.";
+
+  const speakText = (
+    text: string,
+    cbs: { onStart?: () => void; onEnd?: () => void; onError?: () => void },
+  ): TtsHandle | null =>
+    effectiveEngine === "voicestudio" ? ttsSpeakRemote(text, cbs) : ttsSpeak(text, cbs);
 
   const fetchNews = useCallback(async (cat: NewsCategory, overrideQuery?: string) => {
     // Invalidate any in-flight response and abort its request.
@@ -254,7 +278,7 @@ export default function NewsPanel() {
         return `Tin ${i + 1}: ${title}. ${snippet ? `${snippet}.` : ""}${source}`;
       }),
     ].join(" ");
-    ttsHandleRef.current = ttsSpeak(text, {
+    ttsHandleRef.current = speakText(text, {
       onStart: () => setSpeakingId("__digest__"),
       onEnd: () => setSpeakingId(null),
       onError: () => setSpeakingId(null),
@@ -268,7 +292,7 @@ export default function NewsPanel() {
     const title = stripEnd(hit.title || hit.domain);
     const source = hit.title ? ` Nguồn ${hit.domain}.` : "";
     const text = `${title}. ${snippet}${source}`;
-    ttsHandleRef.current = ttsSpeak(text, {
+    ttsHandleRef.current = speakText(text, {
       onStart: () => setSpeakingId(hit.url),
       onEnd: () => setSpeakingId(null),
       onError: () => setSpeakingId(null),
@@ -319,6 +343,23 @@ export default function NewsPanel() {
       </form>
 
       <div className="news-toolbar">
+        <label className="news-tts-engine">
+          Giọng đọc:{" "}
+          <select
+            aria-label="Chọn engine đọc máy"
+            value={effectiveEngine}
+            onChange={(e) => {
+              const v = e.target.value as TtsEngine;
+              setEngine(v);
+              setPreferredEngine(v);
+            }}
+          >
+            <option value="webspeech">Trình duyệt (Web Speech)</option>
+            <option value="voicestudio" disabled={!vsEnabled}>
+              VoiceStudio (server{vsEnabled ? "" : " — chưa cấu hình"})
+            </option>
+          </select>
+        </label>
         <span className="news-info">
           {appliedQuery ? (
             <>

@@ -203,6 +203,12 @@
 - [x] Process: pre-commit gate kiểm tra `api/uv.lock` khớp version (fail-closed, parser neo đúng section); `clean_workspace` không xoá dữ liệu runtime local (`api/*.db*`, `*.retention`, `api/.env.*`) và skip file bị lock thay vì crash; CI `npm audit` cả dev deps; vitest (16 test) vào frontend matrix 3 OS.
 - [x] Audit đối kháng 2 vòng (mỗi vòng 3 expert: perf / quality / data-sec): vòng 1 phát hiện 2 P2 + các P3 → fix hết; vòng 2 xác nhận 8/8 FIXED, verdict **PASS ×3**, không P1/P2 mới. Backend 770 tests + frontend 16 tests xanh; CI 13/13 jobs success.
 
+### Đang phát triển sau v2.2.0: VoiceStudio server-side TTS (docs/17)
+
+- [x] So sánh VoiceStudio (AGPL-3.0, local OpenAI-compatible `:3900`) với Web Speech API; quyết định: Web Speech giữ mặc định, VoiceStudio là engine tuỳ chọn server-side (full profile, profile `tts` trong compose).
+- [x] Backend `/v1/tts/capabilities` + `/v1/tts/synthesize` (proxy, SSRF-safe URL từ env, cap audio, ETag/304); frontend engine picker + `ttsSpeakRemote` (chunk tuần tự, một speaker); 30 backend test + vitest 21.
+- [ ] Phase sau (đề xuất ở docs/17 §6): dictation giọng Việt vào ô tìm kiếm (ASR streaming), nút "tải bản tin thành file audio". Không làm: dubbing, voice cloning, Cloud/Pro.
+
 ## 4. Rủi ro thực thi
 
 | Rủi ro | Giảm thiểu |

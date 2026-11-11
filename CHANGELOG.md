@@ -4,6 +4,39 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [Unreleased] — VoiceStudio server-side TTS (tuỳ chọn) — xem docs/17
+
+### Added
+- **Engine đọc máy thứ 2: VoiceStudio local server** (docs/17): backend mới
+  `GET /v1/tts/capabilities` + `POST /v1/tts/synthesize` proxy tới OpenAI-compatible
+  API của VoiceStudio (`VOICESTUDIO_URL`, chỉ từ env — SSRF-safe; cap audio 8MB;
+  ETag + Cache-Control hỗ trợ 304; lỗi rõ: `tts_disabled` 503 / `tts_upstream_error` 502 /
+  timeout 504). Web Speech API vẫn là mặc định; UI tự fallback khi chưa cấu hình.
+- Web UI: menu chọn "Giọng đọc" (Trình duyệt / VoiceStudio server) ở toolbar tab Tin
+  tức, áp dụng cả nút đọc câu trả lời; lựa chọn lưu localStorage; ghi chú riêng tư
+  trên tooltip đổi theo engine thực dùng (VoiceStudio = gửi text tới server nội bộ).
+- `ttsSpeakRemote` trong `lib/tts.ts`: strip + chunk ≤220 ký tự như đường trình
+  duyệt, gọi tuần tự từng chunk, phát bằng một `<audio>` duy nhất, generation guard.
+- Deploy: compose thêm service `voicestudio` (image `ghcr.io/debpalash/voicestudio:stable`)
+  dưới `profiles: ["tts"]` — không chạy mặc định; `.env.example` thêm `VOICESTUDIO_*`.
+- Test: 30 backend (`test_tts_voicestudio.py`), frontend vitest lên 21; OpenAPI
+  snapshot regen (chỉ additive). docs/17 ghi nhận so sánh, cách bật, rủi ro
+  license (AGPL — chỉ tích hợp qua HTTP process riêng) và các tính năng mở rộng
+  đề xuất (dictation, tải bản tin audio) cho phase sau.
+- Hardening sau audit vòng 1 (perf phát hiện 2 P1: pool riêng `tts` + per-phase
+  timeout giữ `POOL_ACQUIRE_TIMEOUT_S`, PoolTimeout→503; wall-clock
+  `asyncio.timeout`; cap error-body 64KB; media whitelist; bytearray buffer;
+  admission tier `tts` (8,1.0) + single-flight + LRU 16 entry/32MB theo ETag;
+  `Cache-Control: private`; rate-limit cost 5; compose `mem_limit: 8g`;
+  `reset_pipelines` clear tts client; URL validate cả port/path/userinfo).
+  Frontend: prefetch chunk tiếp theo + blob cache 24/32MB + revoke URL trên mọi
+  nhánh + `ttsStop` dừng cả remote + cancel remote cũ khi speak mới + onError 1
+  lần + shared capabilities promise.
+- **Audit 2 vòng (3 expert/vòng: perf / quality / data-sec)**: vòng 1 phát hiện
+  2 P1 + các P2/P3 → fix hết; vòng 2 xác nhận tất cả FIXED, verdict **PASS ×3**,
+  không P1/P2 mới (chỉ còn P3 note). Backend full suite 788+ passed, frontend
+  21/21, ruff/bandit clean, CI 13/13.
+
 ## [2.2.0] — 2026-11-11 — Web UI: tab Tin tức đa lĩnh vực + đọc máy tiếng Việt (TTS)
 
 ### Docs

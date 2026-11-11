@@ -20,6 +20,7 @@ from app.api.v1 import (
     scrape,
     search,
     superagent,
+    tts,
 )
 from app.config import get_settings
 from app.core.auth import require_admin, require_api_key
@@ -69,6 +70,7 @@ router.include_router(ops_status.router, dependencies=_auth)
 router.include_router(research.router, dependencies=_auth)
 router.include_router(digests.router, dependencies=_auth)
 router.include_router(llm.router, dependencies=_auth)
+router.include_router(tts.router, dependencies=_auth)
 router.include_router(
     superagent.router,
     dependencies=_auth,

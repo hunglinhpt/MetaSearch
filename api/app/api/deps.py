@@ -13,11 +13,17 @@ from app.orchestration.engine_store import EngineStore, InMemoryEngineStore
 from app.orchestration.pipeline import AnswerPipeline, SearchPipeline
 from app.retrieval.registry import EngineRegistry, build_adapters
 from app.retrieval.reranker import build_reranker
+from app.tts.voicestudio import VoiceStudioClient
 
 
 @lru_cache(maxsize=1)
 def get_cache() -> CacheClient:
     return CacheClient.from_settings(get_settings())
+
+
+@lru_cache(maxsize=1)
+def get_tts_client() -> VoiceStudioClient:
+    return VoiceStudioClient(get_settings())
 
 
 def get_session_factory():
@@ -136,6 +142,7 @@ def reset_pipelines() -> None:
         get_registry,
         get_engine_store,
         get_cache,
+        get_tts_client,
     ):
         # Patched doubles in tests are plain functions without a cache.
         clear = getattr(provider, "cache_clear", None)

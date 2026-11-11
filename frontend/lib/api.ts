@@ -255,6 +255,63 @@ export type EngineInfo = {
   disabled_reason?: string | null;
 };
 
+// --- server-side TTS (VoiceStudio, docs/17) --------------------------------
+
+export type TtsCapabilities = {
+  voicestudio: { enabled: boolean; model: string | null; voice: string | null };
+};
+
+// Capabilities are fetched once per page load and shared by every component
+// (NewsPanel + the answer header both need them).
+let _ttsCapsPromise: Promise<TtsCapabilities> | null = null;
+
+export function ttsCapabilities(signal?: AbortSignal): Promise<TtsCapabilities> {
+  if (!_ttsCapsPromise) {
+    _ttsCapsPromise = (async () => {
+      const resp = await fetch(`${API_BASE_URL}/v1/tts/capabilities`, { signal });
+      if (!resp.ok) {
+        throw await parseError(resp);
+      }
+      return resp.json() as Promise<TtsCapabilities>;
+    })().catch((err) => {
+      _ttsCapsPromise = null; // allow retry on the next mount
+      throw err;
+    });
+  }
+  return _ttsCapsPromise;
+}
+
+export type TtsSynthesizeOptions = {
+  voice?: string;
+  model?: string;
+  responseFormat?: "mp3" | "wav" | "opus" | "flac" | "pcm";
+  signal?: AbortSignal;
+};
+
+export type TtsSynthResult = { blob: Blob; etag: string | null };
+
+/** Synthesize speech server-side (VoiceStudio); resolves to audio + its ETag. */
+export async function ttsSynthesize(
+  text: string,
+  opts: TtsSynthesizeOptions = {},
+): Promise<TtsSynthResult> {
+  const resp = await fetch(`${API_BASE_URL}/v1/tts/synthesize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      voice: opts.voice ?? undefined,
+      model: opts.model ?? undefined,
+      response_format: opts.responseFormat ?? "mp3",
+    }),
+    signal: opts.signal,
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return { blob: await resp.blob(), etag: resp.headers.get("etag") };
+}
+
 export async function listEngines(signal?: AbortSignal): Promise<EngineInfo[]> {
   const resp = await fetch(`${API_BASE_URL}/v1/engines`, { signal });
   if (!resp.ok) {

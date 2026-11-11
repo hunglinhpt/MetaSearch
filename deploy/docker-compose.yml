@@ -154,6 +154,25 @@ services:
         condition: service_healthy
     mem_limit: 256m
 
+  # Server-side TTS — VoiceStudio (tuỳ chọn, KHÔNG thuộc Lite profile, docs/17):
+  #   docker compose --profile tts up -d voicestudio
+  # Model tải về volume (nhiều GB); CPU chạy được, có GPU (Vulkan/CUDA) thì
+  # nhanh hơn. API đọc qua: http://voicestudio:3900 (mạng nội bộ compose).
+  voicestudio:
+    image: ghcr.io/debpalash/voicestudio:stable
+    container_name: metasearch-voicestudio
+    profiles: ["tts"]
+    restart: unless-stopped
+    environment:
+      - OMNIVOICE_API_KEY=${VOICESTUDIO_API_KEY:-}
+      - OMNIVOICE_DATA_DIR=/app/omnivoice_data
+    volumes:
+      - voicestudio-data:/app/omnivoice_data
+    ports:
+      - "127.0.0.1:3900:3900"
+    # Model GGUF nhiều GB — cap để service không ngốn hết RAM host.
+    mem_limit: 8g
+
   # Observability (prod, bật khi cần): docker compose --profile observability up -d
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -185,3 +204,4 @@ services:
 
 volumes:
   pgdata:
+  voicestudio-data:

@@ -265,7 +265,8 @@ class TestYamlDuplicateKeys:
 class TestComposeContent:
     def test_every_service_has_mem_limit(self):
         services = _strict_load(_COMPOSE.read_text(encoding="utf-8"))["services"]
-        assert len(services) == 10  # 9 + migrate (wave 3 package C)
+        # 9 + migrate (wave 3 package C) + voicestudio (profile "tts", docs/17)
+        assert len(services) == 11
         missing = [name for name, svc in services.items() if not svc.get("mem_limit")]
         assert missing == []
 

@@ -1592,6 +1592,57 @@
         "title": "TriggerScanRequest",
         "type": "object"
       },
+      "TtsSynthesizeRequest": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "response_format": {
+            "default": "mp3",
+            "enum": [
+              "mp3",
+              "wav",
+              "opus",
+              "flac",
+              "pcm"
+            ],
+            "title": "Response Format",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "voice": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TtsSynthesizeRequest",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -2857,6 +2908,66 @@
         "tags": [
           "v1",
           "search"
+        ]
+      }
+    },
+    "/v1/tts/capabilities": {
+      "get": {
+        "description": "Which server-side TTS engines are configured (no secrets, no URL).",
+        "operationId": "capabilities_v1_tts_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Capabilities V1 Tts Capabilities Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Capabilities",
+        "tags": [
+          "v1",
+          "tts"
+        ]
+      }
+    },
+    "/v1/tts/synthesize": {
+      "post": {
+        "operationId": "synthesize_v1_tts_synthesize_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TtsSynthesizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Synthesize",
+        "tags": [
+          "v1",
+          "tts"
         ]
       }
     }

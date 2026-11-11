@@ -24,6 +24,8 @@ class ErrorCode(StrEnum):
     NO_RESULTS = "no_results"
     OVERLOADED = "overloaded"
     DEADLINE_EXCEEDED = "deadline_exceeded"
+    TTS_DISABLED = "tts_disabled"
+    TTS_UPSTREAM_ERROR = "tts_upstream_error"
     INTERNAL = "internal"
 
 
@@ -35,6 +37,8 @@ HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.UPSTREAM_TIMEOUT: 502,
     ErrorCode.NO_RESULTS: 503,
     ErrorCode.OVERLOADED: 503,
+    ErrorCode.TTS_DISABLED: 503,
+    ErrorCode.TTS_UPSTREAM_ERROR: 502,
     ErrorCode.DEADLINE_EXCEEDED: 504,
     ErrorCode.INTERNAL: 500,
 }

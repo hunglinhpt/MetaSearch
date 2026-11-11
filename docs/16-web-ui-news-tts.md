@@ -46,6 +46,7 @@ flowchart LR
 |---|---|---|
 | **Web Speech API** (browser = voice stack của OS) | ✅ **Đã chọn** | Free, không key, không dep backend, không egress từ backend MetaSearch. Windows + Edge/Chrome có sẵn giọng vi-VN (kể cả giọng neural online `vi-VN-HoaiMy*`, `vi-VN-NamMinh*` của Edge). Chính là phương án "OS API" trong yêu cầu. **Riêng tư:** giọng neural *online* của Edge gửi nội dung đọc từ trình duyệt tới dịch vụ TTS Microsoft; giọng local của OS giữ trên máy — nêu rõ cho deployments nhạy cảm. |
 | `edge-tts` (Python, endpoint Microsoft free) | ⏭ Dự phòng | Chất giọng neural tốt nhưng phải thêm dep Python mới, gọi egress từ server, thêm pipeline audio (mp3/HTTP stream) — chưa cần khi Web Speech đáp ứng. |
+| **VoiceStudio local server** (tuỳ chọn, full profile) | ✅ **Đã thêm làm engine thứ 2** | Neural on-device (OmniVoice, có tiếng Việt), offline 100%, $0 — nhưng cần service + model nhiều GB nên KHÔNG có ở Lite; Web Speech vẫn là mặc định. Chi tiết & cách bật: [docs/17-voicestudio-integration.md](17-voicestudio-integration.md). |
 | Windows SAPI qua PowerShell ở backend | ⏭ Không chọn | Chỉ đọc được trên máy chạy server (không phát tới trình duyệt người dùng), voice tiếng Việt phụ thuộc cài máy. |
 | Google/Azure TTS API | ⏭ Không chọn | Cần key, tốn phí, thêm phụ thuộc — trái quy tắc free-first của dự án. |
 

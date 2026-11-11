@@ -17,11 +17,40 @@
  * to Microsoft's TTS service; local OS voices keep it on-device.
  */
 
+import { ttsSynthesize } from "./api";
+
 // Generation counter: any new speak/stop invalidates every chain from older
 // generations, so an engine that fires `onend` after an external
 // `synth.cancel()` (Firefox/Safari) cannot resume a stale chain behind a new
 // speaker.
 let _generation = 0;
+
+// --- engine selection (docs/17) -------------------------------------------
+
+export type TtsEngine = "webspeech" | "voicestudio";
+
+const ENGINE_STORAGE_KEY = "metasearch.tts-engine";
+
+/** Preferred TTS engine; "webspeech" unless the user picked VoiceStudio. */
+export function getPreferredEngine(): TtsEngine {
+  if (typeof window === "undefined") return "webspeech";
+  try {
+    return window.localStorage.getItem(ENGINE_STORAGE_KEY) === "voicestudio"
+      ? "voicestudio"
+      : "webspeech";
+  } catch {
+    return "webspeech"; // private mode etc.
+  }
+}
+
+export function setPreferredEngine(engine: TtsEngine): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(ENGINE_STORAGE_KEY, engine);
+  } catch {
+    // storage unavailable — preference simply will not persist
+  }
+}
 
 let _voices: SpeechSynthesisVoice[] = [];
 let _voicesLoaded = false;
@@ -172,6 +201,8 @@ export function ttsSpeak(text: string, opts: TtsOptions = {}): TtsHandle | null 
   }
   const synth = window.speechSynthesis;
   synth.cancel(); // one speaker at a time — replaces anything in flight
+  _activeRemote?.cancel(); // also stop a remote <audio> chain, if any
+  _activeRemote = null;
   const gen = ++_generation; // invalidates chains of older speakers
   const clean = stripForSpeech(text);
   if (!clean) {
@@ -223,8 +254,174 @@ export function ttsSpeak(text: string, opts: TtsOptions = {}): TtsHandle | null 
 }
 
 export function ttsStop(): void {
+  // Stop a remote (VoiceStudio) playback too — it uses <audio>, not
+  // speechSynthesis, so cancelling only the latter would let it run on.
+  _activeRemote?.cancel();
+  _activeRemote = null;
   if (ttsIsSupported()) {
     _generation++;
     window.speechSynthesis.cancel();
   }
+}
+
+// --- server-side (VoiceStudio) remote speak (docs/17) ----------------------
+
+// In-session blob cache keyed by chunk text: re-reading the same news item
+// must not re-synthesize. Bounded by entries AND bytes (a blob can be MBs).
+type RemoteCacheEntry = { blob: Blob; etag: string | null };
+const _remoteBlobCache = new Map<string, RemoteCacheEntry>();
+const REMOTE_CACHE_MAX_ENTRIES = 24;
+const REMOTE_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+let _remoteCacheBytes = 0;
+
+function cacheGet(text: string): RemoteCacheEntry | undefined {
+  const hit = _remoteBlobCache.get(text);
+  if (hit) _remoteBlobCache.delete(text); // refresh recency
+  if (hit) _remoteBlobCache.set(text, hit);
+  return hit;
+}
+
+function cachePut(text: string, entry: RemoteCacheEntry): void {
+  const old = _remoteBlobCache.get(text);
+  if (old) _remoteCacheBytes -= old.blob.size;
+  _remoteBlobCache.set(text, entry);
+  _remoteCacheBytes += entry.blob.size;
+  while (
+    _remoteBlobCache.size > REMOTE_CACHE_MAX_ENTRIES ||
+    _remoteCacheBytes > REMOTE_CACHE_MAX_BYTES
+  ) {
+    const oldestKey = _remoteBlobCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    const oldest = _remoteBlobCache.get(oldestKey);
+    if (oldest) _remoteCacheBytes -= oldest.blob.size;
+    _remoteBlobCache.delete(oldestKey);
+  }
+}
+
+// In-flight syntheses, so a prefetch racing the sequential player cannot
+// fire a duplicate network request for the same chunk.
+const _remoteInflight = new Map<string, Promise<Blob>>();
+
+async function synthChunk(text: string, signal?: AbortSignal): Promise<Blob> {
+  const cached = cacheGet(text);
+  if (cached) return cached.blob; // in-session hit: no network at all
+  const inflight = _remoteInflight.get(text);
+  if (inflight) return inflight;
+  const p = (async () => {
+    const res = await ttsSynthesize(text, { signal });
+    cachePut(text, { blob: res.blob, etag: res.etag });
+    return res.blob;
+  })();
+  _remoteInflight.set(text, p);
+  try {
+    return await p;
+  } finally {
+    _remoteInflight.delete(text);
+  }
+}
+
+// The currently-playing remote handle, so ttsStop() can also stop <audio>
+// playback (not just speechSynthesis).
+let _activeRemote: TtsHandle | null = null;
+
+/**
+ * Speak through the server-side VoiceStudio engine (docs/17): the text is
+ * stripped and chunked exactly like the browser path, each chunk is
+ * synthesized over HTTP (`/v1/tts/synthesize`) and played in order through a
+ * single <audio> element — one speaker at a time, same generation guard.
+ * The next chunk is prefetched while the current one plays, hiding synthesis
+ * latency. Privacy: chunk text travels to the configured internal VoiceStudio
+ * server.
+ */
+export function ttsSpeakRemote(text: string, opts: TtsOptions = {}): TtsHandle | null {
+  const clean = stripForSpeech(text);
+  if (!clean) {
+    opts.onEnd?.();
+    return null;
+  }
+  // One speaker at a time: a new remote chain replaces any remote chain in
+  // flight (same invariant as ttsSpeak), pausing its <audio> and revoking
+  // its blob URL.
+  _activeRemote?.cancel();
+  _activeRemote = null;
+  const chunks = chunkForSpeech(clean);
+  const gen = ++_generation;
+  let cancelled = false;
+  let errorReported = false;
+  const reportError = (reason: string) => {
+    if (errorReported || cancelled || gen !== _generation) return;
+    errorReported = true;
+    opts.onError?.(reason);
+  };
+  const controller = new AbortController();
+  let idx = 0;
+  let audio: HTMLAudioElement | null = null;
+  let activeUrl: string | null = null;
+
+  const releaseUrl = (url: string) => {
+    if (activeUrl === url) activeUrl = null;
+    URL.revokeObjectURL(url);
+  };
+
+  const playNext = () => {
+    if (cancelled || gen !== _generation) return;
+    if (idx >= chunks.length) {
+      opts.onEnd?.();
+      return;
+    }
+    const chunk = chunks[idx++];
+    synthChunk(chunk, controller.signal)
+      .then((blob) => {
+        if (cancelled || gen !== _generation) return;
+        // Prefetch the next chunk while this one plays (still one speaker).
+        if (idx < chunks.length) {
+          void synthChunk(chunks[idx], controller.signal).catch(() => {});
+        }
+        const url = URL.createObjectURL(blob);
+        activeUrl = url;
+        const el = new Audio(url);
+        audio = el;
+        el.onended = () => {
+          releaseUrl(url);
+          if (audio === el) audio = null;
+          playNext();
+        };
+        el.onerror = () => {
+          releaseUrl(url);
+          if (audio === el) audio = null;
+          reportError("audio-playback");
+        };
+        el.play().catch(() => {
+          releaseUrl(url);
+          reportError("audio-play");
+        });
+      })
+      .catch((err: unknown) => {
+        // A failed chunk stops the chain and reports — never silently skip
+        // part of the content.
+        if (cancelled || gen !== _generation || controller.signal.aborted) return;
+        reportError(err instanceof Error ? err.message : String(err));
+      });
+  };
+
+  opts.onStart?.();
+  playNext();
+  const handle: TtsHandle = {
+    cancel: () => {
+      cancelled = true;
+      _generation++;
+      controller.abort();
+      if (audio) {
+        audio.pause();
+        audio = null;
+      }
+      if (activeUrl) {
+        URL.revokeObjectURL(activeUrl);
+        activeUrl = null;
+      }
+      if (_activeRemote === handle) _activeRemote = null;
+    },
+  };
+  _activeRemote = handle;
+  return handle;
 }

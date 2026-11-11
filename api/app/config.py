@@ -6,6 +6,7 @@ import os
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -153,6 +154,19 @@ class Settings(BaseSettings):
     # Context budget for /v1/answer: units depend on CONTEXT_TOKENIZER
     # (words by default; real tokens with CONTEXT_TOKENIZER=tiktoken).
     answer_context_budget: int = 6000
+
+    # --- server-side TTS (optional VoiceStudio backend, docs/17) -----------
+    # Empty voicestudio_url = feature disabled (Web Speech API stays the default
+    # in the browser). URL comes from env only, never from a request (SSRF).
+    voicestudio_url: str = ""
+    voicestudio_api_key: str = ""
+    voicestudio_model: str = "omnivoice"
+    # Empty = VoiceStudio server default voice/profile.
+    voicestudio_voice: str = ""
+    voicestudio_timeout_s: float = Field(default=30.0, gt=0)
+    # Hard caps for /v1/tts/synthesize (request text and upstream audio bytes).
+    tts_max_chars: int = Field(default=2000, ge=1)
+    tts_max_audio_bytes: int = Field(default=8 * 1024 * 1024, ge=1)
 
     # --- optional search providers (fallback when SearXNG is degraded) ----
     tavily_api_key: str = ""

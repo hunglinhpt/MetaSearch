@@ -21,12 +21,14 @@ logger = get_logger(__name__)
 # and the plan bounds the whole rejection at 2s. B16 in status/W2-C.md.)
 # scrape: 16 concurrent, 1.0s queue wait
 # research: max_concurrent (default 5), 0.0s queue wait
+# tts: 8 concurrent, 1.0s queue wait (upstream synthesis can take seconds)
 _TIER_CONFIG: dict[str, tuple[int, float]] = {
     "search": (64, 1.0),
     "context": (16, 1.0),
     "answer": (16, 1.0),
     "scrape": (16, 1.0),
     "research": (5, 0.0),
+    "tts": (8, 1.0),
 }
 
 _semaphores: dict[str, asyncio.Semaphore] = {}

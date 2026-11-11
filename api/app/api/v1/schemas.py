@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app.llm.providers import LLMOverride
+
+
+class TtsSynthesizeRequest(BaseModel):
+    # Server-side TTS proxy (docs/17). The tighter runtime cap is
+    # settings.tts_max_chars; this bound only keeps the request sane.
+    text: str = Field(min_length=1, max_length=20_000)
+    voice: str | None = Field(default=None, max_length=100)
+    model: str | None = Field(default=None, max_length=100)
+    response_format: Literal["mp3", "wav", "opus", "flac", "pcm"] = "mp3"
 
 
 class SearchRequest(BaseModel):

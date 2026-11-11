@@ -20,13 +20,17 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-PoolName = Literal["search", "scrape", "llm", "internal"]
+PoolName = Literal["search", "scrape", "llm", "internal", "tts"]
 
 _LIMITS: dict[PoolName, httpx.Limits] = {
     "search": httpx.Limits(max_connections=64, max_keepalive_connections=32),
     "scrape": httpx.Limits(max_connections=48, max_keepalive_connections=0),
     "llm": httpx.Limits(max_connections=32, max_keepalive_connections=16),
     "internal": httpx.Limits(max_connections=16, max_keepalive_connections=8),
+    # TTS synthesis holds a connection for the whole upstream call (up to
+    # voicestudio_timeout_s) — a dedicated small pool so it can never starve
+    # health probes/embeddings on the shared "internal" pool.
+    "tts": httpx.Limits(max_connections=8, max_keepalive_connections=4),
 }
 
 # Waiting for a free connection is our own congestion, never worth the request timeout.

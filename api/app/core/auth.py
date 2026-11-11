@@ -353,6 +353,8 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
             cost = 3
         elif path.endswith("/research") and request.method == "POST":
             cost = 20
+        elif path.endswith("/tts/synthesize") and request.method == "POST":
+            cost = 5  # upstream synthesis can take seconds (docs/17)
         else:
             cost = 1
 
