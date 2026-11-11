@@ -1,6 +1,6 @@
 # Contributing — MetaSearch
 
-English overview: [README.en.md](README.en.md)
+English version: [README.md — English section](#english) (README song ngữ Anh–Vi trong một file)
 
 Nguyên tắc số 1: **giants-first** — đừng tự chế lại bánh xe. Đọc
 [AGENTS.md](AGENTS.md) cho bức tranh tổng và [docs/](docs/) cho thiết kế.

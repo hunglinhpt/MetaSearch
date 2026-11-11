@@ -9,8 +9,9 @@ version tuân theo [SemVer](https://semver.org/).
 ### Docs
 - README.md cập nhật đúng trạng thái hiện tại (v2.2.0: tab Tin tức + TTS, map `when:{n}d`
   server-side, process hardening; số test 770 backend + 16 frontend; bản đồ docs đủ 16 tài
-  liệu) và có thêm **bản tiếng Anh `README.en.md`** (link chéo 2 chiều với README.md và
-  CONTRIBUTING.md). `docs/12-roadmap-plan.md` cập nhật verify matrix + mục v2.2.0.
+  liệu); README.md nay **song ngữ Anh–Vi trong cùng một file** (mục `# English` và
+  `# Tiếng Việt`, link neo chéo ở đầu file; CONTRIBUTING.md và AGENTS.md trỏ vào anchor).
+  `docs/12-roadmap-plan.md` cập nhật verify matrix + mục v2.2.0.
 
 ### Added
 - Tab **Tin tức** mới trên Web UI (`frontend/components/NewsPanel.tsx`): 6 mục preset
