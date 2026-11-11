@@ -171,12 +171,52 @@ def ensure_git_pre_commit_hook(root: Path) -> bool:
     return proc.returncode == 0
 
 
+def check_lockfile_version(root: Path) -> None:
+    """api/uv.lock must pin the same metasearch-api version as api/pyproject.toml.
+
+    CI installs with `uv sync --locked`, which fails hard when the lockfile is
+    stale — a version bump without `uv lock` must never reach a commit.
+    Pure-stdlib check (no uv binary needed) so the hook works on every OS.
+    """
+    pyproject = root / "api" / "pyproject.toml"
+    lockfile = root / "api" / "uv.lock"
+    if not pyproject.exists() or not lockfile.exists():
+        return
+    py_match = re.search(
+        r'(?m)^version\s*=\s*["\']([^"\']+)["\']', pyproject.read_text(encoding="utf-8")
+    )
+    lock_text = lockfile.read_text(encoding="utf-8")
+    lock_match = re.search(
+        r'\[\[package\]\]\s*\nname\s*=\s*"metasearch-api"\s*\nversion\s*=\s*"([^"]+)"',
+        lock_text,
+    )
+    if not py_match or not lock_match:
+        log(
+            "WARN: could not parse versions from pyproject.toml/uv.lock — skipping lock check",
+            level="WARN",
+        )
+        return
+    py_ver, lock_ver = py_match.group(1), lock_match.group(1)
+    if py_ver != lock_ver:
+        log(
+            f"BLOCKED: api/pyproject.toml is {py_ver} but api/uv.lock pins metasearch-api "
+            f"{lock_ver}. Run `uv lock` in api/ and commit the updated uv.lock "
+            "(CI `uv sync --locked` fails otherwise).",
+            level="ERROR",
+        )
+        sys.exit(1)
+    log(f"PASSED: uv.lock pins metasearch-api {lock_ver} (matches pyproject.toml)", level="SUCCESS")
+
+
 def run_pre_commit_gate(root: Path, python_bin: Path) -> None:
-    """Mandatory pre-commit gate: Ruff, Bandit, E2E Full System Suite, and Unit Suite."""
+    """Mandatory pre-commit gate: lockfile sync, Ruff, Bandit, E2E + Unit suites."""
     log(
-        "Enforcing Mandatory Pre-Commit Gate (Ruff, Bandit, E2E Suite, Unit Suite)...",
+        "Enforcing Mandatory Pre-Commit Gate (uv.lock, Ruff, Bandit, E2E + Unit)...",
         prefix=">>",
     )
+
+    # 0. Lockfile must match pyproject version (CI `uv sync --locked` enforces it)
+    check_lockfile_version(root)
 
     e2e_file = root / "api" / "tests" / "test_e2e_full_system.py"
     if not e2e_file.exists():

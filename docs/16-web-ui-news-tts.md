@@ -104,8 +104,10 @@ tóm tắt + nguồn) hoặc từng tin riêng.
 
 ## 6. Kiểm thử
 
-- Frontend: `npm run typecheck` + `npm run build` (CI chạy trên 3 OS).
-- TTS là API trình duyệt — không unit test được ngoài môi trường thật; các
-  logic thuần (stripForSpeech, chunkForSpeech) có thể test khi thêm vitest
-  (chưa thêm dep trong bản này).
-- Backend không đổi — suite đầy đủ vẫn xanh.
+- Frontend: `npm run test` (vitest — chạy trong CI frontend matrix trên cả 3 OS),
+  `npm run typecheck` + `npm run build`. Unit test phủ các logic thuần:
+  `stripForSpeech`/`chunkForSpeech` (`lib/tts.test.ts`), `safeHref`
+  (`lib/api.test.ts`), `buildNewsQuery` incl. guard `when:` (`lib/newsQuery.test.ts`).
+- TTS runtime (Web Speech API) là API trình duyệt — không unit test được ngoài
+  môi trường thật; chỉ phần pure text-prep được test.
+- Backend không đổi — suite đầy đủ vẫn xanh (contract snapshot không đổi).

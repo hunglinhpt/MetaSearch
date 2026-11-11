@@ -54,7 +54,10 @@ version tuân theo [SemVer](https://semver.org/).
   `\bwhen:\d+[dhwmy]` không nhân đôi operator khi truy vấn tự do đã có `when:`.
 
 ### Verified
-- `npm run typecheck` + `npm run build` PASS (Next.js 15 build sạch).
+- `npm run test` (vitest, 21 unit test cho `stripForSpeech`/`chunkForSpeech`/`safeHref`/`buildNewsQuery`)
+  PASS và đã thêm vào CI frontend matrix; `npm run typecheck` + `npm run build` PASS (Next.js 15 build sạch).
+- Pre-commit gate mới kiểm tra `api/uv.lock` khớp version với `pyproject.toml`
+  (`check_lockfile_version` trong `scripts/release.py`) — CI `uv sync --locked` không còn bị fail vì lockfile stale.
 - Backend suite đầy đủ pass 100% (không đổi API — chỉ dùng `freshness_days` đã có sẵn
   trong contract `docs/06` §1).
 - Audit vòng 5 (2 expert, read-only): cả 4 finding vòng 4 đều FIXED với bằng chứng

@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { safeHref, SearchHit, search } from "../lib/api";
+import { buildNewsQuery } from "../lib/newsQuery";
 import {
   TtsHandle,
   ttsHasVietnameseVoice,
@@ -165,14 +166,10 @@ export default function NewsPanel() {
     ttsStop();
     setSpeakingId(null);
     try {
-      const base = (overrideQuery ?? cat.query).trim() || cat.query;
       // google_news ignores freshness_days server-side; `when:Nd` is the
-      // operator its RSS feed actually honors (docs/16 §1). Never append a
-      // second operator when the user's own query already carries one.
-      const q =
-        cat.engines.includes("google_news") && !/\bwhen:\d+[dhwmy]/i.test(base)
-          ? `${base} when:${cat.freshnessDays}d`
-          : base;
+      // operator its RSS feed actually honors (docs/16 §1) — built by the
+      // pure, unit-tested buildNewsQuery (never appends a second operator).
+      const q = buildNewsQuery(overrideQuery ?? cat.query, cat.query, cat.freshnessDays, cat.engines);
       setAppliedQuery(q);
       const resp = await search(q, {
         engines: cat.engines,

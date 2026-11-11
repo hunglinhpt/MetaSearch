@@ -187,6 +187,12 @@ METASEARCH_INTEGRATION=1 pytest tests/integration -q   # từ api/
 
 ## 6. Nhận việc — checklist
 
+0. **Nhận việc dang dở của phiên/agent khác (vd: đọc từ log zcode):** đừng chỉ làm theo
+   todo/plan còn lại — trước tiên đọc **toàn bộ diff** phần họ đã làm, tự verify với
+   backend contract (schema, cache key, response shape), rồi audit đối kháng tìm lỗi MỚI
+   (có thể spawn expert read-only). Trước khi push phải mirror đủ các gate của CI — kể cả
+   `uv.lock` khớp version (`check_lockfile_version` trong pre-commit gate; CI chạy
+   `uv sync --locked` sẽ đỏ nếu lockfile stale dù gate local xanh).
 1. Đọc `docs/12-roadmap-plan.md` (plan + KPI + rủi ro) và mục 2 ở trên.
 2. Việc mới thuộc phase nào? Nếu phase trước còn nợ (mục "Cần cải thiện"),
    cân nhắc xử lý nợ trước khi mở phase mới.
