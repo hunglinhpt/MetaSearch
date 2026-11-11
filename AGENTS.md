@@ -23,7 +23,7 @@ orchestration không đổi.
 - ✅ **Web UI tab Tin tức + đọc máy tiếng Việt (v2.2.0)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/16-web-ui-news-tts.md](docs/16-web-ui-news-tts.md):
   - Tab Tin tức 6 mục preset qua `google_news` + map `freshness_days`→`when:{n}d` **server-side** trong adapter (cửa sổ thời gian thật, guard end-anchored không nhân đôi operator; client chỉ gửi param có cấu trúc), không thêm endpoint backend; `safeHref()` gói mọi href từ payload.
   - TTS vi-VN qua Web Speech API (voice stack của OS, free, không egress backend): đọc câu trả lời + đọc bản tin/từng tin; strip markdown/URL/`[n]`, chunk ≤220 ký tự, một speaker tại một thời điểm, generation guard, graceful degradation + ghi chú riêng tư trên tooltip.
-  - Audit vòng 5 (QA/perf + AI/TTS & data-integrity, read-only): 4/4 finding vòng 4 FIXED, không có P1/P2 mới — PASS; `npm run typecheck` + `build` PASS; backend suite 100%.
+  - TTS server-side tuỳ chọn **VoiceStudio** (docs/17): endpoint `/v1/tts/*` sau auth, client env-only URL validate nghiêm, ETag + single-flight + LRU bounded + admission tier riêng; tắt mặc định, Web Speech là default. Audit vòng 8 đối kháng (security/SA + QA/data-integrity): ETag length-prefix, admission trong flight, fallback Web Speech khi VoiceStudio lỗi, 34 test TTS — PASS; tổng 830 backend + 21 frontend tests, 7/7 quality gates.
 - ✅ **Readiness cho hệ thống bên ngoài (v2.0.0)** — chi tiết và số đo ở [CHANGELOG.md](CHANGELOG.md):
   - **Breaking:** `/v1/context` mặc định chỉ `chunks` + `sources` (xin thêm qua `include`); BYO LLM tắt mặc định; cách ly dữ liệu theo key; vài route chỉ admin; SuperAgent tắt mặc định.
   - Không còn số liệu tài chính ước lượng hay bảng tĩnh trong runtime; mọi kết quả, chunk có mốc nguồn và thời gian.

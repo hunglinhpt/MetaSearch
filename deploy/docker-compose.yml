@@ -159,6 +159,11 @@ services:
   # Model tải về volume (nhiều GB); CPU chạy được, có GPU (Vulkan/CUDA) thì
   # nhanh hơn. API đọc qua: http://voicestudio:3900 (mạng nội bộ compose).
   voicestudio:
+    # Supply-chain (audit vòng 8): tag :stable có thể bị đẩy lại âm thầm.
+    # Trước khi dùng thật cho prod, pin đúng digest:
+    #   docker pull ghcr.io/debpalash/voicestudio:stable
+    #   docker image inspect --format '{{index .RepoDigests 0}}' <id>
+    # rồi đổi image thành ghcr.io/debpalash/voicestudio@sha256:<digest>.
     image: ghcr.io/debpalash/voicestudio:stable
     container_name: metasearch-voicestudio
     profiles: ["tts"]

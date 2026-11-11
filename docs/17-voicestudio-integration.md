@@ -2,7 +2,7 @@
 > làm **engine đọc máy chủ-side tuỳ chọn** cho tab Tin tức (và câu trả lời), giữ Web Speech API
 > làm mặc định; đồng thời đề xuất các chức năng mở rộng khác của VoiceStudio nếu việt hơn
 > (nếu ưu việt hơn phần TTS hiện tại). Trạng thái: **đã triển khai phần TTS server-side
-> (v2.3.0-dev)**; các tính năng mở rộng (dictation, tải bản tin audio) là phase sau — xem §6.
+> (chưa release — [Unreleased] trong CHANGELOG)**; các tính năng mở rộng (dictation, tải bản tin audio) là phase sau — xem §6.
 
 ## 1. VoiceStudio là gì (nguồn: README + docs chính thức, 2026-11)
 
@@ -118,3 +118,15 @@ Lite profile: **không hỗ trợ** (quá nặng) — UI tự ẩn tuỳ chọn 
   compose `mem_limit`, prefetch + blob cache + revoke URL + `ttsStop` dừng remote ở frontend).
   Vòng 2 xác nhận toàn bộ FIXED với evidence file:line, verdict **PASS ×3**, không P1/P2 mới.
   Kết quả chi tiết ghi ở CHANGELOG (Unreleased).
+
+**Vận hành (audit vòng 8):**
+- **Host size**: `mem_limit: 8g` của voicestudio là *cap* chứ không phải phân bổ,
+  nhưng model nhiều GB + CPU/GPU synthesize đồng hành với postgres/redis/api —
+  chỉ bật profile `tts` trên host ≥ 16GB RAM; host 4-8GB dùng Web Speech API
+  (mặc định) hoặc chạy VoiceStudio trên máy khác và trỏ `VOICESTUDIO_URL`.
+- **Safari**: chính sách transient-activation có thể từ chối `play()` của chunk
+  thứ 2 trở đi trong chuỗi remote (lỗi `audio-play` được báo thẳng, không bỏ
+  im lặng); Chrome/Edge không ảnh hưởng.
+- **Capabilities cache 1 lần/trang**: thêm/xoá `VOICESTUDIO_URL` giữa chừng chỉ
+  có hiệu lực sau khi reload trang (fetch lại khi lỗi là có, thành công thì
+  không tự re-validate).

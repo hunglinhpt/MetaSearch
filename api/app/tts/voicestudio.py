@@ -76,9 +76,15 @@ class VoiceStudioClient:
 
     @staticmethod
     def etag(model: str, voice: str, response_format: str, text: str) -> str:
-        digest = hashlib.sha256(f"{model}|{voice}|{response_format}|{text}".encode()).hexdigest()[
-            :32
-        ]
+        # Length-prefixed fields (audit): user-controlled model/voice may contain
+        # '|', so a plain join would let (model="a|b", voice="c") collide with
+        # (model="a", voice="b|c") — two different payloads sharing one cache key.
+        def part(value: str) -> str:
+            return f"{len(value)}:{value}"
+
+        digest = hashlib.sha256(
+            "|".join([part(model), part(voice), part(response_format), part(text)]).encode()
+        ).hexdigest()[:32]
         return f'"{digest}"'
 
     async def synthesize(

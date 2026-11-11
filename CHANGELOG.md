@@ -6,6 +6,22 @@ version tuân theo [SemVer](https://semver.org/).
 
 ## [Unreleased] — VoiceStudio server-side TTS (tuỳ chọn) — xem docs/17
 
+### Hardening (audit vòng 8 — security/SA + QA/data-integrity đối kháng, PASS)
+- **ETag chống cross-field collision**: key cache audio giờ length-prefix từng
+  trường (model/voice chứa `|` không còn trộn khóa giữa các request).
+- **Admission vào trong single-flight**: waiter của request trùng dùng chung
+  slot leader, không đốt permit `admit("tts")` cho cuộc gọi không xảy ra.
+- **Fallback thật khi VoiceStudio lỗi** (docs/17 §2 giờ đúng): chuỗi remote
+  fail → phần còn lại được đọc bằng Web Speech API thay vì im lặng; `ttsSpeakRemote`
+  cũng huếy giọng Web Speech đang chạy (bất đẳng thức one-speaker đã bỏ).
+- Nút đọc máy hiện khi có Web Speech **hoặc** VoiceStudio (webview không có
+  speechSynthesis vẫn nghe được qua server); hint hết giọng vi tự sửa theo
+  `voiceschanged`; bỏ field ETag chết ở client; tooltip bỏ ghim "Web Speech API".
+- 4 test mới: ETag collision, redirect 3xx → 502 KHÔNG theo, LRU eviction
+  (count/bytes), auth 401 cho cả 2 route TTS. TTS suite: 34/34.
+- docs/17: ghi chú host ≥16GB cho profile tts, Safari transient-activation,
+  capabilities cache 1 lần/trang; compose thêm hướng dẫn pin digest image.
+
 ### Added
 - **Engine đọc máy thứ 2: VoiceStudio local server** (docs/17): backend mới
   `GET /v1/tts/capabilities` + `POST /v1/tts/synthesize` proxy tới OpenAI-compatible
@@ -41,7 +57,7 @@ version tuân theo [SemVer](https://semver.org/).
 
 ### Docs
 - README.md cập nhật đúng trạng thái hiện tại (v2.2.0: tab Tin tức + TTS, map `when:{n}d`
-  server-side, process hardening; số test 770 backend + 16 frontend; bản đồ docs đủ 16 tài
+  server-side, process hardening; số test 830 backend + 21 frontend; bản đồ docs đủ 16 tài
   liệu); README.md nay **song ngữ Anh–Vi trong cùng một file** (mục `# English` và
   `# Tiếng Việt`, link neo chéo ở đầu file; CONTRIBUTING.md và AGENTS.md trỏ vào anchor).
   `docs/12-roadmap-plan.md` cập nhật verify matrix + mục v2.2.0.

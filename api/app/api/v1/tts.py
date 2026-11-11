@@ -98,15 +98,19 @@ async def synthesize(http_request: Request, payload: TtsSynthesizeRequest) -> Re
         _audio_lru.move_to_end(etag)
         audio, media_type = hit
     else:
-        async with admit("tts"):
-            audio, media_type = await _tts_flight.run(
-                etag,
-                lambda: client.synthesize(
+
+        async def _synthesize_admitted() -> tuple[bytes, str]:
+            # Admission is taken INSIDE the flight: coalesced waiters of one
+            # identical request share the leader's slot instead of each burning
+            # an admit("tts") permit for an upstream call that never happens.
+            async with admit("tts"):
+                return await client.synthesize(
                     payload.text,
                     voice=payload.voice,
                     model=payload.model,
                     response_format=payload.response_format,
-                ),
-            )
+                )
+
+        audio, media_type = await _tts_flight.run(etag, _synthesize_admitted)
         _store_audio(etag, audio, media_type)
     return Response(content=audio, media_type=media_type, headers=headers)

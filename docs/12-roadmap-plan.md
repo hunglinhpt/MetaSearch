@@ -168,7 +168,7 @@
 
 | Hạng mục | Lệnh | Kết quả |
 |---|---|---|
-| Backend tests | `pytest -q` | **770 passed** (integration gated bằng `METASEARCH_INTEGRATION=1`) |
+| Backend tests | `pytest -q` | **830 passed** (integration gated bằng `METASEARCH_INTEGRATION=1`) |
 | Lint & Format | `ruff check` + `ruff format --check` | **All checks passed** |
 | Security scan | `bandit -q -r app -x tests` | **0 issues** (exit 0) |
 | Frontend | `npm run test` + `npm run typecheck` + `npm run build` | **vitest 16/16 PASS**, `tsc` exit 0, Next.js build clean |
@@ -201,7 +201,7 @@
 - [x] TTS vi-VN qua Web Speech API (voice stack của OS, free, không egress backend): đọc câu trả lời + cả bản tin/từng tin; UI công khai đúng giọng đang dùng là local hay online (riêng tư); strip markdown/URL/`[n]`, chunk ≤220 ký tự, một speaker tại một thời điểm, generation guard.
 - [x] `safeHref()` cho mọi href từ payload; toolbar trung thực về cửa sổ thời gian (phát hiện `when:` nhúng trong truy vấn tự do); `age_s` fallback `published_at` cho tin (/v1/search + /v1/context).
 - [x] Process: pre-commit gate kiểm tra `api/uv.lock` khớp version (fail-closed, parser neo đúng section); `clean_workspace` không xoá dữ liệu runtime local (`api/*.db*`, `*.retention`, `api/.env.*`) và skip file bị lock thay vì crash; CI `npm audit` cả dev deps; vitest (16 test) vào frontend matrix 3 OS.
-- [x] Audit đối kháng 2 vòng (mỗi vòng 3 expert: perf / quality / data-sec): vòng 1 phát hiện 2 P2 + các P3 → fix hết; vòng 2 xác nhận 8/8 FIXED, verdict **PASS ×3**, không P1/P2 mới. Backend 770 tests + frontend 16 tests xanh; CI 13/13 jobs success.
+- [x] Audit đối kháng 2 vòng (mỗi vòng 3 expert: perf / quality / data-sec): vòng 1 phát hiện 2 P2 + các P3 → fix hết; vòng 2 xác nhận 8/8 FIXED, verdict **PASS ×3**, không P1/P2 mới. Backend 830 tests + frontend 21 tests xanh; CI 13/13 jobs success.
 
 ### Đang phát triển sau v2.2.0: VoiceStudio server-side TTS (docs/17)
 

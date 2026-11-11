@@ -307,3 +307,73 @@ async def test_route_single_flight_coalesces_concurrent_identical_requests(monke
     assert r1.status_code == 200 and r2.status_code == 200
     assert r1.content == r2.content == b"AUDIO"
     assert calls == 1  # coalesced by the single-flight, not by the LRU alone
+
+
+# ------------------------------------------------- audit round-8 hardening
+
+
+def test_etag_fields_are_length_prefixed_no_cross_field_collision():
+    """(model="a|b", voice="c") must not collide with (model="a", voice="b|c")."""
+    e1 = VoiceStudioClient.etag("a|b", "c", "mp3", "x")
+    e2 = VoiceStudioClient.etag("a", "b|c", "mp3", "x")
+    assert e1 != e2
+
+
+async def test_upstream_redirect_is_never_followed_returns_502(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={"location": "http://evil.test/audio", "content-type": "audio/mpeg"},
+        )
+
+    vs = _vs(handler)
+    with pytest.raises(MetaSearchError) as exc:
+        await vs.synthesize("xin chào")
+    assert exc.value.code == ErrorCode.TTS_UPSTREAM_ERROR
+
+
+async def test_audio_lru_evicts_by_count_and_bytes(monkeypatch):
+    from app.api.v1 import tts as tts_route
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        json.loads(request.content)  # exercise the parse path, bytes are what matters
+        return httpx.Response(
+            200,
+            content=b"A" * 4096,
+            headers={"content-type": "audio/mpeg"},
+        )
+
+    vs = _vs(handler)
+    async with _api_client(monkeypatch, vs) as client:
+        for i in range(20):  # more than _AUDIO_LRU_MAX_ENTRIES (16)
+            resp = await client.post(
+                "/v1/tts/synthesize", json={"text": f"tin số {i} để đuổi cache"}
+            )
+            assert resp.status_code == 200
+        assert len(tts_route._audio_lru) <= tts_route._AUDIO_LRU_MAX_ENTRIES
+        assert tts_route._audio_lru_bytes <= tts_route._AUDIO_LRU_MAX_BYTES
+        # Byte accounting must stay consistent with the stored entries.
+        total = sum(len(audio) for audio, _ in tts_route._audio_lru.values())
+        assert total == tts_route._audio_lru_bytes
+
+
+def test_route_requires_api_key(monkeypatch):
+    """AUTH_ENABLED=true must 401 both TTS routes (router-level _auth)."""
+    from fastapi.testclient import TestClient
+
+    from app.config import get_settings
+    from app.main import create_app
+
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("VOICESTUDIO_URL", "http://vs.test:3900")
+    monkeypatch.setattr(deps, "get_tts_client", lambda: _vs(_settings()))
+    get_settings.cache_clear()  # env changed: drop the cached settings singleton
+    try:
+        authed_app = create_app()
+        client = TestClient(authed_app)
+        caps = client.get("/v1/tts/capabilities")
+        assert caps.status_code in (401, 403)
+        syn = client.post("/v1/tts/synthesize", json={"text": "x"})
+        assert syn.status_code in (401, 403)
+    finally:
+        get_settings.cache_clear()  # env reverted: let other tests recompute

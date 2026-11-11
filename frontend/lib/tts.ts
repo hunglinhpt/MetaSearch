@@ -190,6 +190,9 @@ export type TtsOptions = {
   onStart?: () => void;
   onEnd?: () => void;
   onError?: (reason: string) => void;
+  /** Remote chains only: speak the remaining text with Web Speech on failure
+   * (docs/17 §2). Ignored by the Web Speech path itself. */
+  fallbackToWebSpeech?: boolean;
 };
 
 export type TtsHandle = { cancel: () => void };
@@ -268,7 +271,10 @@ export function ttsStop(): void {
 
 // In-session blob cache keyed by chunk text: re-reading the same news item
 // must not re-synthesize. Bounded by entries AND bytes (a blob can be MBs).
-type RemoteCacheEntry = { blob: Blob; etag: string | null };
+// Server ETags are intentionally NOT stored client-side: the browser never
+// re-sends If-None-Match on a POST (the server LRU + this in-session blob
+// cache already cover reuse), so a stored etag would be dead weight (audit F5).
+type RemoteCacheEntry = { blob: Blob };
 const _remoteBlobCache = new Map<string, RemoteCacheEntry>();
 const REMOTE_CACHE_MAX_ENTRIES = 24;
 const REMOTE_CACHE_MAX_BYTES = 32 * 1024 * 1024;
@@ -309,7 +315,7 @@ async function synthChunk(text: string, signal?: AbortSignal): Promise<Blob> {
   if (inflight) return inflight;
   const p = (async () => {
     const res = await ttsSynthesize(text, { signal });
-    cachePut(text, { blob: res.blob, etag: res.etag });
+    cachePut(text, { blob: res.blob });
     return res.blob;
   })();
   _remoteInflight.set(text, p);
@@ -341,9 +347,11 @@ export function ttsSpeakRemote(text: string, opts: TtsOptions = {}): TtsHandle |
   }
   // One speaker at a time: a new remote chain replaces any remote chain in
   // flight (same invariant as ttsSpeak), pausing its <audio> and revoking
-  // its blob URL.
+  // its blob URL — AND silences any Web Speech voice in flight (the reverse
+  // direction of ttsSpeak's cancel of the remote handle).
   _activeRemote?.cancel();
   _activeRemote = null;
+  if (ttsIsSupported()) window.speechSynthesis.cancel();
   const chunks = chunkForSpeech(clean);
   const gen = ++_generation;
   let cancelled = false;
@@ -352,6 +360,18 @@ export function ttsSpeakRemote(text: string, opts: TtsOptions = {}): TtsHandle |
     if (errorReported || cancelled || gen !== _generation) return;
     errorReported = true;
     opts.onError?.(reason);
+    // Fallback (docs/17 §2): a remote failure must not leave the user in
+    // silence when the browser can speak the remaining text itself.
+    if (opts.fallbackToWebSpeech && !cancelled && gen === _generation && ttsIsSupported()) {
+      const remaining = chunks.slice(Math.max(0, idx - 1)).join(" ");
+      if (remaining.trim()) {
+        // The failed chunk is retried by the browser engine: the last chunk
+        // handed to synthChunk may or may not have played.
+        window.speechSynthesis.cancel();
+        const fallbackOpts = { ...opts, fallbackToWebSpeech: undefined };
+        ttsSpeak(remaining, fallbackOpts);
+      }
+    }
   };
   const controller = new AbortController();
   let idx = 0;

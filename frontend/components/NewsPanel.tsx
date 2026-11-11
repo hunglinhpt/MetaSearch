@@ -190,7 +190,9 @@ export default function NewsPanel() {
     text: string,
     cbs: { onStart?: () => void; onEnd?: () => void; onError?: () => void },
   ): TtsHandle | null =>
-    effectiveEngine === "voicestudio" ? ttsSpeakRemote(text, cbs) : ttsSpeak(text, cbs);
+    effectiveEngine === "voicestudio"
+      ? ttsSpeakRemote(text, { ...cbs, fallbackToWebSpeech: true })
+      : ttsSpeak(text, cbs);
 
   const fetchNews = useCallback(async (cat: NewsCategory, overrideQuery?: string) => {
     // Invalidate any in-flight response and abort its request.
@@ -374,7 +376,7 @@ export default function NewsPanel() {
             "Chọn một mục hoặc nhập truy vấn riêng."
           )}
         </span>
-        {ttsReady && hits.length > 0 && (
+        {(ttsReady || vsEnabled) && hits.length > 0 && (
           speakingId === "__digest__" ? (
             <button
               type="button"
@@ -396,9 +398,10 @@ export default function NewsPanel() {
             </button>
           )
         )}
-        {!ttsReady && (
+        {!ttsReady && !vsEnabled && (
           <span className="news-tts-hint">
-            🔇 Trình duyệt không hỗ trợ đọc máy (Web Speech API) — dùng Chrome/Edge để nghe tin.
+            🔇 Trình duyệt không hỗ trợ đọc máy (Web Speech API) và backend chưa cấu hình
+            VoiceStudio — dùng Chrome/Edge hoặc đặt VOICESTUDIO_URL để nghe tin.
           </span>
         )}
         {ttsReady && !hasViVoice && (
@@ -448,7 +451,7 @@ export default function NewsPanel() {
                 >
                   {hit.title || hit.url}
                 </a>
-                {ttsReady && (
+                {(ttsReady || vsEnabled) && (
                   speakingId === hit.url ? (
                     <button
                       type="button"

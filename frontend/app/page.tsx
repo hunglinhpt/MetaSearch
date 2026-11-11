@@ -372,6 +372,9 @@ export default function HomePage() {
       onStart: () => setAnswerSpeaking(true),
       onEnd: () => setAnswerSpeaking(false),
       onError: () => setAnswerSpeaking(false),
+      // docs/17 §2: a failed VoiceStudio chain falls back to the browser
+      // engine instead of leaving the user in silence.
+      fallbackToWebSpeech: true,
     };
     answerTtsRef.current =
       effectiveTtsEngine === "voicestudio" ? ttsSpeakRemote(answerMd, cbs) : ttsSpeak(answerMd, cbs);
@@ -786,13 +789,13 @@ export default function HomePage() {
                           {meta.cached ? " · cached" : ""}
                         </span>
                       )}
-                      {ttsReady && (
+                      {(ttsReady || (vsEnabled && effectiveTtsEngine === "voicestudio")) && (
                         <button
                           type="button"
                           className={`tts-btn ${answerSpeaking ? "speaking" : ""}`}
                           onClick={readAnswerAloud}
                           aria-label={answerSpeaking ? "Dừng đọc câu trả lời" : "Đọc câu trả lời"}
-                          title={`Đọc câu trả lời bằng giọng đọc tiếng Việt (Web Speech API). ${ttsPrivacyNote}`}
+                          title={`Đọc câu trả lời bằng giọng đọc tiếng Việt. ${ttsPrivacyNote}`}
                         >
                           {answerSpeaking ? "⏹ Dừng đọc" : "🔊 Đọc câu trả lời"}
                         </button>
