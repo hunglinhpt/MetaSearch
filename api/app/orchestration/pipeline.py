@@ -269,7 +269,8 @@ def _data_marks(r: ScoredResult) -> dict[str, object]:
         "fetched_at": None,
         "published_at": _iso(r.published_at),
         "as_of": _iso(r.as_of),
-        "age_s": _age_s(r.as_of),
+        # Same fallback as /v1/search: news items carry published_at, not as_of.
+        "age_s": _age_s(r.as_of or r.published_at),
     }
 
 

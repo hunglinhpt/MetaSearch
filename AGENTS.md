@@ -21,7 +21,7 @@ orchestration không đổi.
   - `VietStockAdapter`: fallback ĐỒNG THỜI khi VNDIRECT/Simplize chết; provenance kết quả ghi đúng nguồn thật (SSI/FA-Aggregator), `name`/`exchange` từ registry DAT-06.
   - 48 test MockTransport (audit 3 expert: SA/QA-perf/finance + probe live, 2 vòng PASS); ruff/bandit/perf sạch. CafeF/VietStock scraper chờ probe HTML schema thật; SSI/TCBS route cần xác minh lại từ egress sản xuất (docs/15 §10).
 - ✅ **Web UI tab Tin tức + đọc máy tiếng Việt (v2.2.0)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/16-web-ui-news-tts.md](docs/16-web-ui-news-tts.md):
-  - Tab Tin tức 6 mục preset qua `google_news` + `when:{n}d` (cửa sổ thời gian thật), không thêm endpoint backend; `safeHref()` gói mọi href từ payload.
+  - Tab Tin tức 6 mục preset qua `google_news` + map `freshness_days`→`when:{n}d` **server-side** trong adapter (cửa sổ thời gian thật, guard end-anchored không nhân đôi operator; client chỉ gửi param có cấu trúc), không thêm endpoint backend; `safeHref()` gói mọi href từ payload.
   - TTS vi-VN qua Web Speech API (voice stack của OS, free, không egress backend): đọc câu trả lời + đọc bản tin/từng tin; strip markdown/URL/`[n]`, chunk ≤220 ký tự, một speaker tại một thời điểm, generation guard, graceful degradation + ghi chú riêng tư trên tooltip.
   - Audit vòng 5 (QA/perf + AI/TTS & data-integrity, read-only): 4/4 finding vòng 4 FIXED, không có P1/P2 mới — PASS; `npm run typecheck` + `build` PASS; backend suite 100%.
 - ✅ **Readiness cho hệ thống bên ngoài (v2.0.0)** — chi tiết và số đo ở [CHANGELOG.md](CHANGELOG.md):

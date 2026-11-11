@@ -83,7 +83,8 @@ async def search(request: SearchRequest) -> SearchResponse:
                         "source_name": r.source_name,
                         "data_kind": r.data_kind,
                         "as_of": r.as_of.isoformat() if r.as_of else None,
-                        "age_s": _age_s(r.as_of),
+                        # as_of is the data timestamp; news items only carry published_at.
+                        "age_s": _age_s(r.as_of or r.published_at),
                     }
                     for i, r in enumerate(outcome.results, start=1)
                 ],

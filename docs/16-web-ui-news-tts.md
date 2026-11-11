@@ -10,8 +10,8 @@
 ```mermaid
 flowchart LR
     UI[NewsPanel.tsx] -->|POST /v1/search| API[Backend]
-    UI -->|preset query + when:Nd<br/>engines=google_news| API
-    API --> GN[google_news vertical engine<br/>RSS honors when:Nd]
+    UI -->|preset query + freshnessDays + news:true<br/>engines=google_news| API
+    API -->|server map freshness_days → when:Nd| GN[google_news vertical engine<br/>RSS honors when:Nd]
     API -.->|fallback khi không ghim engines| SX[SearXNG news category]
     UI -->|stripForSpeech + chunk| TTS[Web Speech API<br/>= voice stack của OS]
     OS[OS voices vi-VN<br/>Edge/Chrome neural online] --> TTS
@@ -19,15 +19,21 @@ flowchart LR
 
 - **Không thêm endpoint backend mới**: `/v1/search` đã nhận `engines`,
   `categories`, `freshness_days` (spec `docs/06-api-spec.md` §1; routing ngữ
-  cảnh liên quan FR-16). Client (`lib/api.ts`) chỉ bổ sung `freshnessDays`
-  vào `SearchOptions`.
-- **Cửa sổ thời gian là thật**: `google_news` bỏ qua `freshness_days`
-  phía server (SearXNG/DDG/Tavily map nó, chỉ google_news thì không), nên
-  client gắn operator `when:{n}d` của Google News RSS vào truy vấn — UI chỉ
-  hứa điều engine thật sự enforced (SA audit; probe live xác nhận RSS honors
-  `when:Nd`). Guard `\bwhen:\d+[dhwmy]` tránh nhân đôi operator nếu truy vấn
-  tự do đã có sẵn. Tab tin cũng gửi `news: true` để backend dùng news cache
-  TTL (900s) và freshness weight cho news thay vì TTL chung 1800s.
+  cảnh liên quan FR-16). Client (`lib/api.ts`) chỉ bổ sung `freshnessDays` +
+  `news` vào `SearchOptions`.
+- **Cửa sổ thời gian là thật**: client chỉ gửi `freshness_days` + `news: true`
+  (các param có thật của `/v1/search`); **server** map `freshness_days` →
+  operator `when:{n}d` của Google News RSS ngay trong `GoogleNewsAdapter`
+  (guard `\bwhen:[0-9]+[dhwmy](?![a-z0-9])` end-anchored, ASCII-only — khớp cả
+  với regex JS ở toolbar — không nhân đôi operator nếu truy vấn tự do đã có
+  sẵn — lookalike `when:3days` không tính là operator;
+  clamp về bound của schema 3650). UI không bao giờ nhét operator của
+  engine vào query nữa — cửa sổ N ngày do backend enforce và unit-test
+  (`tests/test_expansion_and_digests.py` pin 8 case). Nếu truy vấn tự do tự embed
+  `when:` thì toolbar nói "cửa sổ: theo when: trong truy vấn" thay vì hứa N
+  ngày của preset. Probe live xác nhận
+  RSS honors `when:Nd`. `news: true` → backend dùng news cache TTL (900s) và
+  freshness weight cho news thay vì TTL chung 1800s.
 - Tab tin tức là component riêng `frontend/components/NewsPanel.tsx`; tab hỏi
   đáp chính nhúng nút 🔊 vào `answer-header`.
 - **Bảo mật link**: mọi `href` từ payload backend đi qua `safeHref()`
@@ -97,7 +103,12 @@ tóm tắt + nguồn) hoặc từng tin riêng.
 
 - Mỗi tin hiển thị `domain` + mốc thời gian **lấy thẳng từ payload**
   (`published_at`/`as_of`), client không bịa thời gian; thiếu mốc → hiện
-  "không rõ thời điểm".
+  "không rõ thời điểm". `age_s` ở response search lấy `as_of`, fallback
+  `published_at` (tin tức không có `as_of`).
+- TTS công khai đúng trạng thái riêng tư: `ttsVietnameseVoiceMode()` cho biết
+  giọng vi-VN sẽ dùng là **local** (nội dung ở lại máy) hay **online** (gửi tới
+  máy chủ TTS của vendor); toolbar và tooltip của cả 3 nút đọc (câu trả lời,
+  đọc bản tin, đọc từng tin) đều ghi chú động theo mode thực tế.
 - `complete === false` (engine lỗi một phần) → banner vàng "danh sách có thể
   KHÔNG đầy đủ" — phân biệt rõ với "không có tin" (FR/WP-15 contract).
 - Kết quả trống → thông điệp "kết luận thật, không phải lỗi".
@@ -107,7 +118,10 @@ tóm tắt + nguồn) hoặc từng tin riêng.
 - Frontend: `npm run test` (vitest — chạy trong CI frontend matrix trên cả 3 OS),
   `npm run typecheck` + `npm run build`. Unit test phủ các logic thuần:
   `stripForSpeech`/`chunkForSpeech` (`lib/tts.test.ts`), `safeHref`
-  (`lib/api.test.ts`), `buildNewsQuery` incl. guard `when:` (`lib/newsQuery.test.ts`).
+  (`lib/api.test.ts`). Phần map `freshness_days` → `when:Nd` được test ở
+  backend (`tests/test_expansion_and_digests.py`, MockTransport — 8 case: append,
+  không nhân đôi operator hợp lệ, lookalike `when:3days` vẫn append, clamp,
+  freshness_days không phải số bị bỏ qua an toàn).
 - TTS runtime (Web Speech API) là API trình duyệt — không unit test được ngoài
   môi trường thật; chỉ phần pure text-prep được test.
 - Backend không đổi — suite đầy đủ vẫn xanh (contract snapshot không đổi).

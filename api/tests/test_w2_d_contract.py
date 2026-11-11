@@ -177,6 +177,19 @@ async def test_search_results_carry_marks_and_null_when_unknown():
         assert key in b and b[key] is None, key
 
 
+async def test_age_s_falls_back_to_published_at():
+    # News-style result: published_at set, as_of None -> age_s must come from
+    # published_at (never null when a real timestamp exists).
+    published = datetime.now(UTC) - timedelta(hours=1)
+    _install([_raw(URL_A, "Tin", "snippet", published_at=published)])
+    async with _client() as c:
+        body = (await c.post("/v1/search", json={"query": "tin mới"})).json()
+    r = body["results"][0]
+    assert r["as_of"] is None
+    assert r["published_at"] == published.isoformat()
+    assert 3500 <= r["age_s"] <= 3700
+
+
 async def test_marks_survive_the_search_cache():
     as_of = datetime(2026, 11, 7, tzinfo=UTC)
     adapter, _ = _install(

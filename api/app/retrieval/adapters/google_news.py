@@ -24,6 +24,12 @@ from app.retrieval.models import RawResult
 _DEFAULT_NEWS_URL = "https://news.google.com/rss/search"
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
+# A real `when:` freshness operator in a query (word boundary, units h/d/w/m/y,
+# end-anchored so lookalikes like `when:3days` do NOT count as an operator).
+# re.ASCII keeps \b/[0-9] ASCII-only so the semantics match the JS mirror
+# (NewsPanel WHEN_OPERATOR_RE) exactly — fullwidth digits are NOT operators.
+_WHEN_OPERATOR_RE = re.compile(r"\bwhen:[0-9]+[dhwmy](?![a-z0-9])", re.IGNORECASE | re.ASCII)
+_MAX_FRESHNESS_DAYS = 3650  # matches the API schema bound (freshness_days le=3650)
 
 
 def _clean_snippet(raw: str) -> str:
@@ -63,6 +69,17 @@ class GoogleNewsAdapter:
         q = (query or "").strip()
         if not q:
             return []
+
+        # freshness_days → Google News `when:{n}d` operator, mapped server-side
+        # so clients only send the structured param (docs/16). Never duplicate
+        # an operator the caller already embedded in the query.
+        if freshness_days:
+            try:
+                days = max(1, min(int(freshness_days), _MAX_FRESHNESS_DAYS))
+            except (TypeError, ValueError):
+                days = None  # defensive: schema already enforces int 1..3650
+            if days is not None and not _WHEN_OPERATOR_RE.search(q):
+                q = f"{q} when:{days}d"
 
         # Determine locale: respect explicit lang="vi" or Vietnamese markers in query
         is_vietnamese = (lang or "").lower().startswith("vi") or bool(

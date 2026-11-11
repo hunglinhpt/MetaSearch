@@ -48,6 +48,22 @@ export function ttsHasVietnameseVoice(): boolean {
   return _voices.some((v) => v.lang.toLowerCase().startsWith("vi"));
 }
 
+export type TtsVoiceMode = "local" | "online" | "none";
+
+/**
+ * Privacy-relevant mode of the vi-VN voice that `ttsSpeak` would actually
+ * pick (pickVoice prefers on-device voices): "local" = OS voice, the spoken
+ * text never leaves the machine; "online" = cloud voice (e.g. Edge neural),
+ * the utterance text is sent from the browser to the vendor's TTS service;
+ * "none" = no vi-* voice installed.
+ */
+export function ttsVietnameseVoiceMode(): TtsVoiceMode {
+  if (!ttsHasVietnameseVoice()) return "none";
+  const voice = pickVoice("vi-VN");
+  if (!voice) return "none";
+  return voice.localService ? "local" : "online";
+}
+
 /**
  * Subscribe to async voice-list changes (Chrome/Safari populate getVoices()
  * only after the first load); returns an unsubscribe function. Use this to

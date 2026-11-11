@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add repo root to sys.path so we can import scripts.release
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -12,7 +14,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts.release import (  # noqa: E402
     SEMVER_REGEX,
+    _lock_metasearch_version,
+    _pyproject_project_version,
     calculate_bump,
+    check_lockfile_version,
     clean_workspace,
     ensure_git_pre_commit_hook,
     find_npm_executable,
@@ -82,6 +87,62 @@ def test_verify_changelog():
     assert "Missing '## [99.99.99]'" in msg
 
 
+def _write_fake_repo(tmp_path: Path, pyproject: str, lock: str | None) -> Path:
+    api_dir = tmp_path / "api"
+    api_dir.mkdir(exist_ok=True)
+    (api_dir / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    if lock is not None:
+        (api_dir / "uv.lock").write_text(lock, encoding="utf-8")
+    return tmp_path
+
+
+_PYPROJECT = '[project]\nname = "metasearch-api"\nversion = "2.2.0"\n'
+_LOCK = (
+    'version = 1\nrequires-python = ">=3.12"\n\n[[package]]\n'
+    'name = "metasearch-api"\nversion = "2.2.0"\n'
+)
+
+
+def test_pyproject_version_reads_project_section_only():
+    # A version under another TOML section must not be picked up.
+    text = '[tool.other]\nversion = "0.0.1"\n\n[project]\nname = "x"\nversion = "2.2.0"\n'
+    assert _pyproject_project_version(text) == "2.2.0"
+    assert _pyproject_project_version("[project]\nname = 'x'\n") is None
+
+
+def test_lock_version_order_independent():
+    assert _lock_metasearch_version(_LOCK) == "2.2.0"
+    reordered = '[[package]]\nversion = "9.9.9"\nname = "metasearch-api"\n'
+    assert _lock_metasearch_version(reordered) == "9.9.9"
+    assert _lock_metasearch_version('[[package]]\nname = "other"\nversion = "1.0.0"\n') is None
+
+
+def test_check_lockfile_version_real_repo_passes():
+    check_lockfile_version(find_repo_root())  # must not raise SystemExit
+
+
+def test_check_lockfile_version_mismatch_blocks(tmp_path):
+    root = _write_fake_repo(tmp_path, _PYPROJECT, _LOCK.replace("2.2.0", "2.0.0", 1))
+    with pytest.raises(SystemExit) as exc:
+        check_lockfile_version(root)
+    assert exc.value.code == 1
+
+
+def test_check_lockfile_version_fail_closed(tmp_path):
+    # Missing lockfile -> BLOCK, not a silent skip.
+    root = _write_fake_repo(tmp_path, _PYPROJECT, None)
+    with pytest.raises(SystemExit):
+        check_lockfile_version(root)
+    # Unparseable lock (no metasearch-api package) -> BLOCK.
+    root = _write_fake_repo(tmp_path, _PYPROJECT, '[[package]]\nname = "other"\nversion = "1"\n')
+    with pytest.raises(SystemExit):
+        check_lockfile_version(root)
+    # pyproject without a [project] version -> BLOCK.
+    root = _write_fake_repo(tmp_path, "[project]\nname = 'x'\n", _LOCK)
+    with pytest.raises(SystemExit):
+        check_lockfile_version(root)
+
+
 def test_clean_workspace_dry_run(tmp_path):
     # Create fake directory structure with temp files
     test_dir = tmp_path / "repo"
@@ -103,3 +164,28 @@ def test_clean_workspace_dry_run(tmp_path):
     assert not (test_dir / "test.db").exists()
     assert not (test_dir / "test.tmp").exists()
     assert not pycache.exists()
+
+
+def test_clean_workspace_never_touches_protected_local_data(tmp_path):
+    # AGENTS.md: api/*.db(+wal/shm), *.retention and api/.env.* (except *.example)
+    # are LIVE runtime data of integrated systems — clean_workspace must skip them
+    # even on a real (non-dry) run.
+    api_dir = tmp_path / "api"
+    api_dir.mkdir()
+    protected = [
+        api_dir / "metasearch_lbs.db",
+        api_dir / "metasearch_lbs.db-wal",
+        api_dir / "metasearch_lbs.db-shm",
+        api_dir / "metasearch_lbs.retention",
+        api_dir / ".env.lbs",
+        api_dir / ".env.lite.example",
+    ]
+    for f in protected:
+        f.write_text("live", encoding="utf-8")
+    (api_dir / "junk.log").write_text("tmp", encoding="utf-8")
+
+    clean_workspace(tmp_path, dry_run=False)
+
+    for f in protected:
+        assert f.exists(), f"protected local data was deleted: {f}"
+    assert not (api_dir / "junk.log").exists()  # ordinary temp files still cleaned

@@ -10,10 +10,12 @@ version tuân theo [SemVer](https://semver.org/).
 - Tab **Tin tức** mới trên Web UI (`frontend/components/NewsPanel.tsx`): 6 mục preset
   (Kinh tế vĩ mô, Tài chính–Chứng khoán, Kinh doanh–Doanh nghiệp, Công nghệ–AI,
   Ngân hàng–Tiền tệ, Kinh tế thế giới) + ô truy vấn tự do, gọi `POST /v1/search` với
-  `engines=["google_news"]`, `categories=["news"]`, `freshness_days` và operator
-  `when:{n}d` — cửa sổ thời gian do Google News RSS thực thi thật, UI không hứa thừa
-  (probe live xác nhận `when:Nd` được honors). **Không thêm endpoint backend mới**;
-  `lib/api.ts` chỉ bổ sung `freshnessDays` vào `SearchOptions`.
+  `engines=["google_news"]`, `categories=["news"]`, `freshness_days`, `news: true`.
+  **Không thêm endpoint mới**; cửa sổ thời gian do **backend** map
+  `freshness_days` → `when:{n}d` của Google News RSS ngay trong adapter (guard không
+  nhân đôi operator, clamp 3650; 8 unit test MockTransport pin hành vi; probe live xác
+  nhận RSS honors `when:Nd`). Client chỉ gửi param có cấu trúc, không nhét operator
+  vào query. `lib/api.ts` chỉ bổ sung `freshnessDays` + `news` vào `SearchOptions`.
 - **Đọc máy tiếng Việt (TTS)** qua Web Speech API — voice stack của OS, free, không
   key, không egress từ backend (`frontend/lib/tts.ts`): nút đọc câu trả lời ở tab Tìm
   kiếm; ở tab Tin tức đọc cả bản tin (top 8) hoặc từng tin. `stripForSpeech` bỏ
@@ -50,18 +52,45 @@ version tuân theo [SemVer](https://semver.org/).
   (`localService`) hơn giọng online để nội dung đọc mặc định không rời máy.
 - Tab tin gửi `news: true` để backend dùng news cache TTL 900s + freshness weight
   (trước đó feed bị cache TTL chung 1800s); toolbar hiện cờ "bản đã cache".
-- `fmtWhen` clamp mốc tương lai về ngày tuyệt đối thay vì "vừa xong"; guard
-  `\bwhen:\d+[dhwmy]` không nhân đôi operator khi truy vấn tự do đã có `when:`.
+- `fmtWhen` clamp mốc tương lai về ngày tuyệt đối thay vì "vừa xong".
+- `GoogleNewsAdapter` map `freshness_days` → `when:{n}d` server-side (guard
+  `\bwhen:[0-9]+[dhwmy](?![a-z0-9])` end-anchored + ASCII-only — khớp với regex JS
+  ở toolbar — không nhân đôi operator hợp lệ; lookalike `when:3days` và fullwidth
+  `when:３d` vẫn được append; clamp 3650; `freshness_days` không phải số bị bỏ qua
+  an toàn) — client tab tin không còn tự append operator vào query nữa. Toolbar
+  hiện "cửa sổ: theo when: trong truy vấn" khi truy vấn tự do tự embed `when:`.
+  Response search + `_data_marks` (/v1/context): `age_s` fallback `published_at`
+  khi không có `as_of` (tin tức).
 
 ### Verified
-- `npm run test` (vitest, 21 unit test cho `stripForSpeech`/`chunkForSpeech`/`safeHref`/`buildNewsQuery`)
+- `npm run test` (vitest, 16 unit test cho `stripForSpeech`/`chunkForSpeech`/`safeHref`)
   PASS và đã thêm vào CI frontend matrix; `npm run typecheck` + `npm run build` PASS (Next.js 15 build sạch).
+  Backend: 8 MockTransport case pin map `freshness_days` → `when:{n}d` (append, guard operator,
+  lookalike, clamp, non-numeric).
 - Pre-commit gate mới kiểm tra `api/uv.lock` khớp version với `pyproject.toml`
-  (`check_lockfile_version` trong `scripts/release.py`) — CI `uv sync --locked` không còn bị fail vì lockfile stale.
+  (`check_lockfile_version` trong `scripts/release.py`, fail-closed: thiếu file
+  hoặc không parse được là BLOCK, đọc đúng section `[project]` và block
+  `[[package]]` của `metasearch-api` bất kể thứ tự field) — CI `uv sync --locked`
+  không còn bị fail vì lockfile stale.
+- CI frontend matrix thêm `npm audit` cả dev deps (`--audit-level=high`, không
+  `--omit=dev`) để không bỏ sót nhánh dev (vitest).
+- TTS công khai đúng trạng thái riêng tư: `ttsVietnameseVoiceMode()` (local /
+  online / none) — toolbar + tooltip của cả 3 nút đọc ghi chú động theo giọng
+  thực tế đang dùng.
 - Backend suite đầy đủ pass 100% (không đổi API — chỉ dùng `freshness_days` đã có sẵn
   trong contract `docs/06` §1).
 - Audit vòng 5 (2 expert, read-only): cả 4 finding vòng 4 đều FIXED với bằng chứng
   file:line; không phát sinh P1/P2 mới — verdict PASS cả 2.
+- Audit vòng 7 (3 expert đối kháng: perf / quality / data-sec, 2 vòng — vòng 1
+  phát hiện 2 P2 + các P3, vòng 2 xác nhận đã fix hết, verdict PASS cả 3,
+  không P1/P2 mới): fix toolbar "cửa sổ N ngày" khi truy vấn tự do có `when:`,
+  chỉ báo giọng TTS online/local, regex guard end-anchor + ASCII, lockfile check
+  fail-closed, `npm audit` cả dev deps, `age_s` fallback `published_at` cả ở
+  `/v1/search` lẫn `_data_marks` (/v1/context).
+- `scripts/release.py` `clean_workspace` không bao giờ xoá dữ liệu runtime
+  (`api/*.db*`, `*.retention`, `api/.env.*` trừ `*.example`) và không crash khi
+  file bị tiến trình local giữ lock (PermissionError → WARN bỏ qua) — bản vá
+  đúng promesse trong AGENTS.md sau sự cố 2026-11-10.
 
 ## [2.1.0] — 2026-11-11 — Multi-source FA: bỏ điểm hụt đơn nguồn VNDIRECT/Simplize
 

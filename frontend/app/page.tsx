@@ -3,7 +3,15 @@
 import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import NewsPanel from "../components/NewsPanel";
-import { TtsHandle, ttsIsSupported, ttsSpeak, ttsStop } from "../lib/tts";
+import {
+  TtsHandle,
+  TtsVoiceMode,
+  ttsIsSupported,
+  ttsOnVoicesChanged,
+  ttsSpeak,
+  ttsStop,
+  ttsVietnameseVoiceMode,
+} from "../lib/tts";
 import {
   API_BASE_URL,
   ActiveLLMConfig,
@@ -97,6 +105,7 @@ export default function HomePage() {
   const answerTtsRef = useRef<TtsHandle | null>(null);
   const [answerSpeaking, setAnswerSpeaking] = useState(false);
   const [ttsReady, setTtsReady] = useState(false);
+  const [voiceMode, setVoiceMode] = useState<TtsVoiceMode>("none");
 
   // Blog / Daily Briefing state
   const [blogTopic, setBlogTopic] = useState<string>("all");
@@ -306,11 +315,23 @@ export default function HomePage() {
   // Web Speech API only exists in the browser — gate after mount (SSR safe).
   useEffect(() => {
     setTtsReady(ttsIsSupported());
+    setVoiceMode(ttsVietnameseVoiceMode());
+    const offVoices = ttsOnVoicesChanged(() => setVoiceMode(ttsVietnameseVoiceMode()));
     return () => {
+      offVoices();
       ttsStop();
       answerTtsRef.current?.cancel();
     };
   }, []);
+
+  // Privacy wording matching the voice actually in use (local OS voice keeps
+  // the spoken text on-device; an online voice sends it to the vendor).
+  const ttsPrivacyNote =
+    voiceMode === "local"
+      ? "Riêng tư: đang dùng giọng nội bộ của hệ điều hành — nội dung đọc không rời khỏi máy."
+      : voiceMode === "online"
+        ? "Riêng tư: đang dùng giọng online (Edge/Microsoft) — nội dung đọc được gửi từ trình duyệt tới máy chủ TTS."
+        : "Chưa có giọng tiếng Việt trên máy — sẽ đọc bằng giọng mặc định.";
 
   // Leaving the search tab unmounts the answer controls — speech must not
   // continue uncontrolled (QA/SA audits).
@@ -753,7 +774,7 @@ export default function HomePage() {
                           className={`tts-btn ${answerSpeaking ? "speaking" : ""}`}
                           onClick={readAnswerAloud}
                           aria-label={answerSpeaking ? "Dừng đọc câu trả lời" : "Đọc câu trả lời"}
-                          title="Đọc câu trả lời bằng giọng đọc tiếng Việt (Web Speech API). Riêng tư: giọng online của Edge gửi nội dung đọc tới Microsoft; giọng OS nội bộ giữ trên máy"
+                          title={`Đọc câu trả lời bằng giọng đọc tiếng Việt (Web Speech API). ${ttsPrivacyNote}`}
                         >
                           {answerSpeaking ? "⏹ Dừng đọc" : "🔊 Đọc câu trả lời"}
                         </button>

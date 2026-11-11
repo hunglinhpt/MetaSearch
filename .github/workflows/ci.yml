@@ -128,9 +128,11 @@ jobs:
       - name: Unit tests (vitest)
         run: npm run test
 
-      - name: Dependency audit (npm audit, high and above)
+      # Full tree incl. dev deps (vitest): dev packages ship no runtime code, but a
+      # high-severity finding there still matters for supply-chain hygiene.
+      - name: Dependency audit (npm audit, all deps, high and above)
         if: matrix.os == 'ubuntu-latest'
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
 
       - name: Strict TypeScript Typecheck
         run: npm run typecheck

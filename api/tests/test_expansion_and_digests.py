@@ -89,6 +89,92 @@ class TestGoogleNewsAdapter:
             await adapter.search("AI news")
         assert "google_news_upstream_error" in str(exc_info.value)
 
+    @staticmethod
+    def _rss_handler(captured: list[httpx.Request]):
+        xml = (
+            '<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>'
+            "<item><title>x</title><link>https://a.b/1</link>"
+            "<pubDate>Sun, 01 Nov 2026 03:00:00 GMT</pubDate></item>"
+            "</channel></rss>"
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(200, text=xml)
+
+        return handler
+
+    async def test_freshness_days_maps_to_when_operator(self, patched_httpx):
+        captured: list[httpx.Request] = []
+        patched_httpx("app.retrieval.adapters.google_news", self._rss_handler(captured))
+        adapter = GoogleNewsAdapter()
+        await adapter.search("tin tức kinh tế", freshness_days=3)
+        assert captured[0].url.params["q"] == "tin tức kinh tế when:3d"
+
+    async def test_no_freshness_days_sends_query_verbatim(self, patched_httpx):
+        captured: list[httpx.Request] = []
+        patched_httpx("app.retrieval.adapters.google_news", self._rss_handler(captured))
+        adapter = GoogleNewsAdapter()
+        await adapter.search("tin tức")
+        assert captured[0].url.params["q"] == "tin tức"
+
+    async def test_existing_when_operator_not_duplicated(self, patched_httpx):
+        captured: list[httpx.Request] = []
+        patched_httpx("app.retrieval.adapters.google_news", self._rss_handler(captured))
+        adapter = GoogleNewsAdapter()
+        for op in ("when:1d", "when:7d", "when:1w", "when:2m", "when:1y", "when:6h", "WHEN:3D"):
+            captured.clear()
+            await adapter.search(f"tin {op}", freshness_days=3)
+            assert captured[0].url.params["q"] == f"tin {op}"
+
+    async def test_when_substring_is_not_an_operator(self, patched_httpx):
+        captured: list[httpx.Request] = []
+        patched_httpx("app.retrieval.adapters.google_news", self._rss_handler(captured))
+        adapter = GoogleNewsAdapter()
+        await adapter.search("somewhen:3d", freshness_days=2)
+        assert captured[0].url.params["q"] == "somewhen:3d when:2d"
+
+    async def test_freshness_days_clamped_to_schema_bound(self, patched_httpx):
+        captured: list[httpx.Request] = []
+        patched_httpx("app.retrieval.adapters.google_news", self._rss_handler(captured))
+        adapter = GoogleNewsAdapter()
+        await adapter.search("tin", freshness_days=99999)
+        assert captured[0].url.params["q"] == "tin when:3650d"
+
+    async def test_when_lookalike_suffix_is_not_an_operator(self, patched_httpx):
+        # `when:3days` is not a real Google operator — the append must still happen.
+        captured: list[httpx.Request] = []
+        patched_httpx("app.retrieval.adapters.google_news", self._rss_handler(captured))
+        adapter = GoogleNewsAdapter()
+        for q in ("tin when:3days", "tin when:12hours"):
+            captured.clear()
+            await adapter.search(q, freshness_days=5)
+            assert captured[0].url.params["q"] == f"{q} when:5d"
+
+    async def test_when_zero_days_counts_as_operator(self, patched_httpx):
+        # Conservative: any well-formed `when:N<unit>` suppresses the append.
+        captured: list[httpx.Request] = []
+        patched_httpx("app.retrieval.adapters.google_news", self._rss_handler(captured))
+        adapter = GoogleNewsAdapter()
+        await adapter.search("tin when:0d", freshness_days=5)
+        assert captured[0].url.params["q"] == "tin when:0d"
+
+    async def test_non_numeric_freshness_days_ignored(self, patched_httpx):
+        captured: list[httpx.Request] = []
+        patched_httpx("app.retrieval.adapters.google_news", self._rss_handler(captured))
+        adapter = GoogleNewsAdapter()
+        await adapter.search("tin", freshness_days="abc")  # type: ignore[arg-type]
+        assert captured[0].url.params["q"] == "tin"
+
+    async def test_fullwidth_digit_is_not_an_operator(self, patched_httpx):
+        # re.ASCII parity with the JS toolbar regex: "when:\uff13d" (U+FF13 fullwidth
+        # digit) is NOT a real operator, so the append must still happen.
+        captured: list[httpx.Request] = []
+        patched_httpx("app.retrieval.adapters.google_news", self._rss_handler(captured))
+        adapter = GoogleNewsAdapter()
+        await adapter.search("tin when:\uff13d", freshness_days=4)
+        assert captured[0].url.params["q"] == "tin when:\uff13d when:4d"
+
 
 class TestFengShuiAdapter:
     async def test_empty_query(self):

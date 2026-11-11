@@ -6,9 +6,11 @@
  * news engines (google_news) and freshness windows, plus Vietnamese TTS
  * (Web Speech API — lib/tts.ts) so the feed can be *listened* to, not only read.
  *
- * Freshness: google_news ignores the server-side freshness_days param, so the
- * client appends Google News' `when:{n}d` operator to the query — the UI only
- * ever claims a window the engine actually enforces (SA audit finding).
+ * Freshness: the client sends only the structured `freshnessDays` param; the
+ * backend maps it to Google News' `when:{n}d` operator server-side (docs/16),
+ * so the UI only ever claims a window the engine actually enforces. If a
+ * custom query embeds its own `when:` operator the backend respects it and
+ * the toolbar says so instead of claiming the preset window.
  *
  * Data integrity: every item renders source domain + published time straight
  * from the backend payload (published_at/as_of, never guessed client-side);
@@ -18,14 +20,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { safeHref, SearchHit, search } from "../lib/api";
-import { buildNewsQuery } from "../lib/newsQuery";
 import {
   TtsHandle,
+  TtsVoiceMode,
   ttsHasVietnameseVoice,
   ttsIsSupported,
   ttsOnVoicesChanged,
   ttsSpeak,
   ttsStop,
+  ttsVietnameseVoiceMode,
 } from "../lib/tts";
 
 export type NewsCategory = {
@@ -90,6 +93,11 @@ export const NEWS_CATEGORIES: NewsCategory[] = [
 
 const NEWS_K = 15;
 const READ_ALOUD_TOP_N = 8;
+// Mirrors the backend guard (google_news.py _WHEN_OPERATOR_RE: end-anchored,
+// ASCII-only — same semantics as Python re.ASCII): a real `when:` operator
+// embedded in a custom query suppresses the server-side append, so the
+// toolbar must not claim the preset N-day window.
+const WHEN_OPERATOR_RE = /\bwhen:[0-9]+[dhwmy](?![a-z0-9])/i;
 
 function fmtWhen(hit: SearchHit): string {
   const raw = hit.published_at ?? hit.as_of;
@@ -122,6 +130,7 @@ export default function NewsPanel() {
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [ttsReady, setTtsReady] = useState(false);
   const [hasViVoice, setHasViVoice] = useState(true);
+  const [voiceMode, setVoiceMode] = useState<TtsVoiceMode>("none");
   const ttsHandleRef = useRef<TtsHandle | null>(null);
   // Request-id + abort guard: a slow in-flight response can never overwrite a
   // newer category's feed, and a hung backend cannot leave the tab disabled.
@@ -133,9 +142,13 @@ export default function NewsPanel() {
     // avoid SSR/hydration mismatch.
     setTtsReady(ttsIsSupported());
     setHasViVoice(ttsHasVietnameseVoice());
+    setVoiceMode(ttsVietnameseVoiceMode());
     // The voice list populates asynchronously (Chrome/Safari): re-check on
     // every voiceschanged so the vi-voice hint cannot stick at the wrong value.
-    const offVoices = ttsOnVoicesChanged(() => setHasViVoice(ttsHasVietnameseVoice()));
+    const offVoices = ttsOnVoicesChanged(() => {
+      setHasViVoice(ttsHasVietnameseVoice());
+      setVoiceMode(ttsVietnameseVoiceMode());
+    });
     return () => {
       offVoices();
       ttsStop();
@@ -145,6 +158,15 @@ export default function NewsPanel() {
   }, []);
 
   const activeCat = NEWS_CATEGORIES.find((c) => c.id === activeCatId) ?? NEWS_CATEGORIES[0];
+
+  // Privacy wording that matches the voice actually in use — never a generic
+  // claim when the picked voice is a cloud (online) one.
+  const privacyNote =
+    voiceMode === "local"
+      ? "Riêng tư: đang dùng giọng nội bộ của hệ điều hành — nội dung đọc không rời khỏi máy."
+      : voiceMode === "online"
+        ? "Riêng tư: đang dùng giọng online (Edge/Microsoft) — nội dung đọc được gửi từ trình duyệt tới máy chủ TTS."
+        : "Trình duyệt sẽ đọc bằng giọng mặc định vì chưa có giọng tiếng Việt trên máy.";
 
   const fetchNews = useCallback(async (cat: NewsCategory, overrideQuery?: string) => {
     // Invalidate any in-flight response and abort its request.
@@ -166,10 +188,10 @@ export default function NewsPanel() {
     ttsStop();
     setSpeakingId(null);
     try {
-      // google_news ignores freshness_days server-side; `when:Nd` is the
-      // operator its RSS feed actually honors (docs/16 §1) — built by the
-      // pure, unit-tested buildNewsQuery (never appends a second operator).
-      const q = buildNewsQuery(overrideQuery ?? cat.query, cat.query, cat.freshnessDays, cat.engines);
+      // The client sends only the structured params (freshnessDays + news);
+      // the backend maps freshness_days → `when:{n}d` for google_news
+      // server-side (docs/16 §1) — the UI never embeds engine operators.
+      const q = (overrideQuery ?? cat.query).trim() || cat.query;
       setAppliedQuery(q);
       const resp = await search(q, {
         engines: cat.engines,
@@ -300,8 +322,11 @@ export default function NewsPanel() {
         <span className="news-info">
           {appliedQuery ? (
             <>
-              Truy vấn: <code>{appliedQuery}</code> · cửa sổ {activeCat.freshnessDays} ngày ·
-              nguồn: {activeCat.engines.join(", ")}
+              Truy vấn: <code>{appliedQuery}</code> ·{" "}
+              {WHEN_OPERATOR_RE.test(appliedQuery)
+                ? "cửa sổ: theo when: trong truy vấn"
+                : `cửa sổ ${activeCat.freshnessDays} ngày`}{" "}
+              · nguồn: {activeCat.engines.join(", ")}
               {cached ? " · bản đã cache" : ""}
             </>
           ) : (
@@ -324,7 +349,7 @@ export default function NewsPanel() {
               className="tts-btn"
               onClick={speakDigest}
               aria-label="Đọc tin mới nhất"
-              title={`Đọc ${Math.min(READ_ALOUD_TOP_N, hits.length)} tin mới nhất bằng giọng đọc tiếng Việt. Riêng tư: giọng online của Edge gửi nội dung đọc từ trình duyệt tới Microsoft; giọng nội bộ của OS thì giữ trên máy`}
+              title={`Đọc ${Math.min(READ_ALOUD_TOP_N, hits.length)} tin mới nhất bằng giọng đọc tiếng Việt. ${privacyNote}`}
             >
               🔊 Đọc tin mới nhất
             </button>
@@ -338,8 +363,19 @@ export default function NewsPanel() {
         {ttsReady && !hasViVoice && (
           <span className="news-tts-hint">
             ⚠️ Chưa có giọng tiếng Việt trên máy — tiếng Việt sẽ đọc bằng giọng mặc định.
-            Cài giọng vi-VN (Edge online voices) để đọc chuẩn.
+            Cài giọng vi-VN để đọc chuẩn; lưu ý giọng online (Edge) sẽ gửi nội dung đọc từ trình
+            duyệt tới máy chủ TTS — chọn giọng nội bộ (local) nếu cần riêng tư.
           </span>
+        )}
+        {ttsReady && voiceMode === "online" && (
+          <span className="news-tts-hint">
+            🌐 Đang dùng giọng online — nội dung đọc được gửi từ trình duyệt tới máy chủ TTS.
+            Chọn một giọng nội bộ (local) trong cài đặt giọng đọc của trình duyệt để giữ riêng
+            tư trên máy.
+          </span>
+        )}
+        {ttsReady && voiceMode === "local" && (
+          <span className="news-tts-hint">🔒 Giọng đọc nội bộ — nội dung không rời khỏi máy.</span>
         )}
       </div>
 
@@ -388,7 +424,7 @@ export default function NewsPanel() {
                       className="tts-btn"
                       onClick={() => speakOne(hit)}
                       aria-label="Đọc tin này"
-                      title="Đọc tin này bằng giọng tiếng Việt"
+                      title={`Đọc tin này bằng giọng đọc tiếng Việt. ${privacyNote}`}
                     >
                       🔊
                     </button>

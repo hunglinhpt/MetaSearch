@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess  # nosec B404
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 # Force UTF-8 encoding on standard streams to avoid Windows charmap errors on Vietnamese text
@@ -89,8 +90,29 @@ def find_npm_executable() -> str:
     return fallback or "npm"
 
 
+# Local runtime data must NEVER be cleaned by this script either (AGENTS.md):
+# SQLite DBs under api/, *.retention markers and api/.env.* (except *.example)
+# hold live keys/users/history of integrated systems — deleting one locks every
+# integrated client out (401) until a new key is issued (incident 2026-11-10).
+_PROTECTED_SUFFIX_RE = re.compile(r"\.db(-wal|-shm)?$|\.sqlite3$|\.retention$", re.IGNORECASE)
+
+
+def _is_protected_local_data(root: Path, p: Path) -> bool:
+    rel = p.relative_to(root)
+    if rel.parts and rel.parts[0] == "api":
+        if _PROTECTED_SUFFIX_RE.search(p.name):
+            return True
+        if p.name.startswith(".env.") and not p.name.endswith(".example"):
+            return True
+    return False
+
+
 def clean_workspace(root: Path, *, dry_run: bool = False) -> list[str]:
-    """Clean all temporary database files, test artifacts, caches, and logs."""
+    """Clean all temporary database files, test artifacts, caches, and logs.
+
+    Never touches protected local runtime data (see _is_protected_local_data),
+    and never crashes on a file locked by a running local process.
+    """
     cleaned: list[str] = []
 
     # 1. Target exact cache directories
@@ -107,7 +129,9 @@ def clean_workspace(root: Path, *, dry_run: bool = False) -> list[str]:
                 if target.is_dir():
                     shutil.rmtree(target, ignore_errors=True)
                 else:
-                    target.unlink(missing_ok=True)
+                    # locked by a running process — skip, never crash
+                    with suppress(OSError):
+                        target.unlink(missing_ok=True)
             cleaned.append(str(target.relative_to(root)))
 
     # 2. File patterns to remove across api, frontend, scripts, deploy
@@ -129,8 +153,16 @@ def clean_workspace(root: Path, *, dry_run: bool = False) -> list[str]:
             ext = Path(f).suffix.lower()
             if ext in temp_extensions or f.endswith(".tsbuildinfo"):
                 p = Path(dirpath) / f
+                if _is_protected_local_data(root, p):
+                    continue  # live runtime data — never delete (AGENTS.md)
                 if not dry_run:
-                    p.unlink(missing_ok=True)
+                    try:
+                        p.unlink(missing_ok=True)
+                    except OSError as exc:
+                        # e.g. .lite.err.log held open by the running local server:
+                        # skip with a warning instead of crashing the whole gate.
+                        log(f"WARN: skip locked file {p.relative_to(root)}: {exc}", level="WARN")
+                        continue
                 cleaned.append(str(p.relative_to(root)))
 
     return cleaned
@@ -171,32 +203,65 @@ def ensure_git_pre_commit_hook(root: Path) -> bool:
     return proc.returncode == 0
 
 
+def _pyproject_project_version(text: str) -> str | None:
+    """First `version = ...` inside the [project] table only (TOML section-aware).
+
+    A bare `^version` regex would also match e.g. `[tool.something] version = ...`
+    and produce a false mismatch — anchor to the [project] section instead.
+    """
+    section = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped
+            continue
+        if section == "[project]":
+            m = re.match(r'version\s*=\s*["\']([^"\']+)["\']', stripped)
+            if m:
+                return m.group(1)
+    return None
+
+
+def _lock_metasearch_version(text: str) -> str | None:
+    """Version of the `metasearch-api` [[package]] block in uv.lock.
+
+    Splits on package blocks and matches `name`/`version` independently of
+    their order inside the block (uv currently writes name-then-version, but
+    the check must not silently skip on a reordered lock).
+    """
+    for block in text.split("[[package]]")[1:]:
+        if re.search(r'(?m)^name\s*=\s*"metasearch-api"$', block):
+            m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', block)
+            return m.group(1) if m else None
+    return None
+
+
 def check_lockfile_version(root: Path) -> None:
     """api/uv.lock must pin the same metasearch-api version as api/pyproject.toml.
 
     CI installs with `uv sync --locked`, which fails hard when the lockfile is
     stale — a version bump without `uv lock` must never reach a commit.
     Pure-stdlib check (no uv binary needed) so the hook works on every OS.
+    Fail-closed: missing files or unparseable formats BLOCK instead of skipping,
+    because a silently skipped check is exactly how stale locks reach CI.
     """
     pyproject = root / "api" / "pyproject.toml"
     lockfile = root / "api" / "uv.lock"
     if not pyproject.exists() or not lockfile.exists():
-        return
-    py_match = re.search(
-        r'(?m)^version\s*=\s*["\']([^"\']+)["\']', pyproject.read_text(encoding="utf-8")
-    )
-    lock_text = lockfile.read_text(encoding="utf-8")
-    lock_match = re.search(
-        r'\[\[package\]\]\s*\nname\s*=\s*"metasearch-api"\s*\nversion\s*=\s*"([^"]+)"',
-        lock_text,
-    )
-    if not py_match or not lock_match:
         log(
-            "WARN: could not parse versions from pyproject.toml/uv.lock — skipping lock check",
-            level="WARN",
+            "BLOCKED: api/pyproject.toml and api/uv.lock must both exist for the lock check",
+            level="ERROR",
         )
-        return
-    py_ver, lock_ver = py_match.group(1), lock_match.group(1)
+        sys.exit(1)
+    py_ver = _pyproject_project_version(pyproject.read_text(encoding="utf-8"))
+    lock_ver = _lock_metasearch_version(lockfile.read_text(encoding="utf-8"))
+    if py_ver is None or lock_ver is None:
+        log(
+            "BLOCKED: could not parse metasearch-api version from pyproject.toml/uv.lock "
+            "(fail-closed — fix the files or the parser, do not skip the check)",
+            level="ERROR",
+        )
+        sys.exit(1)
     if py_ver != lock_ver:
         log(
             f"BLOCKED: api/pyproject.toml is {py_ver} but api/uv.lock pins metasearch-api "
