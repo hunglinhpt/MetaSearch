@@ -22,9 +22,12 @@ flowchart LR
   cảnh liên quan FR-16). Client (`lib/api.ts`) chỉ bổ sung `freshnessDays`
   vào `SearchOptions`.
 - **Cửa sổ thời gian là thật**: `google_news` bỏ qua `freshness_days`
-  phía server (chỉ SearXNG dùng), nên client gắn operator `when:{n}d` của
-  Google News RSS vào truy vấn — UI chỉ hứa điều engine thật sự enforced
-  (SA audit).
+  phía server (SearXNG/DDG/Tavily map nó, chỉ google_news thì không), nên
+  client gắn operator `when:{n}d` của Google News RSS vào truy vấn — UI chỉ
+  hứa điều engine thật sự enforced (SA audit; probe live xác nhận RSS honors
+  `when:Nd`). Guard `\bwhen:\d+[dhwmy]` tránh nhân đôi operator nếu truy vấn
+  tự do đã có sẵn. Tab tin cũng gửi `news: true` để backend dùng news cache
+  TTL (900s) và freshness weight cho news thay vì TTL chung 1800s.
 - Tab tin tức là component riêng `frontend/components/NewsPanel.tsx`; tab hỏi
   đáp chính nhúng nút 🔊 vào `answer-header`.
 - **Bảo mật link**: mọi `href` từ payload backend đi qua `safeHref()`
@@ -55,15 +58,26 @@ của Edge được hiển thị ngay trên tooltip của các nút đọc (tab 
   chỉ kiểm tra một lần ở mount (tránh banner "thiếu giọng vi" bị kẹt sai).
 - `stripForSpeech(text)` — bỏ markdown + marker trích dẫn `[n]`; với link
   chỉ giữ **label** và bỏ URL (cả link cú pháp lẫn URL trần — giọng đọc
-  không đọc được URL), để giọng đọc đọc văn xuôi, không đọc cú pháp.
+  không đọc được URL; link rule chạy trước citation rule nên `[12](url)`
+  không để lại ngoặc thừa), khử entity phổ biến (`&amp;`…), bỏ zero-width,
+  hỗ trợ URL lồng 1 ngoặc, và nhận cả bullet số `1. `. Giọng đọc đọc văn
+  xuôi, không đọc cú pháp.
 - `chunkForSpeech(text, maxLen=220)` — đóng gói theo câu (`.!?;:` và xuống
-  dòng), câu quá dài cắt tại biên từ; speechSynthesis kẹt với utterance dài.
+  dòng), câu quá dài cắt tại biên từ; `maxLen` được clamp về ≥1 (tránh loop
+  vô hạn với maxLen<=0); speechSynthesis kẹt với utterance dài.
+- `pickVoice` — ưu tiên giọng **nội bộ OS** (`localService=true`) hơn giọng
+  online neural trong cùng tier, để nội dung đọc mặc định không rời máy;
+  hết giọng nội bộ mới fallback sang online (đã ghi chú riêng tư ở tooltip).
 - `ttsSpeak(text, {lang="vi-VN", rate, onStart, onEnd, onError}) -> handle` —
-  đọc tuần tự từng chunk, một speaker tại một thời điểm (cancel cái đang chạy).
+  đọc tuần tự từng chunk, một speaker tại một thời điểm (cancel cái đang
+  chạy); `synth.speak()` được bọc try/catch để engine ném đồng bộ không làm
+  kẹt state "đang đọc".
 - `ttsStop()` — dừng toàn cục.
 
 Ở lớp component (`NewsPanel`), văn bản đọc còn bỏ thẻ `[Nguồn]` đầu snippet
-mà `google_news` thêm vào, và nếu thiếu title thì đọc `domain` thay vì `url`.
+mà `google_news` thêm vào, strip dấu câu thừa ở cuối để không đọc "..", và
+nếu thiếu title thì đọc `domain` thay vì `url` (không đọc lại "Nguồn" trùng).
+`fmtWhen` clamp mốc tương lai về ngày tuyệt đối thay vì "vừa xong".
 
 ## 4. Preset tin tức (`NEWS_CATEGORIES`)
 

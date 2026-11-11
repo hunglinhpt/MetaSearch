@@ -96,6 +96,9 @@ function fmtWhen(hit: SearchHit): string {
   const ts = Date.parse(raw);
   if (Number.isNaN(ts)) return raw;
   const diffMs = Date.now() - ts;
+  // A future/garbled source timestamp must not render as "vừa xong" — show
+  // the claimed date instead of inventing a recency.
+  if (diffMs < 0) return new Date(ts).toISOString().slice(0, 10);
   const mins = Math.floor(diffMs / 60000);
   if (mins < 1) return "vừa xong";
   if (mins < 60) return `${mins} phút trước`;
@@ -114,6 +117,7 @@ export default function NewsPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [complete, setComplete] = useState<boolean | undefined>(undefined);
+  const [cached, setCached] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [ttsReady, setTtsReady] = useState(false);
   const [hasViVoice, setHasViVoice] = useState(true);
@@ -147,8 +151,10 @@ export default function NewsPanel() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    // Stale = superseded by a newer request OR aborted (unmount / 30s timeout).
-    const stale = () => reqIdRef.current !== myId || controller.signal.aborted;
+    // Superseded = a newer request started: drop the response silently.
+    // Aborted = unmount or the 30s client-side timeout fired: must surface an
+    // error and ALWAYS release the loading state, or the tab bricks.
+    const superseded = () => reqIdRef.current !== myId;
     // A hung backend must not leave the tab disabled forever (server caps at
     // 60s; this client-side belt-and-braces aborts at 30s).
     const timer = setTimeout(() => controller.abort(), 30_000);
@@ -164,7 +170,7 @@ export default function NewsPanel() {
       // operator its RSS feed actually honors (docs/16 §1). Never append a
       // second operator when the user's own query already carries one.
       const q =
-        cat.engines.includes("google_news") && !/when:\d+[dwm]/i.test(base)
+        cat.engines.includes("google_news") && !/\bwhen:\d+[dhwmy]/i.test(base)
           ? `${base} when:${cat.freshnessDays}d`
           : base;
       setAppliedQuery(q);
@@ -172,27 +178,36 @@ export default function NewsPanel() {
         engines: cat.engines,
         categories: ["news"],
         freshnessDays: cat.freshnessDays,
+        news: true, // news cache TTL (900s) + news freshness weight on the backend
         k: NEWS_K,
         signal: controller.signal,
       });
-      if (stale()) return;
+      if (superseded()) return;
       setHits(resp.results ?? []);
       setComplete(resp.complete);
+      setCached(Boolean(resp.cached));
     } catch (e) {
-      if (stale()) return;
+      if (superseded()) return;
       setHits([]);
       setComplete(undefined);
-      setError(e instanceof Error ? e.message : String(e));
+      setCached(false);
+      setError(
+        controller.signal.aborted
+          ? "Hết thời gian chờ 30s khi tải tin — thử lại hoặc đổi mục."
+          : e instanceof Error
+            ? e.message
+            : String(e)
+      );
     } finally {
       clearTimeout(timer);
-      if (!stale()) setLoading(false);
+      if (!superseded()) setLoading(false);
     }
   }, []);
 
   // Load the default category when the tab opens (parent mounts this panel
   // only while its tab is active).
   useEffect(() => {
-    void fetchNews(activeCat);
+    void fetchNews(NEWS_CATEGORIES.find((c) => c.id === activeCatId) ?? NEWS_CATEGORIES[0]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -211,10 +226,13 @@ export default function NewsPanel() {
       `Bản tin ${activeCat.label.toLowerCase()} từ MetaSearch.`,
       ...items.map((h, i) => {
         // Speech falls back to the domain (never a raw URL) when the title is
-        // missing, and drops the leading "[Nguồn]" tag google_news prefixes.
-        const title = h.title || h.domain;
-        const snippet = (h.snippet ?? "").replace(/^\[[^\]]+\]\s*/, "");
-        return `Tin ${i + 1}: ${title}. ${snippet ? `${snippet}.` : ""} Nguồn ${h.domain}.`;
+        // missing, drops the leading "[Nguồn]" tag google_news prefixes, and
+        // strips trailing punctuation so no ".." is spoken.
+        const stripEnd = (s: string) => s.replace(/[.!?…:;]+$/, "");
+        const title = stripEnd(h.title || h.domain);
+        const snippet = stripEnd((h.snippet ?? "").replace(/^\[[^\]]+\]\s*/, ""));
+        const source = h.title ? ` Nguồn ${h.domain}.` : "";
+        return `Tin ${i + 1}: ${title}. ${snippet ? `${snippet}.` : ""}${source}`;
       }),
     ].join(" ");
     ttsHandleRef.current = ttsSpeak(text, {
@@ -226,8 +244,11 @@ export default function NewsPanel() {
 
   const speakOne = (hit: SearchHit) => {
     stopSpeaking();
-    const snippet = (hit.snippet ?? "").replace(/^\[[^\]]+\]\s*/, "");
-    const text = `${hit.title || hit.domain}. ${snippet} Nguồn ${hit.domain}.`;
+    const stripEnd = (s: string) => s.replace(/[.!?…:;]+$/, "");
+    const snippet = stripEnd((hit.snippet ?? "").replace(/^\[[^\]]+\]\s*/, ""));
+    const title = stripEnd(hit.title || hit.domain);
+    const source = hit.title ? ` Nguồn ${hit.domain}.` : "";
+    const text = `${title}. ${snippet}${source}`;
     ttsHandleRef.current = ttsSpeak(text, {
       onStart: () => setSpeakingId(hit.url),
       onEnd: () => setSpeakingId(null),
@@ -284,6 +305,7 @@ export default function NewsPanel() {
             <>
               Truy vấn: <code>{appliedQuery}</code> · cửa sổ {activeCat.freshnessDays} ngày ·
               nguồn: {activeCat.engines.join(", ")}
+              {cached ? " · bản đã cache" : ""}
             </>
           ) : (
             "Chọn một mục hoặc nhập truy vấn riêng."

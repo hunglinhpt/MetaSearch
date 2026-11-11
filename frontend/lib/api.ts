@@ -212,6 +212,9 @@ export type SearchOptions = {
   categories?: string[];
   k?: number;
   freshnessDays?: number;
+  // news=true → backend uses the news cache TTL (900s) and the news freshness
+  // weight; the news tab always sets it.
+  news?: boolean;
 };
 
 /** Only http(s) links become hrefs — defense against a misbehaving engine. */
@@ -232,6 +235,7 @@ export async function search(
       engines: opts.engines ?? undefined,
       categories: opts.categories ?? undefined,
       freshness_days: opts.freshnessDays ?? undefined,
+      news: opts.news ?? undefined,
     }),
     signal: opts.signal,
   });

@@ -35,15 +35,23 @@ version tuân theo [SemVer](https://semver.org/).
   thiếu mốc → "không rõ thời điểm"; `complete === false` → banner vàng "có thể KHÔNG
   đầy đủ"; kết quả trống → "kết luận thật, không phải lỗi".
 
-### Hardening (audit vòng 5 — 2 expert QA/perf + AI/TTS & data-integrity — PASS)
+### Hardening (audit vòng 5 + vòng 6 đối kháng — 2+4 expert read-only — PASS)
 - Fix đủ 4 finding của vòng 4: 1 P1 (`href` raw ở danh sách trích dẫn câu trả lời +
   `signup_url`), 2 P2 (`hasViVoice` sticky-false; URL bị đọc thành tiếng), 1 P3
   (comment cite § sai, thiếu guard `when:Nd` trùng, thiếu aria-label).
-- Fetch tin có timeout client 30s + abort guard (request-id + `AbortController` + bail
-  khi đã abort) — backend treo không làm kẹt tab; hủy đọc đúng khi unmount / đổi tab /
-  tìm truy vấn mới.
+- Fetch tin có timeout client 30s + abort guard — backend treo không làm kẹt tab; khi
+  timeout 30s thì báo lỗi rõ và nhả `loading` (vòng 6 phát hiện `stale()` gộp cả
+  "superseded" và "aborted" khiến tab kẹt loading mãi — đã tách riêng). Hủy đọc đúng
+  khi unmount / đổi tab / tìm truy vấn mới.
 - Văn bản đọc: bỏ thẻ `[Nguồn]` đầu snippet của google_news; thiếu title thì đọc
-  `domain` thay vì `url`.
+  `domain` thay vì `url`; strip dấu câu thừa (không đọc ".."); link rule chạy trước
+  citation rule + URL lồng ngoặc; khử entity, zero-width, bullet số `1. `; `maxLen`
+  clamp ≥1; `synth.speak()` bọc try/catch; `pickVoice` ưu tiên giọng nội bộ OS
+  (`localService`) hơn giọng online để nội dung đọc mặc định không rời máy.
+- Tab tin gửi `news: true` để backend dùng news cache TTL 900s + freshness weight
+  (trước đó feed bị cache TTL chung 1800s); toolbar hiện cờ "bản đã cache".
+- `fmtWhen` clamp mốc tương lai về ngày tuyệt đối thay vì "vừa xong"; guard
+  `\bwhen:\d+[dhwmy]` không nhân đôi operator khi truy vấn tự do đã có `when:`.
 
 ### Verified
 - `npm run typecheck` + `npm run build` PASS (Next.js 15 build sạch).
