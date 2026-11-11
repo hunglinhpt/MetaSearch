@@ -4,6 +4,65 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [2.3.0] — 2026-11-12 — feature roadmap (docs/18): dictation, Deep Research UI, so sánh mã + biểu đồ nến, watchlist, podcast
+
+### Added (docs/18 — 6 wave)
+- **A1 Dictation tiếng Việt**: `frontend/lib/dictation.ts` bọc SpeechRecognition
+  (vi-VN, interim results), nút mic ở ô tìm kiếm chính + ô lọc tin tab Tin tức;
+  trình duyệt không hỗ trợ → ẩn nút. 8 vitest mới.
+- **A2 Tab 🔬 Deep Research**: `ResearchPanel.tsx` tiêu thụ FR-9 chưa có UI —
+  `POST /v1/research` → SSE `/events` (status/report_token live) → render báo cáo
+  bằng `AnswerMarkdown` (component chung với câu trả lời) + citations + learnings;
+  đọc báo cáo **theo từng section** (playlist bấm-để-nghe, tiếp/dừng) qua engine
+  TTS hiện tại (`lib/sectionTTS.ts`, 6 vitest). Abort SSE khi rời tab.
+- **B1 `POST /v1/fa/compare`**: so sánh 2-5 mã qua `FAAggregator` chung
+  (`deps.get_fa_aggregator`, breaker sống xuyên request); mỗi field có
+  `value/source/as_of/validated`, thiếu thì liệt kê `missing_fields` — không bịa số.
+  Tab **⚖️ So sánh mã** + đọc bảng bằng TTS. Rate cost 3, tier admission `market`.
+- **B2 `POST /v1/market/ohlcv`**: nến ngày VNDIRECT primary (đường parser chung
+  với search, có per-candle timestamps) + fallback SSI qua aggregator; cả hai chết →
+  503 có nghĩa. `SourceOHLCV` thêm `times`. UI: `lightweight-charts@5.3.0` (pinned,
+  Apache-2.0) + thống kê (giá cuối, biến động, cao/thấp, KL) tính từ payload.
+- **C Watchlist + cảnh báo**: model `WatchlistItem` (tenancy theo API key, cap 20),
+  CRUD `/v1/watchlist`, `GET /v1/watchlist/alerts` poll-on-demand diff hash URL với
+  baseline (lần đầu chỉ lưu mốc nền); DB chết → fallback in-memory bounded. UI trong
+  tab Tin tức: thêm/xoá theo dõi, badge "Mới: n", danh sách tin mới + đọc tin mới.
+  **Bỏ background poller** theo đề xuất docs/18 §7 (không đốt budget nền).
+- **D Podcast bản tin**: `POST /v1/podcast/briefing` (202, idempotent theo ngày),
+  `/status`, `/latest` (audio/mpeg), `/feed.xml` (RSS); script từ 6 preset tin thật,
+  cap ở sentence boundary, retention 7 ngày trong `api/podcast_data/` (gitignored).
+  Chưa cấu hình VoiceStudio → 503 `tts_disabled` cho toàn bộ route podcast.
+- 16 test backend mới (`test_market_watchlist_podcast.py`: MockTransport/fake
+  pipeline/SQLite in-memory/tmp-dir podcast), 9 vitest mới (chartData, faTable);
+  OpenAPI snapshot regen (additive). Frontend: 44 vitest, tsc + next build xanh.
+
+### Audit — 3 vòng expert đối kháng (8 lens: finance, technical/SA, AI/LLM, QA, auditor/security, data-engineer, dream-rsi, perf)
+- **Vòng 1** phát hiện và fix các P1: parser dchart có thể bịa OHLC/volume khi
+  feed đổi schema (giờ strict: độ dài 6 mảng khớp, mọi giá trị finite + không âm,
+  time tăng nghiêm ngặt); `market.py` timeout → 504 `deadline_exceeded` + kết quả
+  từng mã partial, không bao giờ bịa `times`; watchlist alerts Semaphore(4) + cap
+  30s + partial, baseline không advance khi outcome incomplete; podcast single-flight,
+  degrade theo preset, IO qua `run_cpu`, `Cache-Control: private`, retention đúng N ngày.
+- **Vòng 2** xác nhận 39/39 fix vòng 1 (full pytest rc=0, alembic 0006 khớp model
+  1:1) và fix thêm: `streamAnswer` normalize CRLF của sse-starlette 3.x trước khi tách
+  frame (vitest 5 case), ChartPanel chuyển sang API v5 của lightweight-charts
+  (`addSeries(CandlestickSeries,…)`, pin 5.3.0), từ chối NaN/Inf trong mọi mảng nến,
+  podcast retention chạy trước khi chọn file, watchlist memory-mode có re-probe DB
+  throttle 30s để migrate về DB khi nó sống lại, ResearchPanel re-attach SSE không
+  nhân đôi report.
+- **Vòng 3** (fresh-eyes toàn bộ diff, xem docs/18 §8): fix 13 phát hiện —
+  evict owner-lock chỉ khi không bị giữ (tránh alias lock), fallback aggregator raise
+  → 503 không 500, podcast job bị cancel không mắc kẹt `running`, `_prune_jobs` khớp
+  retention N ngày với disk, RSS enclosure từ chối scheme không phải http(s),
+  retention không xoá `.mp3.tmp` đang ghi (chỉ dọn tmp già >1h), `streamAnswer` thêm
+  guard overflow 1MB + `reader.cancel()` + cap 1MB cho từng event (cả `streamSse`),
+  ResearchPanel poll lại 3 lần sau event `done` trước khi báo lỗi, watchlist migrate
+  về DB coi memory list là tập id authoritative (item xoá lúc DB down không bị hồi
+  sinh), parser dchart guard multiplier trước khi validate, `market/ohlcv` hết wall-clock
+  → 504 `deadline_exceeded` thay vì 503 sai nghĩa. 7 test backend + 1 vitest mới.
+- Kết quả cuối: ruff/format/bandit/mypy sạch, full pytest xanh, frontend 49 vitest
+  + tsc + next build xanh, OpenAPI snapshot khớp router.
+
 ## [Unreleased] — VoiceStudio server-side TTS (tuỳ chọn) — xem docs/17
 
 ### Hardening (audit vòng 8 — security/SA + QA/data-integrity đối kháng, PASS)

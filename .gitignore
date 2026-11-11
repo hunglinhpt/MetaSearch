@@ -37,6 +37,11 @@ searxng-data/
 *.retention
 api/.env.*
 !api/.env.*.example
+# Podcast briefing audio (docs/18 D) is generated runtime data, never committed.
+# The default dir is anchored at api/podcast_data/; the root glob covers a
+# server accidentally started from the repo root.
+api/podcast_data/
+/podcast_data/
 qdrant_storage/
 
 # IDE / OS

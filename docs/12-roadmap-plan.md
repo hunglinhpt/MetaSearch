@@ -12,6 +12,7 @@
 | **5 — Institutional Release (v1.0.0)** | 9 | 5-Wave Deep Audit, BCTC Forensics theo ngành (CAMELS/Margin/BĐS), Quantitative Technicals, 19 Engines, 40 Golden Evals | 333 unit tests pass, 0 ruff/bandit issues, Next.js build clean |
 | **6 — Readiness cho hệ thống bên ngoài** | Xong phần repo này (v2.0.0); còn tích hợp thật ở phía hệ thống gọi tới và đo trên Postgres, Linux | Bảo mật, liêm chính dữ liệu, tải, quan sát, vận hành và CI trước khi một hệ thống bên ngoài dùng thật; hợp đồng ở [15-integration-guide.md](15-integration-guide.md) |
 | **7 — Web UI Tin tức + TTS tiếng Việt (v2.2.0)** | ✅ Hoàn tất 2026-11-11 | Tab Tin tức 6 mục (google_news + `when:Nd` thật) + đọc máy vi-VN (Web Speech API), `safeHref` mọi href từ payload; plan ở [16-web-ui-news-tts.md](16-web-ui-news-tts.md) | `npm run typecheck` + `build` PASS; backend suite 100%; audit vòng 5 (QA + AI/TTS) PASS |
+| **8 — v2.3.0 feature roadmap (docs/18)** | ✅ Hoàn tất 2026-11-12 | dictation vi-VN + tab Deep Research (SSE) + `POST /v1/fa/compare` + `POST /v1/market/ohlcv` (biểu đồ nến lightweight-charts@5.3.0) + watchlist/alerts poll-on-demand + podcast bản tin VoiceStudio; plan ở [18-feature-roadmap-v2.3.md](18-feature-roadmap-v2.3.md) | full pytest xanh; ruff/bandit/mypy sạch; frontend 49 vitest + tsc + build xanh; 3 vòng audit 8-lens PASS, hết P0/P1/P2 (docs/18 §8) |
 
 ## 2. Task breakdown chi tiết
 
@@ -207,7 +208,16 @@
 
 - [x] So sánh VoiceStudio (AGPL-3.0, local OpenAI-compatible `:3900`) với Web Speech API; quyết định: Web Speech giữ mặc định, VoiceStudio là engine tuỳ chọn server-side (full profile, profile `tts` trong compose).
 - [x] Backend `/v1/tts/capabilities` + `/v1/tts/synthesize` (proxy, SSRF-safe URL từ env, cap audio, ETag/304); frontend engine picker + `ttsSpeakRemote` (chunk tuần tự, một speaker); 30 backend test + vitest 21.
-- [ ] Phase sau (đề xuất ở docs/17 §6): dictation giọng Việt vào ô tìm kiếm (ASR streaming), nút "tải bản tin thành file audio". Không làm: dubbing, voice cloning, Cloud/Pro.
+
+### v2.3.0 feature roadmap (docs/18 — 2026-11-12) — ✅ HOÀN TẤT
+
+- [x] **A1 dictation vi-VN** (Web Speech SpeechRecognition, mic ở ô tìm kiếm + ô lọc tin; không hỗ trợ → ẩn nút) — `frontend/lib/dictation.ts` + vitest.
+- [x] **A2 tab 🔬 Deep Research**: `ResearchPanel.tsx` tiêu thụ `POST /v1/research` + SSE `/events` (re-attach khi rớt kết nối, không nhân đôi report), đọc theo section qua `sectionTTS.ts`.
+- [x] **B1 `POST /v1/fa/compare`** (≤5 mã qua FAAggregator chung, per-field provenance, 504 khi hết deadline, per-symbol partial) + tab ⚖️ So sánh mã.
+- [x] **B2 `POST /v1/market/ohlcv`** (VNDIRECT primary + SSI fallback; một parser strict dùng chung với search — không bao giờ bịa OHLC/time; thiếu times → 503) + `ChartPanel` bằng `lightweight-charts@5.3.0` pinned (API v5 `addSeries`).
+- [x] **C watchlist + alerts poll-on-demand**: model `WatchlistItem` (alembic 0006), CRUD `/v1/watchlist` (per-owner lock + upsert, cap 20), `GET /v1/watchlist/alerts` (Semaphore(4) + cap 30s + partial, baseline không advance khi outcome incomplete); **bỏ background poller** (docs/18 §7.1); memory fallback có re-probe DB throttle 30s.
+- [x] **D podcast bản tin** (VoiceStudio only): `POST /v1/podcast/briefing` idempotent theo ngày + single-flight, `/status`, `/latest`, `/feed.xml` (RSS sau auth, enclosure không nhận scheme lạ); file `api/podcast_data/` retention 7 ngày, dọn orphan tmp chỉ khi già >1h.
+- [x] **3 vòng audit đối kháng 8 lens** (finance, technical/SA, AI/LLM, QA, auditor/security, data-engineer, dream-rsi, perf): hết P0/P1, mọi P2 đã fix + test (docs/18 §8); full pytest xanh, ruff/bandit/mypy sạch, 49 vitest + tsc + next build xanh, OpenAPI snapshot regen.
 
 ## 4. Rủi ro thực thi
 

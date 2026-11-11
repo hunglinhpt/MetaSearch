@@ -82,10 +82,70 @@
 
 | Wave | Trạng thái |
 |---|---|
-| A1 Dictation | ⏳ |
-| A2 Research tab + TTS section | ⏳ |
-| B1 FA Compare | ⏳ |
-| B2 OHLCV chart | ⏳ |
-| C Watchlist + alerts | ⏳ |
-| D Podcast | ⏳ |
-| Audit tổng kết + push | ⏳ |
+| A1 Dictation | ✅ (mic ở ô tìm kiếm + ô lọc tin; `lib/dictation.ts` + vitest) |
+| A2 Research tab + TTS section | ✅ (tab 🔬 Deep Research: SSE live report + playlist theo section; `ResearchPanel.tsx`, `sectionTTS.ts`) |
+| B1 FA Compare | ✅ `POST /v1/fa/compare` (cap 5, fan-out aggregator, provenance mỗi field) + tab ⚖️ So sánh + đọc bảng |
+| B2 OHLCV chart | ✅ `POST /v1/market/ohlcv` (VNDIRECT primary, SSI fallback qua aggregator) + `lightweight-charts@5.3.0` (pinned) + thống kê từ payload |
+| C Watchlist + alerts | ✅ model `WatchlistItem` + CRUD `/v1/watchlist` + `GET /v1/watchlist/alerts` poll-on-demand (baseline hash) + UI badge/tin mới/đọc; **quyết định thay đổi so với plan**: bỏ background poller `WATCHLIST_POLL_MIN` — poller nền sẽ âm thầm đốt budget search của mọi key; client tự gọi /alerts theo lịch của nó (đề xuất "tốt hơn", xem §7) |
+| D Podcast | ✅ `POST /v1/podcast/briefing` (202, idempotent theo ngày) + `/status` + `/latest` (audio/mpeg) + `/feed.xml` (RSS); file `api/podcast_data/briefing-YYYY-MM-DD.mp3`, retention 7 ngày; 503 `TTS_DISABLED` khi chưa có VoiceStudio |
+| Audit tổng kết + push | ✅ 3 vòng audit đối kháng (8 lens: finance, technical/SA, AI/LLM, QA, auditor/security, data-engineer, dream-rsi, perf) — xem §8; không còn P0/P1, mọi P2 đã fix, P3 hoặc fix hoặc ghi nhận có chủ đích |
+
+## 7. Đề xuất thay đổi so với plan gốc (đã áp dụng)
+
+1. **Bỏ background poller watchlist** (`WATCHLIST_POLL_MIN`): poller nền chạy
+   search pipeline cho mọi key mà không ai yêu cầu → tốn budget/rate-limit và
+   có thể làm "tin mới" biến mất trước khi user kịp đọc (baseline tự'avance).
+   Thay bằng **poll-on-demand**: client bấm "Kiểm tra tin mới" (hoặc hẹn giờ
+   ở client) → `GET /v1/watchlist/alerts` diff với baseline và advance nó.
+   Đơn giản hơn, không tốn tài nguyên nền, và semantics rõ ràng.
+2. **Podcast một file/ngày, idempotent**: `POST /v1/podcast/briefing` trả về
+   bản đã có của ngày thay vì tạo trùng — tránh nhân bản file và tốn GPU/CPU
+   TTS vô ích.
+3. **Bảng nến dùng field chuẩn của lightweight-charts** (`time/open/high/low/
+   close/volume`) thay vì `t/o/h/l/c/v` — UI không cần remap, contract rõ ràng.
+4. **RSS feed cũng nằm sau auth** như mọi route /v1 khác (an toàn hơn feed
+   public chứa link nội bộ); app podcast dùng header Authorization.
+5. **Script podcast bị cap ở sentence boundary** (`podcast_max_chars`) để
+   audio không bị cắt giữa từ; script chỉ chứa headline thật từ search, không
+   nhờ LLM bịa (giữ đúng quy tắc không ngụy tạo, chi phí = 0 LLM).
+6. **Một parser dchart duy nhất cho cả search và chart** (`_parse_dchart_series`
+   ở `viet_stock.py`): strict — độ dài 6 mảng phải khớp, mọi giá trị finite
+   và không âm, time tăng nghiêm ngặt, `zip(strict)` ở API boundary; feed
+   schema drift → từ chối cả series thay vì bịa OHLC/volume. Chart không bao
+   giờ hiển thị time bịa (series không có `times` → 503, không fallback
+   lịch 86400 giây).
+7. **SSE client normalize CRLF trước khi tách frame** (sse-starlette 3.x dùng
+   `\r\n\r\n`): cả `streamAnswer` và `streamSse` ở `frontend/lib/api.ts`;
+   `streamSse` thêm guard overflow 1MB + `reader.cancel()` trong finally,
+   `streamAnswer` nay cũng có cả hai (trước loop 3 chỉ có CRLF).
+8. **lightweight-charts v5 API** (`chart.addSeries(CandlestickSeries, …)`,
+   pinned `5.3.0`): bản v4 `addCandlestickSeries` đã bị xoá — nếu không pin
+   version, upgrade hậu trường sẽ gãy build. `time` cast sang type `Time` của v5.
+
+## 8. Audit loop 3 — phát hiện và fix (2026-11-12)
+
+Loop 3 (fresh-eyes trên toàn bộ diff sau loop 1+2, 8 lens tự verify vì child
+limit của agent runner): xác nhận toàn bộ fix loop 1 (39/39) và loop 2 land
+đúng (full pytest rc=0, alembic 0006 khớp model 1:1, vitest/tsc/build xanh).
+Phát hiện mới ở loop 3 — đều đã fix + có test:
+
+| # | Mức | Vấn đề | Fix |
+|---|---|---|---|
+| 1 | P2 | `_owner_locks` evict lock đang bị giữ khi map đầy → alias 2 lock cho 1 owner, mất mutual exclusion | evict chỉ entry `not locked()` (`watchlist.py`) + test giữ nguyên object |
+| 2 | P3 | `market.py` fallback aggregator raise → 500 thay vì 503 | bọc try/except → `503 no_results`, không leak exception (`test_market_ohlcv_fallback_exception_is_503_not_500`) |
+| 3 | P3 | Podcast job bị cancel (shutdown) → `_jobs` mắc kẹt `"running"`, chặn mọi POST sau | `except CancelledError` set `status="cancelled"` rồi re-raise + test |
+| 4 | P3 | `_prune_jobs` giữ N+1 ngày còn disk giữ N → status/file có thể disagree | horizon về `retention_days - 1` cho khớp `briefing.py` |
+| 5 | P3 | RSS enclosure fallback từ `request.base_url` không check scheme (Host/X-Forwarded giả mạo) | chỉ nhận `http(s)://`, `public_base_url` cấu hình ưu tiên; ngược lại enclosure relative + test `javascript:` không lọt vào feed |
+| 6 | P3 | Retention xoá cả `.mp3.tmp` đang được ghi giữa `write_bytes` và `replace` → job báo lỗi giả | chỉ dọn tmp già hơn 1h + test cả hai chiều (orphan cũ bị dọn, tmp mới sống sót) |
+| 7 | P3 | `streamAnswer` thiếu guard overflow 1MB và `reader.cancel()` như `streamSse` | thêm cả hai, normalize CRLF trước check overflow |
+| 8 | P3 | ResearchPanel: event `done` nhưng GET status còn lag "running" → panel báo lỗi sai | poll lại tối đa 3 lần (400ms) trước khi settle khi đã thấy `done` |
+| 9 | P2 | Watchlist migrate về DB khi DB hồi phục bắt đầu từ DB rows → item bị xoá lúc DB down bị "hồi sinh" | memory list là tập id authoritative: `_save_items` upsert memory + xoá phần còn lại ở DB; test `test_watchlist_delete_during_outage_is_not_resurrected` |
+| 10 | P3 | `_parse_dchart_series` tính multiplier từ `float(c_list[-1])` trước khi validate → parser có thể raise thay vì trả None | guard try/except + finite/non-negative trước khi tính multiplier + test |
+| 11 | P3 | `market/ohlcv` hết wall-clock cả 2 leg → 503 "no data" sai nghĩa | 504 `deadline_exceeded` (cùng contract với fa/compare) + test treo 30s với timeout 0.2s |
+| 12 | P3 | `streamSse`/`streamAnswer` chỉ chặn buffer khi KHÔNG có boundary — một frame đơn lẻ >1MB vẫn buffer nguyên | thêm check độ dài từng block sau khi tách frame ở cả hai hàm |
+| 13 | P3 | docstring podcast dẫn `docs/18 §7.4` không tồn tại | sửa về §7 item 4 |
+
+Quyết định có chủ đích (chấp nhận rủi ro, đã ghi nhận): `follow_redirects=True`
+trên các pool fetch host hằng số (VNDIRECT/SSI/TCBS/FireAnt) — URL không phải do
+user cung cấp, symbol đã qua `ensure_symbol`, không gửi credential; per-hop
+SSRF re-check chỉ bắt buộc với URL user-supplied theo AGENTS.md §4.

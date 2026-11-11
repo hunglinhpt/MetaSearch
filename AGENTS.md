@@ -13,7 +13,14 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-11 — v2.2.0 Web UI Tin tức + TTS tiếng Việt)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-12 — v2.3.0 feature roadmap docs/18: dictation, Deep Research UI, so sánh mã + biểu đồ nến, watchlist, podcast)
+
+- ✅ **v2.3.0 feature roadmap (docs/18)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/18-feature-roadmap-v2.3.md](docs/18-feature-roadmap-v2.3.md):
+  - **A**: dictation vi-VN (Web Speech) ở ô tìm kiếm + ô lọc tin; tab 🔬 Deep Research tiêu thụ FR-9 (SSE live + đọc theo section).
+  - **B**: `POST /v1/fa/compare` (≤5 mã, provenance từng field) + tab ⚖️; `POST /v1/market/ohlcv` (VNDIRECT primary/SSI fallback, một parser strict dùng chung, không bao giờ bịa time) + biểu đồ `lightweight-charts@5.3.0` (pinned, API v5).
+  - **C**: watchlist theo key (CRUD, cap 20, alembic 0006) + `/v1/watchlist/alerts` poll-on-demand (bỏ background poller — không đốt budget nền); DB chết → memory fallback có giới hạn + re-probe throttle 30s.
+  - **D**: podcast bản tin qua VoiceStudio: `/v1/podcast/briefing|status|latest|feed.xml`, idempotent theo ngày, single-flight, retention 7 ngày ở `api/podcast_data/` (gitignored); 503 `tts_disabled` khi chưa cấu hình.
+  - **3 vòng audit đối kháng (8 lens: finance, technical/SA, AI, QA, auditor/security, data-engineer, dream-rsi, perf)** — không còn P0/P1, mọi P2 đã fix (chi tiết docs/18 §8); full pytest xanh, ruff/bandit/mypy sạch, frontend 49 vitest + tsc + next build xanh, OpenAPI snapshot khớp.
 
 - ✅ **Multi-source FA, bỏ điểm hụt đơn nguồn (v2.1.0)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/15-fa-sources-plan.md](docs/15-fa-sources-plan.md):
   - Package `app/retrieval/fa_sources/`: adapter **trực tiếp** SSI (OHLCV), TCBS (ratios), FireAnt (BCTC, JWT `FA_FIREANT_TOKEN`) — không qua vnstock/wrapper; 21 nguồn đã thẩm định trong docs/15.

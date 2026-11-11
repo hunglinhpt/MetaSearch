@@ -10,9 +10,11 @@ Languages: [English](#english) · [Tiếng Việt](#tiếng-việt)
 > A multi-source search & quantitative analysis system for AI: **Meta-Search (SearXNG 70+ engines + 14 Vertical Engines) → Crawl & Extract → Dedup/Consensus/Rerank → Synthesize with `[n]` citations**, packaged as REST API + SSE Streaming + MCP Server + Automated Daily Briefings Blog + Web UI.
 
 
-Status: **v2.2.0 — Web UI News tab + Vietnamese TTS read-aloud; server-side freshness-window mapping; 2 adversarial audit rounds PASS**:
+Status: **v2.3.0 — voice input (dictation), Deep Research UI, stock compare + candlestick chart, watchlist + on-demand alerts, podcast news briefing; 3 adversarial audit rounds PASS (docs/18)**:
 
+- **v2.3.0 feature roadmap (docs/18)**: **A** voice input via Web Speech dictation (`vi-VN`, mic buttons in the search box and news filter) + a 🔬 **Deep Research tab** consuming the existing FR-9 job API with live SSE report + per-section read-aloud playlist; **B** `POST /v1/fa/compare` (cross-source fundamentals for up to 5 symbols, per-field `source/as_of/validated`, never fabricated) with a ⚖️ compare tab, and `POST /v1/market/ohlcv` (VNDIRECT candles primary, SSI fallback, one strict shared parser — schema drift refuses the series, timestamps are never synthesized) rendered with `lightweight-charts@5.3.0` (pinned) + stats computed from the payload; **C** per-key watchlist (CRUD `/v1/watchlist`, cap 20) + `GET /v1/watchlist/alerts` **poll-on-demand** (no background poller burning search budget — client-owned schedule), DB-down bounded in-memory fallback with throttled DB re-probe; **D** podcast news briefing behind VoiceStudio: `POST /v1/podcast/briefing` (idempotent per day, single-flight) + `/status` + `/latest` (audio/mpeg) + `/feed.xml` (RSS, auth-protected), files in `api/podcast_data/` with 7-day retention; 503 `tts_disabled` until configured. 3 audit loops (8 expert lenses each) fixed every P0/P1/P2 found — see docs/18 §8 and CHANGELOG.
 - **News tab + Vietnamese TTS (`v2.2.0`)**: 6 preset categories (macro economy, finance–stock market, business, tech–AI, banking–monetary, world economy) calling `/v1/search` with `engines=["google_news"]`, `news: true`; **the freshness window is mapped server-side by the backend (`freshness_days` → `when:{n}d`)** (end-anchored ASCII guard never duplicates an operator; the client only sends structured params, never engine operators). Read-aloud via the Web Speech API (the OS voice stack, free, zero backend egress) for answers + whole digests/each news item; the UI truthfully reports whether the voice in use is **local** (stays on-device) or **online** (sent to the TTS vendor). `safeHref()` wraps every href coming from payloads. Details: [docs/16-web-ui-news-tts.md](docs/16-web-ui-news-tts.md).
+
 - **Process hardening (`v2.2.0`)**: the pre-commit gate verifies `api/uv.lock` matches the `pyproject.toml` version (fail-closed); `clean_workspace` never deletes local runtime data (`api/*.db*`, `*.retention`, `api/.env.*`) and never crashes on files locked by a local process; CI adds `npm audit` over dev deps too, plus vitest (16 tests) in the 3-OS frontend matrix.
 - **Optional server-side TTS via VoiceStudio (Unreleased, full profile only)**: a second read-aloud engine next to the browser's Web Speech API — neural on-device voices (OmniVoice, Vietnamese included), fully offline, $0. Backend proxy `POST /v1/tts/synthesize` + `GET /v1/tts/capabilities`; UI engine picker in the News tab; compose profile `tts`. Web Speech stays the default and Lite-compatible path. Details: [docs/17-voicestudio-integration.md](docs/17-voicestudio-integration.md).
 - **Multi-source FA, eliminating the single-source weakness (`v2.1.0`)**: **direct** adapters for SSI (OHLCV), TCBS (ratios), FireAnt (financial statements, JWT `FA_FIREANT_TOKEN`) — no vnstock/wrapper; breaker-gated `FAAggregator` fan-out with 0.5% cross-validation, and when all sources fail it returns empty fields + `missing_fields` (never fabricates); `VietStockAdapter` falls back concurrently VNDIRECT→SSI, Simplize→TCBS/FireAnt, with provenance recording the real source. Details: [docs/15-fa-sources-plan.md](docs/15-fa-sources-plan.md).
@@ -158,7 +160,7 @@ Web UI: open `http://localhost:3000` — pick a category (Finance & Stocks, News
 MetaSearch/
 ├── README.md                  ← this file — bilingual (English + Tiếng Việt in one file)
 ├── AGENTS.md                  ← agent onboarding guide (status, conventions, checklist)
-├── CHANGELOG.md               ← version history (Keep a Changelog — current v2.2.0)
+├── CHANGELOG.md               ← version history (Keep a Changelog — current v2.3.0)
 ├── CONTRIBUTING.md            ← setup + workflow + gates guideline
 ├── docs/                      ← detailed design (16 documents + ADRs)
 │   ├── 01-product-requirements.md
@@ -177,7 +179,8 @@ MetaSearch/
 │   ├── 15-fa-sources-plan.md  ← 21 vetted VN financial sources + direct SSI/TCBS/FireAnt adapters (v2.1.0)
 │   ├── 15-integration-guide.md ← external-system integration contract (v2.0.0)
 │   ├── 16-web-ui-news-tts.md  ← News tab + Vietnamese TTS, server-side when:Nd mapping (v2.2.0)
-│   └── 17-voicestudio-integration.md ← optional server-side VoiceStudio TTS engine + roadmap (docs/17)
+│   ├── 17-voicestudio-integration.md ← optional server-side VoiceStudio TTS engine (docs/17)
+│   └── 18-feature-roadmap-v2.3.md ← v2.3.0 roadmap: dictation, Deep Research UI, compare + chart, watchlist, podcast + 3 audit loops (v2.3.0)
 │   └── adr/                   ← Architecture Decision Records
 ├── api/                       ← FastAPI orchestration + Quantitative Engines
 │   ├── app/
@@ -264,7 +267,9 @@ We warmly welcome community contributions (issues, feature requests, pull reques
 
 [English](#english)
 
-Trạng thái: **v2.2.0 — Web UI tab Tin tức + đọc máy tiếng Việt (TTS); cửa sổ thời gian map server-side; 2 vòng audit đối kháng PASS**:
+Trạng thái: **v2.3.0 — nhập giọng nói (dictation), UI Deep Research, so sánh mã + biểu đồ nến, watchlist + cảnh báo theo yêu cầu, podcast bản tin; 3 vòng audit đối kháng PASS (docs/18)**:
+- **Feature roadmap v2.3.0 (docs/18)**: **A** nhập bằng giọng nói qua Web Speech (dictation `vi-VN`, nút mic ở ô tìm kiếm + ô lọc tin) + tab 🔬 **Deep Research** tiêu thụ API job FR-9 đã có: báo cáo SSE live + đọc theo từng section; **B** `POST /v1/fa/compare` (so sánh tối đa 5 mã, mỗi field có `source/as_of/validated`, không bịa số) với tab ⚖️, và `POST /v1/market/ohlcv` (nến VNDIRECT chính, fallback SSI, một parser strict dùng chung — feed đổi schema thì từ chối cả series, không bao giờ bịa timestamp) vẽ bằng `lightweight-charts@5.3.0` (đã pin), thống kê tính từ payload; **C** watchlist theo key (CRUD `/v1/watchlist`, cap 20) + `GET /v1/watchlist/alerts` **poll-on-demand** (không có poller nền đốt budget search — client tự hẹn lịch), DB chết thì fallback bộ nhớ có giới hạn + re-probe DB throttle 30s để migrate về DB khi nó sống lại; **D** podcast bản tin qua VoiceStudio: `POST /v1/podcast/briefing` (idempotent theo ngày, single-flight) + `/status` + `/latest` (audio/mpeg) + `/feed.xml` (RSS, sau auth), file ở `api/podcast_data/` retention 7 ngày; chưa cấu hình thì 503 `tts_disabled`. 3 vòng audit (8 lens chuyên gia mỗi vòng) đã fix hết mọi P0/P1/P2 — xem docs/18 §8 và CHANGELOG.
+- **Tab Tin tức + TTS tiếng Việt (`v2.2.0`)**: 6 mục preset (kinh tế vĩ mô, tài chính–chứng khoán, kinh doanh, công nghệ–AI, ngân hàng–tiền tệ, kinh tế thế giới) gọi `/v1/search` với `engines=["google_news"]`, `news: true`; **cửa sổ thời gian do backend map `freshness_days` → `when:{n}d` server-side** (guard end-anchored ASCII không nhân đôi operator; client chỉ gửi param có cấu trúc, không nhét operator vào query). Đọc máy qua Web Speech API (voice stack của OS, free, không egress backend) cho câu trả lời + cả bản tin/từng tin; UI công khai đúng giọng đang dùng là **local** (giữ trên máy) hay **online** (gửi tới máy chủ TTS). `safeHref()` gói mọi href từ payload. Chi tiết: [docs/16-web-ui-news-tts.md](docs/16-web-ui-news-tts.md).
 - **Tab Tin tức + TTS tiếng Việt (`v2.2.0`)**: 6 mục preset (kinh tế vĩ mô, tài chính–chứng khoán, kinh doanh, công nghệ–AI, ngân hàng–tiền tệ, kinh tế thế giới) gọi `/v1/search` với `engines=["google_news"]`, `news: true`; **cửa sổ thời gian do backend map `freshness_days` → `when:{n}d` server-side** (guard end-anchored ASCII không nhân đôi operator; client chỉ gửi param có cấu trúc, không nhét operator vào query). Đọc máy qua Web Speech API (voice stack của OS, free, không egress backend) cho câu trả lời + cả bản tin/từng tin; UI công khai đúng giọng đang dùng là **local** (giữ trên máy) hay **online** (gửi tới máy chủ TTS). `safeHref()` gói mọi href từ payload. Chi tiết: [docs/16-web-ui-news-tts.md](docs/16-web-ui-news-tts.md).
 - **Process hardening (`v2.2.0`)**: pre-commit gate kiểm tra `api/uv.lock` khớp version với `pyproject.toml` (fail-closed); `clean_workspace` không bao giờ xoá dữ liệu runtime local (`api/*.db*`, `*.retention`, `api/.env.*`) và không crash khi file bị tiến trình local giữ lock; CI thêm `npm audit` cả dev deps + vitest (16 test) vào frontend matrix 3 OS.
 - **Engine đọc máy server-side tuỳ chọn: VoiceStudio (Unreleased, chỉ full profile)**: thêm lựa chọn đọc bên cạnh Web Speech API của trình duyệt — giọng neural on-device (OmniVoice, có tiếng Việt), offline 100%, $0. Backend proxy `POST /v1/tts/synthesize` + `GET /v1/tts/capabilities`; UI có menu chọn giọng ở tab Tin tức; compose profile `tts`. Web Speech vẫn là mặc định và tương thích Lite. Chi tiết: [docs/17-voicestudio-integration.md](docs/17-voicestudio-integration.md).
@@ -430,7 +435,8 @@ MetaSearch/
 │   ├── 15-fa-sources-plan.md  ← 21 nguồn FA VN + adapter trực tiếp SSI/TCBS/FireAnt (v2.1.0)
 │   ├── 15-integration-guide.md ← hợp đồng tích hợp hệ thống ngoài (v2.0.0)
 │   ├── 16-web-ui-news-tts.md  ← tab Tin tức + TTS tiếng Việt, map when:Nd server-side (v2.2.0)
-│   └── 17-voicestudio-integration.md ← engine đọc VoiceStudio server-side tuỳ chọn + roadmap (docs/17)
+│   ├── 17-voicestudio-integration.md ← engine đọc VoiceStudio server-side tuỳ chọn (docs/17)
+│   └── 18-feature-roadmap-v2.3.md ← roadmap v2.3.0: dictation, UI Deep Research, so sánh + biểu đồ, watchlist, podcast + 3 vòng audit (v2.3.0)
 │   └── adr/                   ← Architecture Decision Records
 ├── api/                       ← FastAPI orchestration + Quantitative Engines
 │   ├── app/
