@@ -116,12 +116,20 @@ class TestFinancialDataIntegrity:
         def handler(request: httpx.Request) -> httpx.Response:
             url_str = str(request.url)
             if "dchart-api.vndirect.com.vn" in url_str:
+                # Schema-complete dchart payload: since the strict parser
+                # (audit v2.3.0) refuses missing/mismatched o/h/l/v arrays,
+                # the fixture must serve all six arrays.
+                closes = [100.0 + i for i in range(30)]
                 return httpx.Response(
                     200,
                     json={
                         "s": "ok",
                         "t": [1730000000 + i * 86400 for i in range(30)],
-                        "c": [100.0 + i for i in range(30)],
+                        "o": closes,
+                        "h": [c + 1 for c in closes],
+                        "l": [c - 1 for c in closes],
+                        "c": closes,
+                        "v": [1000.0] * 30,
                     },
                 )
             if "api.simplize.vn" in url_str:

@@ -764,3 +764,102 @@ export async function getSuperAgentWatchdogStatus(
   if (!resp.ok) throw await parseError(resp);
   return (await resp.json()) as SuperAgentWatchdogStatus;
 }
+
+// --- Deep Research (docs/18 §A2): job lifecycle + SSE event stream ----------
+
+export type ResearchCreateResult = { research_id: string; status: string };
+
+export type ResearchStatus = {
+  research_id: string;
+  status: string;
+  progress: number;
+  report_md: string;
+  citations: Citation[];
+  learnings: string[];
+  cost_usd: number;
+  error: string | null;
+};
+
+export type ResearchCreateBody = {
+  query: string;
+  breadth?: number;
+  depth?: number;
+  max_time_s?: number;
+  k?: number;
+};
+
+export async function createResearch(
+  body: ResearchCreateBody,
+  signal?: AbortSignal
+): Promise<ResearchCreateResult> {
+  const resp = await fetch(`${API_BASE_URL}/v1/research`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function getResearch(id: string, signal?: AbortSignal): Promise<ResearchStatus> {
+  const resp = await fetch(`${API_BASE_URL}/v1/research/${encodeURIComponent(id)}`, { signal });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export type SseHandlers = {
+  onEvent: (name: string, dataJson: string) => void;
+  onError?: (err: unknown) => void;
+};
+
+/**
+ * Minimal SSE reader (backend = sse-starlette, CRLF line endings): parses
+ * `event:`/`data:` blocks and hands the RAW data JSON to the caller — the
+ * component decides the event vocabulary.
+ */
+export async function streamSse(
+  url: string,
+  handlers: SseHandlers,
+  signal?: AbortSignal
+): Promise<void> {
+  const resp = await fetch(url, { signal, headers: { Accept: "text/event-stream" } });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  const reader = resp.body?.getReader();
+  if (!reader) {
+    handlers.onError?.(new Error("no stream body"));
+    return;
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    buffer = buffer.replace(/\r\n/g, "\n");
+    let sep = buffer.indexOf("\n\n");
+    while (sep >= 0) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      let name = "message";
+      const dataLines: string[] = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) name = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+      }
+      if (dataLines.length) handlers.onEvent(name, dataLines.join("\n"));
+      sep = buffer.indexOf("\n\n");
+    }
+  }
+}
+
+/** SSE URL for a research job's event stream. */
+export function researchEventsUrl(id: string): string {
+  return `${API_BASE_URL}/v1/research/${encodeURIComponent(id)}/events`;
+}

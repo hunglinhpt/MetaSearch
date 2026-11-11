@@ -14,13 +14,16 @@ from app.api.v1 import (
     digests,
     engines,
     llm,
+    market,
     ops_status,
+    podcast,
     queries,
     research,
     scrape,
     search,
     superagent,
     tts,
+    watchlist,
 )
 from app.config import get_settings
 from app.core.auth import require_admin, require_api_key
@@ -71,6 +74,9 @@ router.include_router(research.router, dependencies=_auth)
 router.include_router(digests.router, dependencies=_auth)
 router.include_router(llm.router, dependencies=_auth)
 router.include_router(tts.router, dependencies=_auth)
+router.include_router(market.router, dependencies=_auth)
+router.include_router(watchlist.router, dependencies=_auth)
+router.include_router(podcast.router, dependencies=_auth)
 router.include_router(
     superagent.router,
     dependencies=_auth,

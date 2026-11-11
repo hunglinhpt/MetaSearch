@@ -1,0 +1,144 @@
+/**
+ * Vietnamese dictation (speech → query text) for the MetaSearch Web UI.
+ *
+ * Engine: the browser's SpeechRecognition API (Chrome/Edge; webkit-prefixed
+ * historically). Same degradation contract as lib/tts.ts: unsupported
+ * browsers get `dictationIsSupported() === false` and callers hide the mic.
+ * Privacy: like TTS, Chrome's recognizer processes audio in the cloud — the
+ * caller surfaces the same online-voice disclosure.
+ */
+
+export const DICTATION_LANG = "vi-VN";
+
+/** Raw SpeechRecognition error codes → user-actionable reasons (VN UI). */
+export function dictationErrorReason(code: string): string {
+  switch (code) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return "permission";
+    case "no-speech":
+      return "no-speech";
+    case "network":
+      return "network";
+    case "audio-capture":
+      return "no-microphone";
+    default:
+      return code || "unknown";
+  }
+}
+
+/**
+ * Pure transcript merge: committed final chunks + the live interim preview.
+ * `finalSoFar` is everything already committed (ends without separator);
+ * `newFinal` is a fresh committed chunk; `interim` is the unstable tail.
+ * Used by tests to pin the merge semantics without a real recognizer.
+ */
+export function mergeTranscripts(
+  finalSoFar: string,
+  newFinal: string | null,
+  interim: string | null,
+): string {
+  const parts = [finalSoFar.trim()];
+  if (newFinal && newFinal.trim()) parts.push(newFinal.trim());
+  const committed = parts.filter(Boolean).join(" ");
+  if (interim && interim.trim()) {
+    return committed ? `${committed} ${interim.trim()}` : interim.trim();
+  }
+  return committed;
+}
+
+export function dictationIsSupported(): boolean {
+  if (typeof window === "undefined") return false;
+  const w = window as unknown as Record<string, unknown>;
+  return typeof w.SpeechRecognition === "function" || typeof w.webkitSpeechRecognition === "function";
+}
+
+export type DictationOptions = {
+  lang?: string;
+  /** Fires on every result: full committed text + live interim tail. */
+  onUpdate: (committed: string, interim: string) => void;
+  /** Recognition ended (silence, manual stop, or error). */
+  onEnd?: (reason: string) => void;
+};
+
+export type DictationHandle = { stop: () => void };
+
+export function startDictation(opts: DictationOptions): DictationHandle | null {
+  if (!dictationIsSupported()) {
+    opts.onEnd?.("unsupported");
+    return null;
+  }
+  const w = window as unknown as Record<string, new () => SpeechRecognitionLike>;
+  const Ctor = (w.SpeechRecognition ?? w.webkitSpeechRecognition) as new () => SpeechRecognitionLike;
+  const recognition = new Ctor();
+  recognition.lang = opts.lang ?? DICTATION_LANG;
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  let stopped = false;
+  let finalSoFar = "";
+
+  recognition.onresult = (event: SpeechRecognitionEventLike) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      const text = result[0]?.transcript ?? "";
+      if (result.isFinal) {
+        finalSoFar = mergeTranscripts(finalSoFar, text, null);
+      } else {
+        interim += text;
+      }
+    }
+    opts.onUpdate(finalSoFar, interim.trim());
+  };
+
+  recognition.onerror = (event: { error?: string }) => {
+    if (stopped) return; // our own stop() can surface "aborted"
+    opts.onEnd?.(dictationErrorReason(event.error ?? ""));
+  };
+
+  recognition.onend = () => {
+    if (stopped) return;
+    // Natural stop (silence / server cut): report the accumulated text once.
+    opts.onUpdate(finalSoFar, "");
+    opts.onEnd?.("finished");
+  };
+
+  try {
+    recognition.start();
+  } catch {
+    opts.onEnd?.("start-failed");
+    return null;
+  }
+
+  return {
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      try {
+        recognition.stop();
+      } catch {
+        // already stopped by the engine
+      }
+      opts.onUpdate(finalSoFar, "");
+      opts.onEnd?.("stopped");
+    },
+  };
+}
+
+/* Minimal structural types — the DOM lib may not ship SpeechRecognition. */
+type SpeechRecognitionLike = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+};
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<{ isFinal: boolean; 0?: { transcript?: string }; length: number }>;
+};

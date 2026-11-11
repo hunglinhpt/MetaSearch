@@ -3,6 +3,9 @@
 import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import NewsPanel from "../components/NewsPanel";
+import ResearchPanel from "../components/ResearchPanel";
+import { dictationIsSupported, mergeTranscripts, startDictation, type DictationHandle } from "../lib/dictation";
+import AnswerMarkdown from "../components/AnswerMarkdown";
 import {
   getPreferredEngine,
   TtsEngine,
@@ -54,7 +57,7 @@ import {
 } from "../lib/api";
 
 type Mode = "answer" | "raw";
-type AppTab = "search" | "news" | "blog" | "superagent" | "llm";
+type AppTab = "search" | "news" | "research" | "blog" | "superagent" | "llm";
 
 const CATEGORY_CHIPS = [
   { id: "auto", label: "⚡ Tự động (Universal Domain Intelligence)" },
@@ -109,6 +112,12 @@ export default function HomePage() {
   const answerTtsRef = useRef<TtsHandle | null>(null);
   const [answerSpeaking, setAnswerSpeaking] = useState(false);
   const [ttsReady, setTtsReady] = useState(false);
+
+  // Vietnamese dictation (docs/18 A1): speech -> query input.
+  const [micReady, setMicReady] = useState(false);
+  const [listening, setListening] = useState(false);
+  const micHandleRef = useRef<DictationHandle | null>(null);
+  const micBaseRef = useRef("");
   const [voiceMode, setVoiceMode] = useState<TtsVoiceMode>("none");
   const [ttsEngine, setTtsEngine] = useState<TtsEngine>("webspeech");
   const [vsEnabled, setVsEnabled] = useState(false);
@@ -331,8 +340,29 @@ export default function HomePage() {
       offVoices();
       ttsStop();
       answerTtsRef.current?.cancel();
+      micHandleRef.current?.stop();
     };
   }, []);
+
+  const toggleMic = () => {
+    if (listening) {
+      micHandleRef.current?.stop();
+      micHandleRef.current = null;
+      setListening(false);
+      return;
+    }
+    micBaseRef.current = query;
+    const handle = startDictation({
+      onUpdate: (committed, interim) => {
+        setQuery(mergeTranscripts(micBaseRef.current, committed, interim));
+      },
+      onEnd: () => setListening(false),
+    });
+    if (handle) {
+      micHandleRef.current = handle;
+      setListening(true);
+    }
+  };
 
   const effectiveTtsEngine: TtsEngine =
     ttsEngine === "voicestudio" && !vsEnabled ? "webspeech" : ttsEngine;
@@ -587,6 +617,12 @@ export default function HomePage() {
             🗞️ Tin Tức (Kinh tế · Tài chính · Công nghệ)
           </button>
           <button
+            className={`nav-tab ${activeTab === "research" ? "active" : ""}`}
+            onClick={() => setActiveTab("research")}
+          >
+            🔬 Deep Research (Tự trị)
+          </button>
+          <button
             className={`nav-tab ${activeTab === "blog" ? "active" : ""}`}
             onClick={() => setActiveTab("blog")}
           >
@@ -609,6 +645,7 @@ export default function HomePage() {
 
       {/* --- TAB 1B: NEWS FEED + VIETNAMESE TTS --- */}
       {activeTab === "news" && <NewsPanel />}
+      {activeTab === "research" && <ResearchPanel />}
 
       {/* --- TAB 1: SEARCH & ANSWER --- */}
       {activeTab === "search" && (
@@ -628,6 +665,18 @@ export default function HomePage() {
                   onChange={(e) => setQuery(e.target.value)}
                   disabled={busy}
                 />
+                {micReady && (
+                  <button
+                    type="button"
+                    className={`tts-btn ${listening ? "speaking" : ""}`}
+                    onClick={toggleMic}
+                    aria-pressed={listening}
+                    aria-label={listening ? "Dừng ghi âm giọng nói" : "Nói truy vấn bằng giọng nói"}
+                    title={listening ? "Đang nghe... bấm để dừng" : "Nói truy vấn bằng giọng nói (tiếng Việt)"}
+                  >
+                    {listening ? "⏹ Đang nghe" : "🎙️ Nói"}
+                  </button>
+                )}
                 <button type="submit" disabled={busy || !query.trim()}>
                   {busy ? "Đang xử lý..." : "Tìm kiếm"}
                 </button>
@@ -1750,123 +1799,4 @@ POST ${API_BASE_URL}/v1/citations/validate
       </footer>
     </main>
   );
-}
-
-/** Render inline text with **bold** and [n] citation markers as clickable links. */
-function renderInlineTokens(
-  line: string,
-  citationByUrl: Map<number, Citation>
-): ReactNode[] {
-  const segments = line.split(/(\*\*[^*]+\*\*|\[\d{1,3}\])/g);
-  return segments.map((seg, idx) => {
-    const citeMatch = seg.match(/^\[(\d{1,3})\]$/);
-    if (citeMatch) {
-      const n = Number(citeMatch[1]);
-      const citation = citationByUrl.get(n);
-      const citeHref = citation ? safeHref(citation.url) : undefined;
-      return (
-        <a
-          key={idx}
-          className="cite"
-          href={citeHref}
-          target="_blank"
-          rel="noreferrer"
-          title={citation ? `${citation.title || citation.url}` : `nguồn [${n}]`}
-        >
-          [{n}]
-        </a>
-      );
-    }
-    if (seg.startsWith("**") && seg.endsWith("**") && seg.length > 4) {
-      return <strong key={idx}>{seg.slice(2, -2)}</strong>;
-    }
-    return <span key={idx}>{seg}</span>;
-  });
-}
-
-/** Render streaming markdown with headings, tables, lists, bold, and [n] citations. */
-function AnswerMarkdown({
-  text,
-  citationByUrl,
-}: {
-  text: string;
-  citationByUrl: Map<number, Citation>;
-}) {
-  const lines = text.split("\n");
-  const blocks: ReactNode[] = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    // Table block detection
-    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
-      const tableLines: string[] = [];
-      while (i < lines.length && lines[i].trim().startsWith("|")) {
-        tableLines.push(lines[i].trim());
-        i++;
-      }
-      if (tableLines.length >= 2) {
-        const parseRow = (r: string) =>
-          r
-            .slice(1, -1)
-            .split("|")
-            .map((c) => c.trim());
-        const headers = parseRow(tableLines[0]);
-        const bodyRows = tableLines
-          .slice(1)
-          .filter((r) => !/^\|[\s\-:|]+\|$/.test(r))
-          .map(parseRow);
-        blocks.push(
-          <div key={`tbl-${i}`} className="md-table-wrap">
-            <table className="md-table">
-              <thead>
-                <tr>
-                  {headers.map((h, hIdx) => (
-                    <th key={hIdx}>{renderInlineTokens(h, citationByUrl)}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {bodyRows.map((row, rIdx) => (
-                  <tr key={rIdx}>
-                    {row.map((cell, cIdx) => (
-                      <td key={cIdx}>{renderInlineTokens(cell, citationByUrl)}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
-        continue;
-      }
-    }
-
-    if (trimmed.startsWith("#### ")) {
-      blocks.push(
-        <h4 key={i}>{renderInlineTokens(trimmed.slice(5), citationByUrl)}</h4>
-      );
-    } else if (trimmed.startsWith("### ")) {
-      blocks.push(
-        <h3 key={i}>{renderInlineTokens(trimmed.slice(4), citationByUrl)}</h3>
-      );
-    } else if (trimmed.startsWith("## ")) {
-      blocks.push(
-        <h2 key={i}>{renderInlineTokens(trimmed.slice(3), citationByUrl)}</h2>
-      );
-    } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
-      blocks.push(
-        <div key={i} style={{ paddingLeft: "0.8rem", margin: "0.2rem 0" }}>
-          • {renderInlineTokens(trimmed.slice(2), citationByUrl)}
-        </div>
-      );
-    } else if (trimmed.length > 0) {
-      blocks.push(<p key={i}>{renderInlineTokens(line, citationByUrl)}</p>);
-    }
-    i++;
-  }
-
-  return <div className="answer-body">{blocks}</div>;
 }

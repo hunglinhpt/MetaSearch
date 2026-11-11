@@ -22,6 +22,9 @@ logger = get_logger(__name__)
 # scrape: 16 concurrent, 1.0s queue wait
 # research: max_concurrent (default 5), 0.0s queue wait
 # tts: 8 concurrent, 1.0s queue wait (upstream synthesis can take seconds)
+# market: 16 concurrent, 1.0s (fa/compare fans out to FA sources; market/ohlcv
+# is one feed call) — docs/18 B1/B2
+# watchlist: 4 concurrent, 1.0s (alerts fan out one search per item) — docs/18 C
 _TIER_CONFIG: dict[str, tuple[int, float]] = {
     "search": (64, 1.0),
     "context": (16, 1.0),
@@ -29,6 +32,8 @@ _TIER_CONFIG: dict[str, tuple[int, float]] = {
     "scrape": (16, 1.0),
     "research": (5, 0.0),
     "tts": (8, 1.0),
+    "market": (16, 1.0),
+    "watchlist": (4, 1.0),
 }
 
 _semaphores: dict[str, asyncio.Semaphore] = {}

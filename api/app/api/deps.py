@@ -26,6 +26,16 @@ def get_tts_client() -> VoiceStudioClient:
     return VoiceStudioClient(get_settings())
 
 
+@lru_cache(maxsize=1)
+def get_fa_aggregator():
+    """Process-wide FA aggregator (docs/18 B1/B2): per-source breakers live
+    across requests, so a flapping SSI/TCBS/FireAnt leg trips once instead of
+    on every call."""
+    from app.retrieval.fa_sources import build_default_aggregator
+
+    return build_default_aggregator()
+
+
 def get_session_factory():
     """DB session factory as a patchable dependency (queries endpoint)."""
     from app.db.session import get_sessionmaker
@@ -143,6 +153,7 @@ def reset_pipelines() -> None:
         get_engine_store,
         get_cache,
         get_tts_client,
+        get_fa_aggregator,
     ):
         # Patched doubles in tests are plain functions without a cache.
         clear = getattr(provider, "cache_clear", None)
@@ -157,6 +168,7 @@ __all__ = [
     "get_cache",
     "get_embedder",
     "get_engine_store",
+    "get_fa_aggregator",
     "get_gateway",
     "get_health_registry",
     "get_health_writer",

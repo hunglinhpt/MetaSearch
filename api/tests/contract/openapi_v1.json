@@ -968,6 +968,179 @@
         "title": "EnginePatchRequest",
         "type": "object"
       },
+      "FaCompareRequest": {
+        "description": "POST /v1/fa/compare — cross-source fundamentals for 1..N symbols.",
+        "properties": {
+          "symbols": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Symbols",
+            "type": "array"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 30000.0,
+                "minimum": 500.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          }
+        },
+        "required": [
+          "symbols"
+        ],
+        "title": "FaCompareRequest",
+        "type": "object"
+      },
+      "FaCompareResponse": {
+        "properties": {
+          "latency_ms": {
+            "default": 0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/FaSymbolResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "FaCompareResponse",
+        "type": "object"
+      },
+      "FaFieldOut": {
+        "description": "One merged field with full provenance — never an invented number.",
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "validated": {
+            "default": false,
+            "title": "Validated",
+            "type": "boolean"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "value",
+          "source"
+        ],
+        "title": "FaFieldOut",
+        "type": "object"
+      },
+      "FaSymbolResult": {
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "exchange": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exchange"
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FaFieldOut"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "missing_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Fields",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "source_urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Urls",
+            "type": "array"
+          },
+          "sources_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources Used",
+            "type": "array"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "title": "FaSymbolResult",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1143,6 +1316,186 @@
           }
         },
         "title": "LLMTestRequest",
+        "type": "object"
+      },
+      "MarketOhlcvRequest": {
+        "description": "POST /v1/market/ohlcv — daily candles for the chart (docs/18 B2).",
+        "properties": {
+          "days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days"
+          },
+          "symbol": {
+            "maxLength": 15,
+            "minLength": 1,
+            "title": "Symbol",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 30000.0,
+                "minimum": 500.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "title": "MarketOhlcvRequest",
+        "type": "object"
+      },
+      "MarketOhlcvResponse": {
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "candles": {
+            "items": {
+              "$ref": "#/components/schemas/OhlcvCandle"
+            },
+            "title": "Candles",
+            "type": "array"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "default": 0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "source_name": {
+            "title": "Source Name",
+            "type": "string"
+          },
+          "source_url": {
+            "title": "Source Url",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "candles",
+          "source_name",
+          "source_url",
+          "days"
+        ],
+        "title": "MarketOhlcvResponse",
+        "type": "object"
+      },
+      "OhlcvCandle": {
+        "properties": {
+          "close": {
+            "title": "Close",
+            "type": "number"
+          },
+          "high": {
+            "title": "High",
+            "type": "number"
+          },
+          "low": {
+            "title": "Low",
+            "type": "number"
+          },
+          "open": {
+            "title": "Open",
+            "type": "number"
+          },
+          "time": {
+            "title": "Time",
+            "type": "integer"
+          },
+          "volume": {
+            "title": "Volume",
+            "type": "number"
+          }
+        },
+        "required": [
+          "time",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume"
+        ],
+        "title": "OhlcvCandle",
+        "type": "object"
+      },
+      "PodcastBriefingStatus": {
+        "properties": {
+          "audio_bytes": {
+            "default": 0,
+            "title": "Audio Bytes",
+            "type": "integer"
+          },
+          "chars": {
+            "default": 0,
+            "title": "Chars",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "status"
+        ],
+        "title": "PodcastBriefingStatus",
         "type": "object"
       },
       "ResearchRequest": {
@@ -1682,6 +2035,208 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WatchlistAlertItem": {
+        "properties": {
+          "baseline_set": {
+            "default": false,
+            "title": "Baseline Set",
+            "type": "boolean"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "new_items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "New Items",
+            "type": "array"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "query"
+        ],
+        "title": "WatchlistAlertItem",
+        "type": "object"
+      },
+      "WatchlistAlertsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WatchlistAlertItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "latency_ms": {
+            "default": 0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "storage": {
+            "default": "db",
+            "title": "Storage",
+            "type": "string"
+          },
+          "total_new": {
+            "default": 0,
+            "title": "Total New",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "WatchlistAlertsResponse",
+        "type": "object"
+      },
+      "WatchlistCreateRequest": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "query": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "WatchlistCreateRequest",
+        "type": "object"
+      },
+      "WatchlistItemOut": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "last_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Hash"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "query"
+        ],
+        "title": "WatchlistItemOut",
+        "type": "object"
+      },
+      "WatchlistListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WatchlistItemOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "storage": {
+            "default": "db",
+            "title": "Storage",
+            "type": "string"
+          }
+        },
+        "title": "WatchlistListResponse",
+        "type": "object"
       }
     }
   },
@@ -2199,6 +2754,48 @@
         ]
       }
     },
+    "/v1/fa/compare": {
+      "post": {
+        "operationId": "fa_compare_v1_fa_compare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaCompareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaCompareResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fa Compare",
+        "tags": [
+          "v1",
+          "market"
+        ]
+      }
+    },
     "/v1/llm/config": {
       "get": {
         "operationId": "get_llm_config_v1_llm_config_get",
@@ -2521,6 +3118,48 @@
         ]
       }
     },
+    "/v1/market/ohlcv": {
+      "post": {
+        "operationId": "market_ohlcv_v1_market_ohlcv_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketOhlcvRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketOhlcvResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Market Ohlcv",
+        "tags": [
+          "v1",
+          "market"
+        ]
+      }
+    },
     "/v1/meta": {
       "get": {
         "operationId": "meta_v1_meta_get",
@@ -2588,6 +3227,90 @@
         "tags": [
           "v1",
           "ops"
+        ]
+      }
+    },
+    "/v1/podcast/briefing": {
+      "post": {
+        "operationId": "create_briefing_v1_podcast_briefing_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PodcastBriefingStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create Briefing",
+        "tags": [
+          "v1",
+          "podcast"
+        ]
+      }
+    },
+    "/v1/podcast/briefing/feed.xml": {
+      "get": {
+        "operationId": "briefing_feed_v1_podcast_briefing_feed_xml_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Briefing Feed",
+        "tags": [
+          "v1",
+          "podcast"
+        ]
+      }
+    },
+    "/v1/podcast/briefing/latest": {
+      "get": {
+        "operationId": "briefing_latest_v1_podcast_briefing_latest_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Briefing Latest",
+        "tags": [
+          "v1",
+          "podcast"
+        ]
+      }
+    },
+    "/v1/podcast/briefing/status": {
+      "get": {
+        "operationId": "briefing_status_v1_podcast_briefing_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PodcastBriefingStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Briefing Status",
+        "tags": [
+          "v1",
+          "podcast"
         ]
       }
     },
@@ -2968,6 +3691,135 @@
         "tags": [
           "v1",
           "tts"
+        ]
+      }
+    },
+    "/v1/watchlist": {
+      "get": {
+        "operationId": "list_watchlist_v1_watchlist_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Watchlist",
+        "tags": [
+          "v1",
+          "watchlist"
+        ]
+      },
+      "post": {
+        "operationId": "add_watchlist_v1_watchlist_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchlistCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistItemOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Watchlist",
+        "tags": [
+          "v1",
+          "watchlist"
+        ]
+      }
+    },
+    "/v1/watchlist/alerts": {
+      "get": {
+        "operationId": "watchlist_alerts_v1_watchlist_alerts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistAlertsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Watchlist Alerts",
+        "tags": [
+          "v1",
+          "watchlist"
+        ]
+      }
+    },
+    "/v1/watchlist/{item_id}": {
+      "delete": {
+        "operationId": "remove_watchlist_v1_watchlist__item_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove Watchlist V1 Watchlist  Item Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Watchlist",
+        "tags": [
+          "v1",
+          "watchlist"
         ]
       }
     }

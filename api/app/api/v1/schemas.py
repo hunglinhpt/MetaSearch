@@ -19,6 +19,124 @@ class TtsSynthesizeRequest(BaseModel):
     response_format: Literal["mp3", "wav", "opus", "flac", "pcm"] = "mp3"
 
 
+# --- v2.3.0 market endpoints (docs/18 B1/B2) ----------------------------------
+
+
+class FaCompareRequest(BaseModel):
+    """POST /v1/fa/compare — cross-source fundamentals for 1..N symbols."""
+
+    symbols: list[str] = Field(min_length=1, max_length=20)
+    timeout_ms: int | None = Field(default=None, ge=500, le=30000)
+
+
+class FaFieldOut(BaseModel):
+    """One merged field with full provenance — never an invented number."""
+
+    value: float
+    source: str
+    as_of: str | None = None
+    validated: bool = False
+
+
+class FaSymbolResult(BaseModel):
+    symbol: str
+    name: str | None = None
+    exchange: str | None = None
+    fields: dict[str, FaFieldOut] = Field(default_factory=dict)
+    missing_fields: list[str] = Field(default_factory=list)
+    sources_used: list[str] = Field(default_factory=list)
+    source_urls: list[str] = Field(default_factory=list)
+    as_of: str | None = None
+    published_at: str | None = None
+
+
+class FaCompareResponse(BaseModel):
+    results: list[FaSymbolResult]
+    latency_ms: int = 0
+
+
+class MarketOhlcvRequest(BaseModel):
+    """POST /v1/market/ohlcv — daily candles for the chart (docs/18 B2)."""
+
+    symbol: str = Field(min_length=1, max_length=15)
+    days: int | None = None
+    timeout_ms: int | None = Field(default=None, ge=500, le=30000)
+
+
+class OhlcvCandle(BaseModel):
+    # Field names match lightweight-charts CandlestickData so the UI can
+    # pass them through without remapping.
+    time: int  # epoch seconds — the feed's own timestamp, never synthesized
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class MarketOhlcvResponse(BaseModel):
+    symbol: str
+    candles: list[OhlcvCandle]
+    source_name: str
+    source_url: str
+    as_of: str | None = None  # ISO of the last candle's timestamp
+    days: int
+    latency_ms: int = 0
+
+
+# --- v2.3.0 watchlist (docs/18 C) ----------------------------------------------
+
+
+class WatchlistCreateRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    label: str | None = Field(default=None, max_length=120)
+
+
+class WatchlistItemOut(BaseModel):
+    id: str
+    query: str
+    label: str | None = None
+    created_at: str | None = None
+    last_checked_at: str | None = None
+    last_hash: str | None = None
+
+
+class WatchlistListResponse(BaseModel):
+    items: list[WatchlistItemOut] = Field(default_factory=list)
+    # "db" | "memory" — when the DB is down the watchlist degrades to a bounded
+    # in-memory store and the UI says so instead of pretending persistence.
+    storage: str = "db"
+
+
+class WatchlistAlertItem(BaseModel):
+    id: str
+    query: str
+    label: str | None = None
+    baseline_set: bool = False  # first check only records the baseline
+    new_items: list[dict[str, Any]] = Field(default_factory=list)
+    checked_at: str | None = None
+    error: str | None = None
+
+
+class WatchlistAlertsResponse(BaseModel):
+    items: list[WatchlistAlertItem]
+    total_new: int = 0
+    latency_ms: int = 0
+    storage: str = "db"
+
+
+# --- v2.3.0 podcast briefing (docs/18 D) ----------------------------------------
+
+
+class PodcastBriefingStatus(BaseModel):
+    date: str
+    status: str  # pending | running | ready | error
+    error: str | None = None
+    chars: int = 0
+    audio_bytes: int = 0
+    created_at: str | None = None
+
+
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     lang: str | None = Field(default=None, pattern=r"^[a-z]{2}(-[A-Z]{2})?$")

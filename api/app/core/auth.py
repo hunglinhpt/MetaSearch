@@ -355,6 +355,14 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
             cost = 20
         elif path.endswith("/tts/synthesize") and request.method == "POST":
             cost = 5  # upstream synthesis can take seconds (docs/17)
+        elif path.endswith("/podcast/briefing") and request.method == "POST":
+            cost = 5  # server-side synthesis of a whole news digest (docs/18 D)
+        elif path.endswith("/fa/compare") and request.method == "POST":
+            cost = 3  # fans out to multiple FA sources per symbol (docs/18 B1)
+        elif path.endswith("/market/ohlcv") and request.method == "POST":
+            cost = 2  # one upstream feed call + possible SSI fallback (docs/18 B2)
+        elif path.endswith("/watchlist/alerts"):
+            cost = 5  # runs one search per watched item (docs/18 C)
         else:
             cost = 1
 

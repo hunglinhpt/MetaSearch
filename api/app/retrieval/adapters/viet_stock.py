@@ -32,6 +32,7 @@ from app.retrieval.fa_sources import (
     SourceOHLCV,
     build_default_aggregator,
 )
+from app.retrieval.fa_sources.base import ensure_symbol
 from app.retrieval.financial_forensics import (
     analyze_balance_sheet_forensics,
 )
@@ -214,47 +215,152 @@ async def _fetch_vndirect_ohlcv(
             # stall the event loop inside resp.json().
             logger.debug("vndirect_payload_too_large: %s", sym)
             return None
-        data = resp.json()
-        if not isinstance(data, dict) or data.get("s") != "ok":
+        series = _parse_dchart_series(resp.json(), sym)
+        if series is None:
             return None
+        return (
+            series["opens"],
+            series["highs"],
+            series["lows"],
+            series["closes"],
+            series["volumes"],
+            series["last_ts"],
+        )
+    except Exception as exc:
+        logger.debug("vndirect_fetch_failed for %s: %s", sym, exc)
+        return None
 
-        t_list = data.get("t", [])
-        c_list = data.get("c", [])
-        o_list = data.get("o", [])
-        h_list = data.get("h", [])
-        l_list = data.get("l", [])
-        v_list = data.get("v", [])
 
-        if not c_list or len(c_list) < 5:
+def _parse_dchart_series(data: Any, sym: str) -> dict[str, Any] | None:
+    """Validate + normalize one TradingView dchart payload (shared by all VNDIRECT paths).
+
+    Returns {"times", "opens", "highs", "lows", "closes", "volumes", "last_ts"}
+    or None. Never invents values: schema drift, negative/non-finite candles
+    and too-short series are refused.
+    """
+    if not isinstance(data, dict) or data.get("s") != "ok":
+        return None
+
+    t_list = data.get("t", [])
+    c_list = data.get("c", [])
+    o_list = data.get("o", [])
+    h_list = data.get("h", [])
+    l_list = data.get("l", [])
+    v_list = data.get("v", [])
+
+    if not c_list or len(c_list) < 5:
+        return None
+
+    # STRICT arrays (same rule as the SSI source): a missing or mismatched
+    # o/h/l/v is schema drift — refuse the series rather than fabricating
+    # closes-for-opens or zero volumes (zero volumes poison OBV/MFI, and
+    # since docs/18 B2 this parser also feeds the candlestick chart directly).
+    n = len(c_list)
+    if any(len(raw) != n for raw in (t_list, o_list, h_list, l_list, v_list)):
+        logger.debug("vndirect_series_schema_drift: %s array_length", sym)
+        return None
+
+    is_index = sym in ("VNINDEX", "VN30", "HNX", "HNX-INDEX", "UPCOM")
+    # Live-probed 2026-11-11: VNDIRECT serves a /1000-scaled feed for stocks
+    # (HPG last close 21.25 = 21,250 VND native). The probe is the LAST close:
+    # a stock whose price crossed 1,000,000 VND stays unscaled (heuristic
+    # threshold documented here — a feed >= 1000 is treated as native VND).
+    # The multiplier probe reads the LAST raw close — guard it: a non-numeric
+    # tail must refuse the series (return None), never raise out of the parser.
+    try:
+        last_close = float(c_list[-1])
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(last_close) or last_close < 0:
+        return None
+    multiplier = 1000.0 if not is_index and last_close < 1000.0 else 1.0
+    if multiplier != 1.0:
+        logger.debug("vndirect_price_multiplier_applied: %s x1000", sym)
+
+    def scaled(raw: list, *, is_price: bool) -> list[float] | None:
+        # Mirror of the SSI guard on EVERY array: json.loads accepts bare
+        # NaN/Infinity, and a non-finite or negative value would poison ratios
+        # and charts downstream (or 500 the API via allow_nan=False).
+        out: list[float] = []
+        for x in raw:
+            try:
+                v = float(x)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(v) or v < 0:
+                return None
+            out.append(round(v * multiplier, 2) if is_price else round(v, 0))
+        return out
+
+    opens = scaled(o_list, is_price=True)
+    highs = scaled(h_list, is_price=True)
+    lows = scaled(l_list, is_price=True)
+    closes = scaled(c_list, is_price=True)
+    volumes = scaled(v_list, is_price=False)
+    if opens is None or highs is None or lows is None or closes is None or volumes is None:
+        logger.debug("vndirect_bad_value: %s non_finite_or_negative", sym)
+        return None
+    try:
+        times = [int(t) for t in t_list]
+        last_ts = times[-1] if times else None
+    except (TypeError, ValueError):
+        return None
+    if any(times[i] >= times[i + 1] for i in range(len(times) - 1)):
+        # Charts require strictly ascending time; duplicate/backwards
+        # timestamps would corrupt every candle's day.
+        logger.debug("vndirect_series_schema_drift: %s times_not_ascending", sym)
+        return None
+
+    return {
+        "times": times,
+        "opens": opens,
+        "highs": highs,
+        "lows": lows,
+        "closes": closes,
+        "volumes": volumes,
+        "last_ts": last_ts,
+    }
+
+
+async def fetch_vndirect_ohlcv_series(
+    symbol: str,
+    *,
+    days: int = 90,
+    base_url: str = "https://dchart-api.vndirect.com.vn/dchart/history",
+    timeout_s: float = 3.5,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any] | None:
+    """Full daily OHLCV series with per-candle timestamps (chart endpoint, docs/18 B2).
+
+    Same feed, guards and /1000 multiplier as the search path — one parser
+    (``_parse_dchart_series``), so the chart can never diverge from snippets.
+    Returns the normalized series dict, or None on any fault.
+    """
+    # Defense in depth: the symbol is interpolated into the URL query, so it
+    # must pass the same plain-code guard as every other adapter path even
+    # though the only caller (market.py) already validates it.
+    sym = ensure_symbol(symbol)
+    if sym is None:
+        return None
+    now_ts = int(time.time())
+    from_ts = now_ts - max(1, days) * 86400
+    url = f"{base_url}?resolution=D&symbol={sym}&from={from_ts}&to={now_ts}"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        ),
+    }
+    try:
+        http_client = client or get_http_client("search")
+        resp = await http_client.get(url, headers=headers, follow_redirects=True, timeout=timeout_s)
+        if resp.status_code != 200:
+            logger.debug("vndirect_status_%s: %s", resp.status_code, sym)
             return None
-
-        is_index = sym in ("VNINDEX", "VN30", "HNX", "HNX-INDEX", "UPCOM")
-        multiplier = 1000.0 if not is_index and float(c_list[-1]) < 1000.0 else 1.0
-        if multiplier != 1.0:
-            # Live-probed 2026-11-11: VNDIRECT serves a /1000-scaled feed
-            # (HPG last close 21.25 = 21,250 VND native), so this correction is
-            # evidence-backed. Logged whenever it fires so a feed-state change
-            # is observable instead of silent.
-            logger.debug("vndirect_price_multiplier_applied: %s x1000", sym)
-
-        opens = [round(float(x) * multiplier, 2) for x in (o_list or c_list)]
-        highs = [round(float(x) * multiplier, 2) for x in (h_list or c_list)]
-        lows = [round(float(x) * multiplier, 2) for x in (l_list or c_list)]
-        closes = [round(float(x) * multiplier, 2) for x in c_list]
-        volumes = [round(float(x), 0) for x in (v_list or [0.0] * len(c_list))]
-        last_ts = int(t_list[-1]) if t_list else None
-
-        if any(x < 0 for x in closes) or any(x < 0 for x in volumes):
-            # Mirror of the SSI guard: a negative candle is a feed fault.
-            logger.debug("vndirect_negative_values: %s", sym)
+        if len(resp.content or b"") > MAX_RESPONSE_BYTES:
+            logger.debug("vndirect_payload_too_large: %s", sym)
             return None
-        if any(not math.isfinite(x) for x in closes):
-            # json.loads accepts bare NaN; a non-finite candle would poison
-            # every downstream ratio and render "nan%" into snippets.
-            logger.debug("vndirect_non_finite_closes: %s", sym)
-            return None
-
-        return opens, highs, lows, closes, volumes, last_ts
+        return _parse_dchart_series(resp.json(), sym)
     except Exception as exc:
         logger.debug("vndirect_fetch_failed for %s: %s", sym, exc)
         return None

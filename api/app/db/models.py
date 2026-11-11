@@ -234,6 +234,27 @@ class BlogPost(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class WatchlistItem(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """One watched query per API key (docs/18 C).
+
+    ``last_urls`` / ``last_hash`` are the alert baseline: a hash of the top
+    result URLs seen at the last check. Alerts are poll-on-demand — the client
+    calls GET /v1/watchlist/alerts and the endpoint diffs against the baseline,
+    then advances it. Nothing here is ever fabricated: the URLs come from the
+    search pipeline's real results.
+    """
+
+    __tablename__ = "watchlist_items"
+    __table_args__ = (Index("idx_watchlist_owner", "api_key_id"),)
+
+    api_key_id: Mapped[str] = mapped_column(Text, nullable=False)
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text)
+    last_hash: Mapped[str | None] = mapped_column(Text)
+    last_urls: Mapped[list[str] | None] = mapped_column(JSONType)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 __all__ = [
     "Answer",
     "ApiKey",
@@ -248,4 +269,5 @@ __all__ = [
     "SemanticCache",
     "Session",
     "User",
+    "WatchlistItem",
 ]

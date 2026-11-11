@@ -124,9 +124,19 @@ class SSIFASource:
         if any(v is None for v in closes):
             raise FASourceError(self.source_id, "upstream_error", "non_finite_closes")
         try:
-            last_ts = int(t_list[-1]) if t_list else None
+            times = [int(t) for t in t_list]
+            last_ts = times[-1] if times else None
         except (TypeError, ValueError) as exc:
             raise FASourceError(self.source_id, "upstream_error", "bad_series") from exc
+        if len(times) != len(closes):
+            # A timestamp array that does not align with the candles would put
+            # every bar on the wrong day in charts — refuse instead of guessing.
+            logger.debug("ssi_series_schema_drift: %s field=times", sym)
+            return None
+        if any(times[i] >= times[i + 1] for i in range(len(times) - 1)):
+            # Charts require strictly ascending time.
+            logger.debug("ssi_series_schema_drift: %s times_not_ascending", sym)
+            return None
 
         if any(x < 0 for x in closes) or any(x < 0 for x in series["volumes"]):
             raise FASourceError(self.source_id, "upstream_error", "negative_values")
@@ -138,6 +148,7 @@ class SSIFASource:
             lows=series["lows"],
             closes=closes,
             volumes=series["volumes"],
+            times=times,
             last_ts=last_ts,
             source_url=url,
         )

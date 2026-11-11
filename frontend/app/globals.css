@@ -708,3 +708,53 @@ a {
   gap: 0.6rem;
   align-items: center;
 }
+
+/* --- Wave A: dictation + deep research (docs/18) --------------------------- */
+
+.research-controls {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 0.6rem 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.research-controls select {
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+}
+
+.research-job {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.research-sections {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.6rem 0;
+}
+
+.research-learnings {
+  margin-top: 1rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.research-learnings h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.research-learnings ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--muted);
+}

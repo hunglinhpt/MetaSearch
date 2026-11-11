@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -167,6 +168,40 @@ class Settings(BaseSettings):
     # Hard caps for /v1/tts/synthesize (request text and upstream audio bytes).
     tts_max_chars: int = Field(default=2000, ge=1)
     tts_max_audio_bytes: int = Field(default=8 * 1024 * 1024, ge=1)
+
+    # --- v2.3.0: market compare/chart + watchlist + podcast (docs/18) --------
+    # POST /v1/fa/compare caps (docs/18 B1).
+    fa_compare_max_symbols: int = Field(default=5, ge=1, le=20)
+    fa_compare_timeout_s: float = Field(default=8.0, gt=0)
+    # POST /v1/market/ohlcv window (docs/18 B2); the feed itself serves ~240d.
+    market_ohlcv_min_days: int = Field(default=30, ge=1)
+    market_ohlcv_max_days: int = Field(default=365, ge=1)
+    market_ohlcv_default_days: int = Field(default=90, ge=1)
+    market_ohlcv_timeout_s: float = Field(default=5.0, gt=0)
+    # Watchlist (docs/18 C): per-key item cap; alerts are poll-on-demand —
+    # there is deliberately NO background poller burning search budget; the
+    # client re-calls GET /v1/watchlist/alerts on its own schedule.
+    watchlist_max_items: int = Field(default=20, ge=1, le=100)
+    watchlist_alerts_k: int = Field(default=5, ge=1, le=10)
+    watchlist_alerts_freshness_days: int = Field(default=1, ge=1, le=30)
+    watchlist_alerts_timeout_ms: int = Field(default=8000, ge=500, le=30000)
+    # Total wall-clock cap for one /alerts call (items fan out with bounded
+    # concurrency underneath it) — a full watchlist can never hold an
+    # admission slot for minutes.
+    watchlist_alerts_total_timeout_s: float = Field(default=30.0, gt=0, le=300)
+    watchlist_alerts_concurrency: int = Field(default=4, ge=1, le=10)
+    # Podcast briefing (docs/18 D): script + audio file caps, retention.
+    # Anchored to the api/ directory (not CWD) so audio never lands outside the
+    # gitignored + guard-protected api/podcast_data/ runtime dir.
+    podcast_data_dir: str = str(Path(__file__).resolve().parent.parent / "podcast_data")
+    podcast_retention_days: int = Field(default=7, ge=1, le=90)
+    podcast_max_chars: int = Field(default=4000, ge=200, le=20000)
+    podcast_items_per_category: int = Field(default=3, ge=1, le=10)
+    podcast_timeout_s: float = Field(default=120.0, gt=0)
+    podcast_search_timeout_ms: int = Field(default=8000, ge=500, le=30000)
+    # Optional public base URL for the RSS enclosure (behind a reverse proxy,
+    # request.base_url would be the internal host). Empty = derive per request.
+    public_base_url: str = ""
 
     # --- optional search providers (fallback when SearXNG is degraded) ----
     tavily_api_key: str = ""

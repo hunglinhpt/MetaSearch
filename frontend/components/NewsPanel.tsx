@@ -21,6 +21,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { safeHref, SearchHit, search, ttsCapabilities } from "../lib/api";
 import {
+  dictationIsSupported,
+  mergeTranscripts,
+  startDictation,
+  type DictationHandle,
+} from "../lib/dictation";
+import {
   getPreferredEngine,
   setPreferredEngine,
   TtsEngine,
@@ -144,12 +150,18 @@ export default function NewsPanel() {
   // newer category's feed, and a hung backend cannot leave the tab disabled.
   const reqIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  // Dictation for the custom-query box (docs/18 A1).
+  const [micReady, setMicReady] = useState(false);
+  const [listening, setListening] = useState(false);
+  const micHandleRef = useRef<DictationHandle | null>(null);
+  const micBaseRef = useRef("");
 
   useEffect(() => {
     // Voices/SpeechSynthesis exist only client-side — gate after mount to
     // avoid SSR/hydration mismatch.
     setTtsReady(ttsIsSupported());
     setHasViVoice(ttsHasVietnameseVoice());
+    setMicReady(dictationIsSupported());
     setVoiceMode(ttsVietnameseVoiceMode());
     setEngine(getPreferredEngine());
     ttsCapabilities()
@@ -166,8 +178,29 @@ export default function NewsPanel() {
       ttsStop();
       ttsHandleRef.current?.cancel();
       abortRef.current?.abort();
+      micHandleRef.current?.stop();
     };
   }, []);
+
+  const toggleMic = () => {
+    if (listening) {
+      micHandleRef.current?.stop();
+      micHandleRef.current = null;
+      setListening(false);
+      return;
+    }
+    micBaseRef.current = customQuery;
+    const handle = startDictation({
+      onUpdate: (committed, interim) => {
+        setCustomQuery(mergeTranscripts(micBaseRef.current, committed, interim));
+      },
+      onEnd: () => setListening(false),
+    });
+    if (handle) {
+      micHandleRef.current = handle;
+      setListening(true);
+    }
+  };
 
   const activeCat = NEWS_CATEGORIES.find((c) => c.id === activeCatId) ?? NEWS_CATEGORIES[0];
 
@@ -339,6 +372,18 @@ export default function NewsPanel() {
           onChange={(e) => setCustomQuery(e.target.value)}
           disabled={loading}
         />
+        {micReady && (
+          <button
+            type="button"
+            className={`tts-btn ${listening ? "speaking" : ""}`}
+            onClick={toggleMic}
+            aria-pressed={listening}
+            aria-label={listening ? "Dừng ghi âm giọng nói" : "Nói truy vấn bằng giọng nói"}
+            title={listening ? "Đang nghe... bấm để dừng" : "Nói truy vấn bằng giọng nói (tiếng Việt)"}
+          >
+            {listening ? "⏹" : "🎙️"}
+          </button>
+        )}
         <button type="submit" disabled={loading || !customQuery.trim()}>
           {loading ? "Đang tải..." : "Lọc tin"}
         </button>

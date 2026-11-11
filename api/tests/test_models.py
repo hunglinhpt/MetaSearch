@@ -19,6 +19,7 @@ EXPECTED_TABLES = {
     "semantic_cache",
     "sessions",
     "users",
+    "watchlist_items",
 }
 
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "metasearch-api"
-version = "2.2.0"
+version = "2.3.0"
 description = "MetaSearch AI — thin orchestration layer on top of SearXNG + crawl4ai/trafilatura (giants-first)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -76,6 +76,8 @@ ignore = ["B008", "RUF012"]
 "tests/**" = ["S101"]
 "app/orchestration/scheduler.py" = ["E501"]
 "app/retrieval/domain_intelligence.py" = ["E501", "RUF001"]
+# Vietnamese UI labels keep their typographic en dash on purpose.
+"app/tts/briefing.py" = ["RUF001"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

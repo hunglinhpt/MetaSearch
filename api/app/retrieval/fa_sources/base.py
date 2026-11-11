@@ -105,6 +105,11 @@ class SourceOHLCV:
     lows: list[float] = field(default_factory=list)
     closes: list[float] = field(default_factory=list)
     volumes: list[float] = field(default_factory=list)
+    # Per-candle epoch seconds, aligned with the OHLCV arrays. May be empty
+    # for legacy sources that only carried last_ts — consumers MUST NOT
+    # synthesize timestamps (a fixed 86400-step calendar mislabels weekends/
+    # holidays); a series without times is refused at the API boundary.
+    times: list[int] = field(default_factory=list)
     last_ts: int | None = None
     source_url: str = ""
 
