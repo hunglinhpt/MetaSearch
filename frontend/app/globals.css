@@ -606,3 +606,105 @@ a {
 .modal-close:hover {
   color: var(--fg);
 }
+
+/* --- News feed tab (docs/16-web-ui-news-tts.md) --------------------------- */
+
+.news-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0.7rem 0 0.9rem;
+}
+
+.news-info {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.news-tts-hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.news-partial {
+  margin: 0.4rem 0;
+  color: #fbbf24;
+  font-size: 0.85rem;
+}
+
+.news-loading {
+  color: var(--muted);
+  padding: 0.8rem 0;
+}
+
+.news-feed {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.news-item {
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.news-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.news-title {
+  color: var(--fg);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.news-title:hover {
+  color: var(--accent, #7dd3fc);
+  text-decoration: underline;
+}
+
+.news-meta {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.news-snippet {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.tts-btn {
+  flex-shrink: 0;
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tts-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tts-btn.speaking {
+  border-color: #38bdf8;
+  color: #38bdf8;
+}
+
+.answer-header-actions {
+  display: inline-flex;
+  gap: 0.6rem;
+  align-items: center;
+}

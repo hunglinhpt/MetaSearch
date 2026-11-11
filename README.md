@@ -55,7 +55,7 @@ Trạng thái: **v2.0.0 — Readiness cho hệ thống bên ngoài (an toàn, li
 ```mermaid
 flowchart LR
     subgraph Clients
-        UI[Web UI Next.js<br/>Search · Answer · Blog]
+        UI[Web UI Next.js<br/>Search · Answer · News+TTS · Blog]
         AGENT[AI Agent / MCP Client]
         DEV[Developer / REST]
     end
@@ -137,7 +137,7 @@ metasearch search "Phân tích cổ phiếu FPT và VCB"
 metasearch answer "Phân tích cổ phiếu FPT và VCB" --stream
 ```
 
-Web UI: mở `http://localhost:3000` — chọn chuyên mục (Tài chính & Cổ phiếu, Tin tức, Lập trình, Học thuật & Y sinh, Phong thủy...) và chế độ **✨ Trả lời AI**, **🔎 Tìm kiếm**, hoặc chuyển sang tab **📰 Bản Tin & Blog Chuyên Sâu**.
+Web UI: mở `http://localhost:3000` — chọn chuyên mục (Tài chính & Cổ phiếu, Tin tức, Lập trình, Học thuật & Y sinh, Phong thủy...) và chế độ **✨ Trả lời AI** (có nút **🔊 đọc câu trả lời tiếng Việt**), **🔎 Tìm kiếm**, tab **🗞️ Tin Tức** (6 mục kinh tế/tài chính/công nghệ, đọc máy cả bản tin), hoặc tab **📰 Bản Tin & Blog Chuyên Sâu**.
 
 ## 4. Cấu trúc repo
 

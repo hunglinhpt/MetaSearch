@@ -211,7 +211,13 @@ export type SearchOptions = {
   engines?: string[];
   categories?: string[];
   k?: number;
+  freshnessDays?: number;
 };
+
+/** Only http(s) links become hrefs — defense against a misbehaving engine. */
+export function safeHref(url: string): string | undefined {
+  return /^https?:\/\//i.test(url) ? url : undefined;
+}
 
 export async function search(
   query: string,
@@ -225,6 +231,7 @@ export async function search(
       k: opts.k ?? 10,
       engines: opts.engines ?? undefined,
       categories: opts.categories ?? undefined,
+      freshness_days: opts.freshnessDays ?? undefined,
     }),
     signal: opts.signal,
   });

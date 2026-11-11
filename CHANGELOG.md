@@ -4,6 +4,54 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [2.2.0] — 2026-11-11 — Web UI: tab Tin tức đa lĩnh vực + đọc máy tiếng Việt (TTS)
+
+### Added
+- Tab **Tin tức** mới trên Web UI (`frontend/components/NewsPanel.tsx`): 6 mục preset
+  (Kinh tế vĩ mô, Tài chính–Chứng khoán, Kinh doanh–Doanh nghiệp, Công nghệ–AI,
+  Ngân hàng–Tiền tệ, Kinh tế thế giới) + ô truy vấn tự do, gọi `POST /v1/search` với
+  `engines=["google_news"]`, `categories=["news"]`, `freshness_days` và operator
+  `when:{n}d` — cửa sổ thời gian do Google News RSS thực thi thật, UI không hứa thừa
+  (probe live xác nhận `when:Nd` được honors). **Không thêm endpoint backend mới**;
+  `lib/api.ts` chỉ bổ sung `freshnessDays` vào `SearchOptions`.
+- **Đọc máy tiếng Việt (TTS)** qua Web Speech API — voice stack của OS, free, không
+  key, không egress từ backend (`frontend/lib/tts.ts`): nút đọc câu trả lời ở tab Tìm
+  kiếm; ở tab Tin tức đọc cả bản tin (top 8) hoặc từng tin. `stripForSpeech` bỏ
+  markdown, marker `[n]`, URL (chỉ giữ label của link, bỏ URL trần và hàng phân cách
+  bảng); `chunkForSpeech` đóng gói ≤220 ký tự theo câu; một speaker tại một thời điểm
+  với generation guard chống `onend` sót sau `cancel()`. Graceful degradation: trình
+  duyệt không hỗ trợ → ẩn nút; thiếu giọng vi-* → đọc bằng giọng mặc định + cảnh báo,
+  re-check qua `voiceschanged` để không bị kẹt sai ở mount. Ghi chú riêng tư (giọng
+  online của Edge gửi nội dung đọc từ trình duyệt tới Microsoft) ở `docs/16` và
+  tooltip của nút đọc.
+- `safeHref()` ở `lib/api.ts`: mọi `href` từ payload backend (feed tin, trích dẫn
+  `[n]` của câu trả lời, kết quả tìm kiếm, nguồn, link signup của preset LLM) chỉ
+  chấp nhận `http(s)://`.
+- Thiết kế/plan: `docs/16-web-ui-news-tts.md` (kiến trúc, so sánh phương án TTS,
+  hợp đồng `lib/tts.ts`, preset tin, liêm chính hiển thị, kiểm thử).
+
+### Data integrity hiển thị
+- Mỗi tin hiển thị `domain` + mốc thời gian lấy thẳng từ payload (`published_at`/`as_of`),
+  thiếu mốc → "không rõ thời điểm"; `complete === false` → banner vàng "có thể KHÔNG
+  đầy đủ"; kết quả trống → "kết luận thật, không phải lỗi".
+
+### Hardening (audit vòng 5 — 2 expert QA/perf + AI/TTS & data-integrity — PASS)
+- Fix đủ 4 finding của vòng 4: 1 P1 (`href` raw ở danh sách trích dẫn câu trả lời +
+  `signup_url`), 2 P2 (`hasViVoice` sticky-false; URL bị đọc thành tiếng), 1 P3
+  (comment cite § sai, thiếu guard `when:Nd` trùng, thiếu aria-label).
+- Fetch tin có timeout client 30s + abort guard (request-id + `AbortController` + bail
+  khi đã abort) — backend treo không làm kẹt tab; hủy đọc đúng khi unmount / đổi tab /
+  tìm truy vấn mới.
+- Văn bản đọc: bỏ thẻ `[Nguồn]` đầu snippet của google_news; thiếu title thì đọc
+  `domain` thay vì `url`.
+
+### Verified
+- `npm run typecheck` + `npm run build` PASS (Next.js 15 build sạch).
+- Backend suite đầy đủ pass 100% (không đổi API — chỉ dùng `freshness_days` đã có sẵn
+  trong contract `docs/06` §1).
+- Audit vòng 5 (2 expert, read-only): cả 4 finding vòng 4 đều FIXED với bằng chứng
+  file:line; không phát sinh P1/P2 mới — verdict PASS cả 2.
+
 ## [2.1.0] — 2026-11-11 — Multi-source FA: bỏ điểm hụt đơn nguồn VNDIRECT/Simplize
 
 ### Added

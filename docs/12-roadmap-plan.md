@@ -11,6 +11,7 @@
 | **4 — Hardening** | 7–8 | SSRF suite, k6 load test, observability (OTel+Prometheus+Langfuse), eval harness, docs hoàn thiện | KPI đạt (bảng §3), security checklist pass |
 | **5 — Institutional Release (v1.0.0)** | 9 | 5-Wave Deep Audit, BCTC Forensics theo ngành (CAMELS/Margin/BĐS), Quantitative Technicals, 19 Engines, 40 Golden Evals | 333 unit tests pass, 0 ruff/bandit issues, Next.js build clean |
 | **6 — Readiness cho hệ thống bên ngoài** | Xong phần repo này (v2.0.0); còn tích hợp thật ở phía hệ thống gọi tới và đo trên Postgres, Linux | Bảo mật, liêm chính dữ liệu, tải, quan sát, vận hành và CI trước khi một hệ thống bên ngoài dùng thật; hợp đồng ở [15-integration-guide.md](15-integration-guide.md) |
+| **7 — Web UI Tin tức + TTS tiếng Việt (v2.2.0)** | ✅ Hoàn tất 2026-11-11 | Tab Tin tức 6 mục (google_news + `when:Nd` thật) + đọc máy vi-VN (Web Speech API), `safeHref` mọi href từ payload; plan ở [16-web-ui-news-tts.md](16-web-ui-news-tts.md) | `npm run typecheck` + `build` PASS; backend suite 100%; audit vòng 5 (QA + AI/TTS) PASS |
 
 ## 2. Task breakdown chi tiết
 

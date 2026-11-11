@@ -2,6 +2,8 @@
 
 import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
+import NewsPanel from "../components/NewsPanel";
+import { TtsHandle, ttsIsSupported, ttsSpeak, ttsStop } from "../lib/tts";
 import {
   API_BASE_URL,
   ActiveLLMConfig,
@@ -16,6 +18,7 @@ import {
   LLMOverridePayload,
   LLMProviderPresetInfo,
   LLMTestResult,
+  safeHref,
   SearchHit,
   SourceItem,
   SuperAgentTicket,
@@ -39,7 +42,7 @@ import {
 } from "../lib/api";
 
 type Mode = "answer" | "raw";
-type AppTab = "search" | "blog" | "superagent" | "llm";
+type AppTab = "search" | "news" | "blog" | "superagent" | "llm";
 
 const CATEGORY_CHIPS = [
   { id: "auto", label: "⚡ Tự động (Universal Domain Intelligence)" },
@@ -89,6 +92,11 @@ export default function HomePage() {
   const [engineOptions, setEngineOptions] = useState<EngineInfo[]>([]);
   const [selectedEngines, setSelectedEngines] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Vietnamese TTS for the synthesized answer (Web Speech API — lib/tts.ts).
+  const answerTtsRef = useRef<TtsHandle | null>(null);
+  const [answerSpeaking, setAnswerSpeaking] = useState(false);
+  const [ttsReady, setTtsReady] = useState(false);
 
   // Blog / Daily Briefing state
   const [blogTopic, setBlogTopic] = useState<string>("all");
@@ -295,6 +303,41 @@ export default function HomePage() {
     }
   }, [activeTab, blogTopic, loadBlogPosts, loadSuperAgentData]);
 
+  // Web Speech API only exists in the browser — gate after mount (SSR safe).
+  useEffect(() => {
+    setTtsReady(ttsIsSupported());
+    return () => {
+      ttsStop();
+      answerTtsRef.current?.cancel();
+    };
+  }, []);
+
+  // Leaving the search tab unmounts the answer controls — speech must not
+  // continue uncontrolled (QA/SA audits).
+  useEffect(() => {
+    if (activeTab !== "search") {
+      answerTtsRef.current?.cancel();
+      answerTtsRef.current = null;
+      ttsStop();
+      setAnswerSpeaking(false);
+    }
+  }, [activeTab]);
+
+  const readAnswerAloud = () => {
+    if (answerSpeaking) {
+      answerTtsRef.current?.cancel();
+      answerTtsRef.current = null;
+      ttsStop();
+      setAnswerSpeaking(false);
+      return;
+    }
+    answerTtsRef.current = ttsSpeak(answerMd, {
+      onStart: () => setAnswerSpeaking(true),
+      onEnd: () => setAnswerSpeaking(false),
+      onError: () => setAnswerSpeaking(false),
+    });
+  };
+
   const handleCreateAgentTicket = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!agentGoalTitle.trim() || !agentGoalObjective.trim()) return;
@@ -373,6 +416,11 @@ export default function HomePage() {
     setError("");
     setHits([]);
     setSearchInfo("");
+    // A cleared answer must not keep being read aloud.
+    answerTtsRef.current?.cancel();
+    answerTtsRef.current = null;
+    ttsStop();
+    setAnswerSpeaking(false);
   }, []);
 
   const handleSaveCouncilEndpoints = async () => {
@@ -491,6 +539,12 @@ export default function HomePage() {
             🔍 Tìm Kiếm & Hỏi Đáp (Live)
           </button>
           <button
+            className={`nav-tab ${activeTab === "news" ? "active" : ""}`}
+            onClick={() => setActiveTab("news")}
+          >
+            🗞️ Tin Tức (Kinh tế · Tài chính · Công nghệ)
+          </button>
+          <button
             className={`nav-tab ${activeTab === "blog" ? "active" : ""}`}
             onClick={() => setActiveTab("blog")}
           >
@@ -510,6 +564,9 @@ export default function HomePage() {
           </button>
         </nav>
       </header>
+
+      {/* --- TAB 1B: NEWS FEED + VIETNAMESE TTS --- */}
+      {activeTab === "news" && <NewsPanel />}
 
       {/* --- TAB 1: SEARCH & ANSWER --- */}
       {activeTab === "search" && (
@@ -683,12 +740,25 @@ export default function HomePage() {
                 <article className="card answer">
                   <header className="answer-header">
                     <h2>Câu trả lời</h2>
-                    {meta && (
-                      <span className="answer-meta">
-                        {meta.latency_ms} ms · {meta.model}
-                        {meta.cached ? " · cached" : ""}
-                      </span>
-                    )}
+                    <span className="answer-header-actions">
+                      {meta && (
+                        <span className="answer-meta">
+                          {meta.latency_ms} ms · {meta.model}
+                          {meta.cached ? " · cached" : ""}
+                        </span>
+                      )}
+                      {ttsReady && (
+                        <button
+                          type="button"
+                          className={`tts-btn ${answerSpeaking ? "speaking" : ""}`}
+                          onClick={readAnswerAloud}
+                          aria-label={answerSpeaking ? "Dừng đọc câu trả lời" : "Đọc câu trả lời"}
+                          title="Đọc câu trả lời bằng giọng đọc tiếng Việt (Web Speech API). Riêng tư: giọng online của Edge gửi nội dung đọc tới Microsoft; giọng OS nội bộ giữ trên máy"
+                        >
+                          {answerSpeaking ? "⏹ Dừng đọc" : "🔊 Đọc câu trả lời"}
+                        </button>
+                      )}
+                    </span>
                   </header>
                   <AnswerMarkdown text={answerMd} citationByUrl={citationByUrl} />
                   {councilVerdict && (
@@ -742,7 +812,7 @@ export default function HomePage() {
                       <ol>
                         {citations.map((c) => (
                           <li key={c.n}>
-                            <a href={c.url} target="_blank" rel="noreferrer">
+                            <a href={safeHref(c.url)} target="_blank" rel="noreferrer">
                               [{c.n}] {c.title || c.url}
                             </a>
                           </li>
@@ -757,7 +827,7 @@ export default function HomePage() {
                 <div className="hits">
                   {hits.map((h) => (
                     <article className="card hit" key={h.url}>
-                      <a className="hit-title" href={h.url} target="_blank" rel="noreferrer">
+                      <a className="hit-title" href={safeHref(h.url)} target="_blank" rel="noreferrer">
                         {h.rank}. {h.title || h.url}
                       </a>
                       <div className="hit-url">{h.url}</div>
@@ -779,7 +849,7 @@ export default function HomePage() {
                 <ul>
                   {sources.map((s, i) => (
                     <li key={`${s.url}-${i}`}>
-                      <a href={s.url} target="_blank" rel="noreferrer" title={s.url}>
+                      <a href={safeHref(s.url)} target="_blank" rel="noreferrer" title={s.url}>
                         {s.title || s.url}
                       </a>
                       <div className="source-domain">{s.domain}</div>
@@ -986,7 +1056,7 @@ export default function HomePage() {
                   <div>
                     🔗 Lấy API Key / Tài liệu:{" "}
                     <a
-                      href={selectedPresetObj.signup_url}
+                      href={safeHref(selectedPresetObj.signup_url)}
                       target="_blank"
                       rel="noreferrer"
                       style={{ color: "var(--accent)" }}
@@ -1612,7 +1682,7 @@ POST ${API_BASE_URL}/v1/citations/validate
                 <ol style={{ paddingLeft: "1.2rem", color: "var(--muted)", fontSize: "0.85rem" }}>
                   {selectedPost.sources.map((s, idx) => (
                     <li key={idx} style={{ marginBottom: "0.4rem" }}>
-                      <a href={s.url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+                      <a href={safeHref(s.url)} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
                         {s.title || s.url}
                       </a>
                     </li>
@@ -1651,11 +1721,12 @@ function renderInlineTokens(
     if (citeMatch) {
       const n = Number(citeMatch[1]);
       const citation = citationByUrl.get(n);
+      const citeHref = citation ? safeHref(citation.url) : undefined;
       return (
         <a
           key={idx}
           className="cite"
-          href={citation?.url ?? undefined}
+          href={citeHref}
           target="_blank"
           rel="noreferrer"
           title={citation ? `${citation.title || citation.url}` : `nguồn [${n}]`}
