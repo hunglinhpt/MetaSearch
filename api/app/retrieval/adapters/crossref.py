@@ -101,7 +101,7 @@ class CrossrefAdapter:
             title = str(titles[0]).strip() if titles else ""
             if not title:
                 continue
-            authors = it.get("author") or []
+            authors = [a for a in (it.get("author") or []) if isinstance(a, dict)]
             names = ", ".join(
                 " ".join(filter(None, [a.get("given", ""), a.get("family", "")]))
                 for a in authors[:3]

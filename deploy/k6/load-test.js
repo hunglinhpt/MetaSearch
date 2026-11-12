@@ -2,7 +2,7 @@
 //
 // Requires the compose stack (real SearXNG) or local bench upstream:
 //   cd deploy && docker compose --profile observability up -d
-//   k6 run -e BASE_URL=http://localhost:8000 k6/load-test.js
+//   k6 run -e BASE_URL=http://localhost:8000 -e API_KEY=msk_xxx k6/load-test.js
 //
 // Scenarios: steady search traffic + context retrieval + answer streaming + spike.
 // Thresholds mirror the KPIs in docs/12 §3.
@@ -12,6 +12,13 @@ import { check, sleep } from "k6";
 import { Trend } from "k6/metrics";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8000";
+// Audit round 11 P1: compose enables AUTH_ENABLED=true — every k6 request
+// must carry the key (k6 run -e API_KEY=msk_... k6/load-test.js).
+function authHeaders() {
+  const h = { "Content-Type": "application/json" };
+  if (__ENV.API_KEY) h.Authorization = `Bearer ${__ENV.API_KEY}`;
+  return h;
+}
 
 const ttftTrend = new Trend("stream_ttft_duration");
 
@@ -81,7 +88,7 @@ const QUERIES = [
 export function searchFlow() {
   const query = QUERIES[Math.floor(Math.random() * QUERIES.length)];
   const res = http.post(`${BASE_URL}/v1/search`, JSON.stringify({ query, k: 10 }), {
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
   });
   check(res, {
     "search 200": (r) => r.status === 200,
@@ -92,14 +99,18 @@ export function searchFlow() {
 
 export function contextFlow() {
   const query = QUERIES[Math.floor(Math.random() * QUERIES.length)];
+  // Audit round 11 P1: compose enables AUTH_ENABLED — send the key from the
+  // environment (k6 run -e API_KEY=msk_...) and check the v2.0 field name.
+  const headers = { "Content-Type": "application/json" };
+  if (__ENV.API_KEY) headers.Authorization = `Bearer ${__ENV.API_KEY}`;
   const res = http.post(
     `${BASE_URL}/v1/context`,
     JSON.stringify({ query, k: 10 }),
-    { headers: { "Content-Type": "application/json" } }
+    { headers }
   );
   check(res, {
     "context 200": (r) => r.status === 200,
-    "has text": (r) => r.status !== 200 || r.json("text") !== undefined,
+    "has chunks": (r) => r.status !== 200 || r.json("chunks") !== undefined,
   });
   sleep(1);
 }
@@ -110,7 +121,7 @@ export function answerFlow() {
   const res = http.post(
     `${BASE_URL}/v1/answer`,
     JSON.stringify({ query: "postgresql replication overview", stream: true }),
-    { headers: { "Content-Type": "application/json" } }
+    { headers: authHeaders() }
   );
   const duration = Date.now() - start;
   ttftTrend.add(duration);

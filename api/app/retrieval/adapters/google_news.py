@@ -165,6 +165,10 @@ class GoogleNewsAdapter:
                 kind=Outcome.UPSTREAM_ERROR,
             )
 
+        # Audit round 12: the only global adapter without a response cap —
+        # same 5MB bound as every sibling (buffered GET, post-hoc check).
+        if len(resp.content or b"") > 5 * 1024 * 1024:
+            raise AdapterError("google_news_payload_too_large", kind=Outcome.UPSTREAM_ERROR)
         try:
             root = DET.fromstring(resp.text)
         except Exception as exc:

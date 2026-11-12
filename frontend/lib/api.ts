@@ -274,8 +274,11 @@ let _ttsCapsPromise: Promise<TtsCapabilities> | null = null;
 
 export function ttsCapabilities(signal?: AbortSignal): Promise<TtsCapabilities> {
   if (!_ttsCapsPromise) {
+    // The shared promise must NOT bind the first caller's AbortSignal (audit
+    // round 12): a later sharer would inherit its abort. Capabilities is a
+    // tiny one-shot GET — always fetch it signal-free once per page load.
     _ttsCapsPromise = (async () => {
-      const resp = await fetch(`${API_BASE_URL}/v1/tts/capabilities`, { signal });
+      const resp = await fetch(`${API_BASE_URL}/v1/tts/capabilities`);
       if (!resp.ok) {
         throw await parseError(resp);
       }
@@ -859,6 +862,26 @@ export type SseHandlers = {
  * `event:`/`data:` blocks and hands the RAW data JSON to the caller — the
  * component decides the event vocabulary.
  */
+/**
+ * Audit round 12: find the end of the first SSE frame in RAW text (a blank
+ * line, CRLF or LF) WITHOUT normalizing chunks first — returns the index past
+ * the boundary plus the LF-normalized frame. Normalizing whole frames prevents
+ * a "\r\n\r\n" boundary straddling a TCP chunk from mangling into "\n\n\n".
+ */
+function searchFrameEnd(
+  raw: string
+): { end: number; normalized: string } | null {
+  const crlf = raw.indexOf("\r\n\r\n");
+  const lf = raw.indexOf("\n\n");
+  if (crlf >= 0 && (lf < 0 || crlf + 2 <= lf + 1)) {
+    return { end: crlf + 4, normalized: raw.slice(0, crlf).replace(/\r\n/g, "\n") };
+  }
+  if (lf >= 0) {
+    return { end: lf + 2, normalized: raw.slice(0, lf) };
+  }
+  return null;
+}
+
 export async function streamSse(
   url: string,
   handlers: SseHandlers,
@@ -882,16 +905,16 @@ export async function streamSse(
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      // Normalize CRLF (sse-starlette) BEFORE the overflow check, otherwise a
-      // valid >1MB block separated only by \r\n\r\n would false-positive.
-      buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      if (buffer.length > MAX_SSE_BUFFER && !buffer.includes("\n\n")) {
+      // Audit round 12: find the frame boundary in the RAW buffer — a
+      // "\r\n\r\n" boundary split across a TCP chunk must not be mangled
+      // by per-chunk CRLF normalization (it could dispatch a headless event).
+      if (buffer.length > MAX_SSE_BUFFER && !/\r?\n\r?\n/.test(buffer)) {
         throw new Error("SSE stream overflow: no event boundary within 1MB");
       }
-      let sep = buffer.indexOf("\n\n");
-      while (sep >= 0) {
-        const block = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
+      let frameEnd = searchFrameEnd(buffer);
+      while (frameEnd) {
+        const block = frameEnd.normalized;
+        buffer = buffer.slice(frameEnd.end);
         // A single event larger than the cap is refused even though it has a
         // boundary — otherwise one giant frame still buffers whole.
         if (block.length > MAX_SSE_BUFFER) {
@@ -904,7 +927,7 @@ export async function streamSse(
           else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
         }
         if (dataLines.length) handlers.onEvent(name, dataLines.join("\n"));
-        sep = buffer.indexOf("\n\n");
+        frameEnd = searchFrameEnd(buffer);
       }
     }
   } finally {

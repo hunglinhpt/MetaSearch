@@ -223,7 +223,7 @@
 ### v2.4.0 Global Deep Search (docs/19 — 2026-11-12) — ✅ HOÀN TẤT
 
 - [x] **W1 7 adapter keyless mới** + seed/registry/config (`global_search_mailto`): hackernews, stackexchange, bluesky, openalex, crossref, europepmc, gdelt — helper chung `_http.fetch_json`, `published_at` thật từ payload.
-- [x] **W2 SearXNG**: 16 engine mới trong `deploy/searxng/settings.yml`, `default_lang: auto`, `map_categories` trong adapter (news/social media/it/science).
+- [x] **W2 SearXNG**: 15 engine thật (audit vòng 9 bỏ 4 tên không tồn tại) trong `deploy/searxng/settings.yml`, `default_lang: auto`, `map_categories` trong adapter (news/social media/it/science).
 - [x] **W3 lang end-to-end**: google_news hl/gl/ceid theo lang, gdelt `sourcelang:`, openalex `language:` filter; UI chọn Auto/VI/EN.
 - [x] **W4 `deep: true`** trên /v1/search + /v1/answer — fan-out mọi engine; cache key gồm deep; inference thêm social/academic/global-fin terms.
 - [x] **W5 UI**: language selector + nút 🌐 Deep.

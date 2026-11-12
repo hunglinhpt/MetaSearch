@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 DEFAULT_API_URL = "http://localhost:8000"
+_SHARED_CLIENT: httpx.AsyncClient | None = None
 DEFAULT_TIMEOUT_S = 120.0
 _TOTAL_CHAR_BUDGET = 12_000  # docs/07 §5: keep the agent's context lean
 
@@ -34,7 +35,18 @@ def _headers() -> dict[str, str]:
 
 async def _call(method: str, path: str, payload: dict | None = None) -> Any:
     try:
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_S) as client:
+        # Audit round 11 P3: a per-call AsyncClient violates the shared-pool
+        # convention (connection setup per tool call). One module-level client
+        # is reused; MCP processes are short-lived so explicit close is via
+        # atexit-less GC — acceptable for a CLI-shaped client.
+        global _SHARED_CLIENT
+        try:
+            client = _SHARED_CLIENT
+        except NameError:
+            client = None
+        if client is None:
+            _SHARED_CLIENT = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_S)
+            client = _SHARED_CLIENT
             resp = await client.request(
                 method, f"{_api_url()}{path}", json=payload, headers=_headers()
             )

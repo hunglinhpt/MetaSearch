@@ -2,7 +2,7 @@
 
 ## 1. Mục tiêu
 
-Cho phép AI Agent (OpenAI Codex CLI, Claude Code, Cursor, Windsurf, Claude Desktop, Antigravity) dùng MetaSearch như **một bộ tool duy nhất** thay vì tự ghép search + scraper. Lấy mô hình `web_search_and_scrape` từ searxng-crawl4ai-mcp, mở rộng thành 4 tools chất lượng cao.
+Cho phép AI Agent (OpenAI Codex CLI, Claude Code, Cursor, Windsurf, Claude Desktop, Antigravity) dùng MetaSearch như **một bộ tool duy nhất** thay vì tự ghép search + scraper. Lấy mô hình `web_search_and_scrape` từ searxng-crawl4ai-mcp, mở rộng thành 5 tools chất lượng cao.
 
 ## 2. Tools
 

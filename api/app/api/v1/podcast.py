@@ -18,7 +18,6 @@ the key, or keep auth off on loopback (docs/18 §7, item 4 — RSS stays behind 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections import OrderedDict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -97,11 +96,10 @@ def _status_for(day: date) -> PodcastBriefingStatus:
     # The file on disk wins whenever the job is not actively running: a job
     # can end "error" AFTER the file was written (e.g. retention hiccup), and
     # /latest still serves that file — status must not contradict it.
-    # Retention sweep on every status read (audit 9): without it /status can
-    # report a beyond-horizon file that /latest would prune away — the two
-    # endpoints must never disagree.
-    with contextlib.suppress(Exception):
-        cleanup_retention(_data_dir(), retention_days=get_settings().podcast_retention_days)
+    # NOTE (audit round 12): the retention sweep here was dropped — it ran
+    # sync unlink/scan on the event loop inside a 2s-polled endpoint. /latest
+    # and /feed.xml still prune on access, so /status can only briefly report
+    # a beyond-horizon file before the first GET prunes it (accepted).
     if job is not None and job.get("status") in ("pending", "running"):
         return PodcastBriefingStatus(
             date=day.isoformat(),
@@ -287,7 +285,7 @@ async def briefing_latest() -> FileResponse:
         today=_today(),
     )
     path = latest_briefing(_data_dir())
-    if path is None or not path.is_file():
+    if path is None or not path.is_file() or path.is_symlink():
         raise MetaSearchError(ErrorCode.NOT_FOUND, "no briefing generated yet", status_code=404)
     # Audio is per-tenant content: never let a shared cache store it.
     return FileResponse(

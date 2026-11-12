@@ -302,9 +302,14 @@ def _parse_dchart_series(data: Any, sym: str) -> dict[str, Any] | None:
         return None
     try:
         times = [int(t) for t in t_list]
-        last_ts = times[-1] if times else None
     except (TypeError, ValueError):
         return None
+    # Audit round 12: absurd timestamps overflow datetime.fromtimestamp
+    # downstream (OSError → 500 on /v1/market/ohlcv) — bound to sane years.
+    if any(t <= 0 or t > 4102444800 for t in times):  # ≤ 2100-01-01
+        logger.debug("vndirect_ts_out_of_range: %s", sym)
+        return None
+    last_ts = times[-1] if times else None
     if any(times[i] >= times[i + 1] for i in range(len(times) - 1)):
         # Charts require strictly ascending time; duplicate/backwards
         # timestamps would corrupt every candle's day.

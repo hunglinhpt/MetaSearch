@@ -92,8 +92,14 @@ class OpenAlexAdapter:
             title = str(w.get("title") or "").strip()
             if not url or not title:
                 continue
-            authors = (w.get("authorships") or [])[:3]
-            names = ", ".join((a.get("author") or {}).get("display_name", "") for a in authors)
+            # Audit round 12: nested drift — a non-dict authorship/author must
+            # be skipped, never raise AttributeError for the whole adapter.
+            authors = [a for a in (w.get("authorships") or [])[:3] if isinstance(a, dict)]
+            names = ", ".join(
+                str((a.get("author") or {}).get("display_name", ""))
+                for a in authors
+                if isinstance(a.get("author"), dict)
+            )
             venue = ((w.get("primary_location") or {}).get("source") or {}).get(
                 "display_name"
             ) or ""

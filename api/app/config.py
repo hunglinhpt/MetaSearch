@@ -314,6 +314,9 @@ class Settings(BaseSettings):
     # Mount the MCP streamable-HTTP server at /mcp on this API process
     # (stdio mode runs separately via `python -m app.mcp`).
     mcp_enabled: bool = False
+    # Audit round 11: allow RFC1918/private-network scrapers (Prometheus in the
+    # compose network) to read /metrics when auth is on. Off by default.
+    metrics_allow_private: bool = False
     # Langfuse LLM tracing (optional, httpx-based): all three must be set.
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

@@ -203,7 +203,12 @@ _VIET_STOCK_STOP_WORDS: frozenset[str] = frozenset(
 
 @lru_cache(maxsize=1)
 def load_vn_tickers() -> dict[str, dict]:
-    """Load Vietnamese stock tickers dictionary from data/vn_tickers.json."""
+    """Load Vietnamese stock tickers dictionary from data/vn_tickers.json.
+
+    Audit round 12 P2: called per symbol per request (compare/ohlcv/search) —
+    a 342 KB JSON re-parse on the event loop every call. Cached like its
+    sibling get_vn_ticker_symbols; tests call .cache_clear() when stubbing.
+    """
     if not DATA_FILE.exists():
         logger.error("vn_tickers_file_missing", path=str(DATA_FILE))
         return {}

@@ -343,6 +343,32 @@ async def check_rate_limit(
         return headers
 
 
+async def _request_item_count(request: Request) -> int:
+    """Best-effort payload item count for proportional rate costs.
+
+    Awaits the body ONCE — starlette caches ``request._body``, so the
+    endpoint's later ``request.json()`` reuses it. Counts a top-level JSON
+    array or a known list field; on any parse failure returns 0 (the caller's
+    base cost still applies)."""
+    import json as _json
+
+    try:
+        raw = await request.body()
+        if not raw:
+            return 0
+        data = _json.loads(raw)
+        if isinstance(data, list):
+            return len(data)
+        if isinstance(data, dict):
+            for key in ("symbols", "items"):
+                val = data.get(key)
+                if isinstance(val, list):
+                    return len(val)
+        return 0
+    except Exception:
+        return 0
+
+
 async def authenticate_and_rate_limit(request: Request, *, cost: int | None = None) -> AuthContext:
     """Core authenticator with weighted rate limit check.
 
@@ -383,11 +409,14 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
         elif path.endswith("/podcast/briefing") and request.method == "POST":
             cost = 5  # server-side synthesis of a whole news digest (docs/18 D)
         elif path.endswith("/fa/compare") and request.method == "POST":
-            cost = 3  # fans out to multiple FA sources per symbol (docs/18 B1)
+            # Payload-proportional (audit round 12): flat weights allowed 20
+            # symbols for 3 units — 10-40 upstream fetches.
+            cost = 3 + min(await _request_item_count(request), 20)
         elif path.endswith("/market/ohlcv") and request.method == "POST":
             cost = 2  # one upstream feed call + possible SSI fallback (docs/18 B2)
         elif path.endswith("/watchlist/alerts"):
-            cost = 5  # runs one search per watched item (docs/18 C)
+            # Each alert runs a full pipeline search per watched item.
+            cost = 1 + min(await _request_item_count(request), 100) // 4
         else:
             cost = 1
 

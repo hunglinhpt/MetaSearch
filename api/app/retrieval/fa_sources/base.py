@@ -22,7 +22,7 @@ from typing import Any, Protocol
 from app.retrieval.health import Outcome
 
 # Symbols are interpolated into hardcoded API URL paths; only plain codes pass.
-_SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,15}$")
+_SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,15}\Z")  # \Z: $ matches before a trailing newline
 
 
 def ensure_symbol(symbol: str) -> str | None:

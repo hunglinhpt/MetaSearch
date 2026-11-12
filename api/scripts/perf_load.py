@@ -18,6 +18,11 @@ import json
 import os
 import socket
 import sys
+
+# Windows console defaults to cp1252 — the bench prints Unicode labels
+# (e.g. "doc → chunks"); without this the AGENTS §5 command crashes (audit 11).
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

@@ -102,6 +102,9 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-metasearch}:${POSTGRES_PASSWORD:-metasearch}@postgres:5432/${POSTGRES_DB:-metasearch}
       - REDIS_URL=redis://redis:6379/0
       - AUTH_ENABLED=true
+      # Audit round 11: Prometheus (compose network = RFC1918) must be able to
+      # scrape /metrics without an admin key; public callers stay blocked.
+      - METRICS_ALLOW_PRIVATE=true
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

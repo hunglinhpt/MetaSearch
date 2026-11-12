@@ -153,3 +153,36 @@ HTTP mapping: 400 `invalid_request` · 401/403 `unauthorized` · 404 `not_found`
 - Default: 60 req/phút/api_key (sliding window Redis ZSET, TTL `window_s + 1`, in-process fallback khi không có Redis).
 - Header phản hồi trên mọi request xác thực: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, và `Retry-After` khi 429.
 - Deep research: tối đa 5 job đồng thời.
+
+
+## v2.3 / v2.4 additions (docs/18, docs/19 — audit round 11)
+
+New request params (on `/v1/search` + `/v1/answer` unless noted):
+- `deep: bool = false` — fan out to ALL enabled engines (category filter off,
+  quorum early-return bypassed, still bounded by the fan-out budget). Cache
+  keys include `deep` both ways. Precedence: explicit `engines` wins over
+  `deep`.
+- `lang: string` — `vi`/`en`/auto-omitted; reaches google_news (hl/gl/ceid),
+  gdelt (`sourcelang:`), openalex (`language:`), searxng.
+- `max_age_s: int` (AnswerRequest only, 30..86400) — DAT-10 valve: financial
+  answers become cacheable with `ttl = min(answer_ttl, max_age_s)`; L2
+  semantic cache refuses financial/news rows in both directions.
+- `freshness_days`, `news`, `include_domains`/`exclude_domains` — see §1.
+
+New endpoints:
+- `POST /v1/fa/compare` `{symbols: string[1..20] (each ≤15 chars), timeout_ms?}`
+  — cross-source fundamentals per symbol (provenance per field). Cost 3+N.
+- `POST /v1/market/ohlcv` `{symbol, days? (clamped to market_ohlcv_min/max_days)}`
+  — daily candles (VNDIRECT primary, SSI fallback, shared strict parser). Cost 2.
+- `GET/POST/DELETE /v1/watchlist`, `GET /v1/watchlist/alerts` — per-key
+  watchlist (cap 20) + poll-on-demand alerts. Cost 1 / 1+N/4.
+- `POST /v1/tts/synthesize`, `GET /v1/tts/capabilities` — VoiceStudio server
+  TTS (optional, VOICESTUDIO_URL). Cost 5 / 1.
+- `POST /v1/podcast/briefing`, `GET /v1/podcast/briefing/status|latest|feed.xml`
+  — daily audio briefing (optional VoiceStudio). Cost 5 / 1.
+- `POST /v1/research`, `GET /v1/research/{id}`, `GET /v1/research/{id}/events`
+  (SSE) — Deep Research job lifecycle (FR-9).
+
+Rate-limit weights (auth on): answer 5, context 3, research 20,
+tts/synthesize 5, podcast/briefing 5, fa/compare 3+symbols, market/ohlcv 2,
+watchlist/alerts 1+items/4, everything else 1.

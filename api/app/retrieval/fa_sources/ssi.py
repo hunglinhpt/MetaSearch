@@ -125,9 +125,13 @@ class SSIFASource:
             raise FASourceError(self.source_id, "upstream_error", "non_finite_closes")
         try:
             times = [int(t) for t in t_list]
-            last_ts = times[-1] if times else None
         except (TypeError, ValueError) as exc:
             raise FASourceError(self.source_id, "upstream_error", "bad_series") from exc
+        # Audit round 12: absurd timestamps overflow datetime.fromtimestamp
+        # downstream (OSError/OverflowError → 500) — bound to sane years.
+        if any(t <= 0 or t > 4102444800 for t in times):  # ≤ 2100-01-01
+            raise FASourceError(self.source_id, "upstream_error", "ts_out_of_range")
+        last_ts = times[-1] if times else None
         if len(times) != len(closes):
             # A timestamp array that does not align with the candles would put
             # every bar on the wrong day in charts — refuse instead of guessing.

@@ -4,16 +4,39 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
-## [2.4.1] — 2026-11-12 — audit fixes cho v2.4.0 (docs/19 §8, 3 vòng audit)
+## [Unreleased] — Audit rounds 9–10 (6 expert đối kháng độc lập: v2.3.0 backend, v2.4.0 global, frontend, core cũ, viet_stock/market, verify chéo)
+
+## [Unreleased] — Audit rounds 11–12 (ops/tooling + security/perf second-pass)
 
 ### Fixed
-- 7 adapter toàn cầu mới: guard `isinstance` cho payload/item — upstream đổi schema (JSON không phải object, item không phải dict) thì trả [] thay vì ném lỗi vào breaker. 12 test schema-drift mới.
-- `infer_categories_from_query` khớp word-boundary cho term ASCII: "nav" không còn khớp "navigation", "eps" không khớp "steps"; "doi:" vẫn khớp; cụm tiếng Việt giữ nguyên. Test hồi quy 2 chiều.
-- `deep=true` tắt quorum early-return ở fan-out: deep mode chờ ĐỦ mọi engine (vẫn bounded bởi hard budget) — đúng nghĩa "sâu nhất". Test shallow vs deep.
-- `google_news` map lang→đúng country code cho `gl` (en→US, vi→VN, fr→FR…, fallback US; trước đây en→"EN" sai).
-- UI: bật Deep tự gửi `k=30` (cap 50) cho cả `/v1/search` và `/v1/answer` để tập kết quả merge không bị hẹp.
+- **P1 MCP HTTP chết từ đầu**: FastAPI không chạy lifespan của sub-app mount —
+  `session_manager.run()` giờ wire vào app event handlers; có auth-wrap ASGI
+  boundary dùng `require_api_key` (trước đây /mcp BYPASS hoàn toàn api-key auth
+  khi AUTH_ENABLED=true).
+- **P1 Prometheus không scrape được** (compose bật auth, /metrics cần admin key,
+  cross-container không có key → mọi alert/dashboard rỗng): thêm
+  `METRICS_ALLOW_PRIVATE` — RFC1918 (compose network) được scrape sau khi admin
+  key attempt thất bại; Internet công khai vẫn chặn; admin key luôn thắng.
+- **P1 k6 hỏng 2 chỗ**: thiếu Authorization header (compose auth → 100% 401) +
+  check field `text` đã chết từ v2.0 → `chunks`; usage doc thêm `-e API_KEY`.
+- **P1 perf_load crash trên Windows** (cp1252 không encode `→`) — stdout
+  reconfigure utf-8.
+- P2: alerts.yml `path="/v1/answer"` REVERT về `/answer` (middleware thực tế phát
+  /answer — claim của audit agent sai, đã verify live); load_vn_tickers
+  `lru_cache` (342KB re-parse mỗi symbol, double-decorator gỡ); fromtimestamp
+  bounds ≤2100 cho cả SSI + VNDIRECT parser (500 → 503 có nghĩa); rate cost
+  proportional (compare 3+N, alerts 1+N/4); docs/06 thêm section v2.3/v2.4;
+  golden eval +6 case (global engines, deep/news); README sweep counts (26
+  adapters, 881/49 tests, v2.4.1); CHANGELOG merge 2 Unreleased blocks.
+- P3 hardening: `_http` bắt RecursionError (JSON bomb); google_news 5MB cap;
+  `ensure_symbol` dùng `\Z`; openalex/crossref/bluesky nested-author guards;
+  podcast TOCTOU → 404; `_status_for` bỏ sweep đồng bộ; streamSse fix boundary
+  CRLF-split-across-chunks (frame headless); `_ttsCapsPromise` không còn bind
+  signal caller đầu; mcp client tái dùng thay per-call; release.py thêm gate
+  mypy (CI parity); dead "research" admission tier ghi chú; docs/07 5 tools;
+  docs/12 15 engine thật.
 
-## [Unreleased] — Audit round 10 (3 expert: core cũ + verify vòng 9 + viet_stock/market)
+
 
 ### Fixed
 - **P1 L2 semantic cache bỏ qua luật tươi mới**: financial/news answers không còn
@@ -35,8 +58,6 @@ version tuân theo [SemVer](https://semver.org/).
   create_key clears negative cache; faTable {1,15} khớp backend; SSI negative
   guard đủ o/h/l; ohlcv fallback theo remaining budget; docs/15 ghi đúng 2 statement
   FireAnt; Deep chip gửi deep=false khi đã ghim engine; quorum empty-ok note.
-
-## [Unreleased] — Audit round 9 (3 expert đối kháng độc lập trên v2.3.0+v2.4.0)
 
 ### Fixed
 - **SearXNG settings.yml (P1)**: 6/16 engine được liệt kê không có module upstream
@@ -67,6 +88,15 @@ version tuân theo [SemVer](https://semver.org/).
   đua), retention sweep chạy cả ở /status (status/latest không còn mâu thuẫn),
   symlink hardening, tài liệu hóa lựa chọn mốc UTC.
 - 3 test mới/khôi phục (migration write-fail, days clamp contract giữ nguyên).
+
+## [2.4.1] — 2026-11-12 — audit fixes cho v2.4.0 (docs/19 §8, 3 vòng audit)
+
+### Fixed
+- 7 adapter toàn cầu mới: guard `isinstance` cho payload/item — upstream đổi schema (JSON không phải object, item không phải dict) thì trả [] thay vì ném lỗi vào breaker. 12 test schema-drift mới.
+- `infer_categories_from_query` khớp word-boundary cho term ASCII: "nav" không còn khớp "navigation", "eps" không khớp "steps"; "doi:" vẫn khớp; cụm tiếng Việt giữ nguyên. Test hồi quy 2 chiều.
+- `deep=true` tắt quorum early-return ở fan-out: deep mode chờ ĐỦ mọi engine (vẫn bounded bởi hard budget) — đúng nghĩa "sâu nhất". Test shallow vs deep.
+- `google_news` map lang→đúng country code cho `gl` (en→US, vi→VN, fr→FR…, fallback US; trước đây en→"EN" sai).
+- UI: bật Deep tự gửi `k=30` (cap 50) cho cả `/v1/search` và `/v1/answer` để tập kết quả merge không bị hẹp.
 
 ## [2.4.0] — 2026-11-12 — Global Deep Search (docs/19): 7 engine toàn cầu keyless mới, tiếng Anh end-to-end, deep mode
 

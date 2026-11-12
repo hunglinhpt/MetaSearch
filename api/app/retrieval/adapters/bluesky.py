@@ -71,12 +71,15 @@ class BlueskyAdapter:
             if not isinstance(post, dict):
                 continue
             record = post.get("record") or {}
-            author = (post.get("author") or {}).get("handle") or "unknown"
+            author_obj = post.get("author")
+            record = record if isinstance(record, dict) else {}
+            author_obj = author_obj if isinstance(author_obj, dict) else {}
+            author = author_obj.get("handle") or "unknown"
             text = str(record.get("text") or "").strip()
             uri = post.get("uri") or ""
             # at://did:.../app.bsky.feed.post/<rkey> -> https://bsky.app/profile/<handle>/post/<rkey>
             rkey = uri.rsplit("/", 1)[-1] if uri else ""
-            handle = (post.get("author") or {}).get("handle") or ""
+            handle = author_obj.get("handle") or ""
             # Audit v2.4 round 9: without handle+rkey there is NO honest URL —
             # dropping the post beats a fabricated homepage link that the
             # merger would collapse every drifted post onto.

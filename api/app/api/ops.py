@@ -182,20 +182,35 @@ async def metrics(request: Request) -> Response:
 
         raw_auth = request.headers.get("authorization", "").strip()
         bearer = raw_auth[7:].strip() if raw_auth[:7].lower() == "bearer " else raw_auth
-        if not bearer:
-            raise MetaSearchError(
-                ErrorCode.UNAUTHORIZED, "metrics require an admin key", status_code=403
+        authed = False
+        if bearer:
+            try:
+                ctx = await authenticate(bearer)
+                authed = ctx.role == "admin"
+            except Exception:
+                authed = False
+        if not authed:
+            # Audit round 11 P1 fallback: compose runs AUTH_ENABLED=true and
+            # Prometheus (cross-container RFC1918, no key) could never scrape —
+            # every alert/dashboard stayed empty. When METRICS_ALLOW_PRIVATE is
+            # on, RFC1918 callers are accepted AFTER the admin-key attempt
+            # fails (an admin key always wins; the public Internet stays out).
+            import ipaddress as _ip
+
+            client_host = request.client.host if request.client else ""
+            try:
+                ip = _ip.ip_address(client_host)
+            except ValueError:
+                ip = None
+            private_ok = bool(
+                getattr(settings, "metrics_allow_private", False)
+                and ip is not None
+                and ip.is_private
             )
-        try:
-            ctx = await authenticate(bearer)
-        except Exception as exc:
-            raise MetaSearchError(
-                ErrorCode.UNAUTHORIZED, "metrics require an admin key", status_code=403
-            ) from exc
-        if ctx.role != "admin":
-            raise MetaSearchError(
-                ErrorCode.UNAUTHORIZED, "metrics require an admin key", status_code=403
-            )
+            if not private_ok:
+                raise MetaSearchError(
+                    ErrorCode.UNAUTHORIZED, "metrics require an admin key", status_code=403
+                )
     else:
         # No-auth deployments keep metrics loopback-only.
         client_host = request.client.host if request.client else "?"

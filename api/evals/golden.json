@@ -1,45 +1,556 @@
 {
   "queries": [
-    {"query": "what is PostgreSQL replication", "lang": "en", "expect_terms": ["replication", "postgres"], "categories": ["general"]},
-    {"query": "FastAPI Server-Sent Events streaming", "lang": "en", "expect_terms": ["fastapi", "streaming"], "categories": ["general", "developer"]},
-    {"query": "SearXNG configuration JSON format", "lang": "en", "expect_terms": ["searxng"], "categories": ["general"]},
-    {"query": "retrieval augmented generation là gì", "lang": "vi", "expect_terms": ["rag", "retrieval", "generation"], "categories": ["general"]},
-    {"query": "arxiv attention is all you need transformer", "lang": "en", "expect_terms": ["attention", "transformer"], "categories": ["academic"]},
-    {"query": "Wikipedia Python programming language", "lang": "en", "expect_terms": ["python"], "categories": ["reference"]},
-    {"query": "pgvector similarity search postgres", "lang": "en", "expect_terms": ["pgvector", "similarity"], "categories": ["general"]},
-    {"query": "trafilatura web scraping extraction", "lang": "en", "expect_terms": ["trafilatura", "extraction"], "categories": ["general"]},
-    {"query": "so sánh MySQL và PostgreSQL hiệu năng", "lang": "vi", "expect_terms": ["mysql", "postgres"], "categories": ["general"]},
-    {"query": "model context protocol MCP tools", "lang": "en", "expect_terms": ["model context protocol", "mcp"], "categories": ["general"]},
-    {"query": "python asyncio task cancelled exception handling", "lang": "en", "expect_terms": ["asyncio", "cancelled"], "categories": ["developer"]},
-    {"query": "how to resolve CORS errors in Next.js", "lang": "en", "expect_terms": ["cors", "next.js"], "categories": ["developer"]},
-    {"query": "Stack Overflow Python memory leak diagnosis", "lang": "en", "expect_terms": ["python", "memory"], "categories": ["developer"]},
-    {"query": "Reddit discussions local LLM inference hardware", "lang": "en", "expect_terms": ["llm", "inference", "hardware"], "categories": ["social"]},
-    {"query": "Reddit best open source search engines", "lang": "en", "expect_terms": ["search", "engine"], "categories": ["social"]},
-    {"query": "arxiv direct preference optimization dpo", "lang": "en", "expect_terms": ["dpo", "preference", "optimization"], "categories": ["academic"]},
-    {"query": "arxiv mixture of experts deepseek v3", "lang": "en", "expect_terms": ["experts", "deepseek"], "categories": ["academic"]},
-    {"query": "Wikipedia Turing machine definition", "lang": "en", "expect_terms": ["turing", "machine"], "categories": ["reference"]},
-    {"query": "Wikipedia lịch sử thủ đô Hà Nội", "lang": "vi", "expect_terms": ["hà nội", "lịch sử"], "categories": ["reference"]},
-    {"query": "cách hoạt động của vector embedding trong tìm kiếm ngữ nghĩa", "lang": "vi", "expect_terms": ["vector", "embedding"], "categories": ["general"]},
-    {"query": "Server Side Request Forgery SSRF prevention techniques", "lang": "en", "expect_terms": ["ssrf", "forgery", "prevention"], "categories": ["general", "developer"]},
-    {"query": "DNS rebinding attack protection IP pinning", "lang": "en", "expect_terms": ["dns", "rebinding", "pinning"], "categories": ["developer"]},
-    {"query": "Redis sliding window rate limiter sorted set", "lang": "en", "expect_terms": ["rate", "limiter", "redis"], "categories": ["developer"]},
-    {"query": "SimHash near duplicate document detection", "lang": "en", "expect_terms": ["simhash", "duplicate"], "categories": ["general"]},
-    {"query": "BM25 ranking function information retrieval", "lang": "en", "expect_terms": ["bm25", "ranking"], "categories": ["general"]},
-    {"query": "Docker compose memory limit configuration", "lang": "en", "expect_terms": ["docker", "compose", "memory"], "categories": ["developer"]},
-    {"query": "hướng dẫn tối ưu hóa hiệu năng website Next.js", "lang": "vi", "expect_terms": ["next.js", "tối ưu"], "categories": ["developer"]},
-    {"query": "so sánh Ollama và vLLM tự host mô hình ngôn ngữ lớn", "lang": "vi", "expect_terms": ["ollama", "vllm"], "categories": ["general"]},
-    {"query": "Playwright headless browser web extraction python", "lang": "en", "expect_terms": ["playwright", "browser", "extraction"], "categories": ["developer"]},
-    {"query": "FastMCP python model context protocol server implementation", "lang": "en", "expect_terms": ["fastmcp", "mcp"], "categories": ["developer"]},
-    {"query": "phân tích pháp y BCTC cổ phiếu FPT cấu trúc nợ và dòng tiền CFO", "lang": "vi", "expect_terms": ["fpt", "cfo", "piotroski", "z-score"], "categories": ["financial"]},
-    {"query": "thẩm định ngân hàng VCB hệ số CAR nợ xấu NPL và CASA", "lang": "vi", "expect_terms": ["vcb", "car", "npl", "casa"], "categories": ["financial"]},
-    {"query": "phân tích cổ phiếu HPG kế hoạch kinh doanh và dự án Dung Quất 2", "lang": "vi", "expect_terms": ["hpg", "dung quất", "doanh thu"], "categories": ["financial"]},
-    {"query": "chứng khoán SSI dư nợ margin trên VCSH và danh mục tự doanh FVTPL", "lang": "vi", "expect_terms": ["ssi", "margin", "fvtpl"], "categories": ["financial"]},
-    {"query": "cổ phiếu IDC doanh thu chưa thực hiện khu công nghiệp và cổ tức tiền mặt", "lang": "vi", "expect_terms": ["idc", "cổ tức", "chưa thực hiện"], "categories": ["financial"]},
-    {"query": "phân tích kỹ thuật cổ phiếu FPT Fibonacci Golden Pocket và mây Ichimoku RSI 9", "lang": "vi", "expect_terms": ["fpt", "fibonacci", "golden pocket", "ichimoku", "rsi(9)"], "categories": ["financial"]},
-    {"query": "$NVDA technical analysis Fibonacci retracement and Ichimoku Cloud", "lang": "en", "expect_terms": ["nvda", "fibonacci", "ichimoku"], "categories": ["financial"]},
-    {"query": "giá vàng XAUUSD phân tích kỹ thuật hỗ trợ kháng cự Fibonacci", "lang": "vi", "expect_terms": ["xauusd", "fibo", "ichimoku"], "categories": ["financial"]},
-    {"query": "tra cứu phong thủy bát trạch tuổi Canh Ngọ 1990 hướng tốt sinh khí", "lang": "vi", "expect_terms": ["1990", "canh ngọ", "lộ bàng thổ", "khảm"], "categories": ["fengshui"]},
-    {"query": "phong thủy tuổi Giáp Thìn 2024 mệnh gì hợp màu gì tam hợp", "lang": "vi", "expect_terms": ["2024", "giáp thìn", "phúc đăng hỏa", "tam hợp"], "categories": ["fengshui"]}
+    {
+      "query": "what is PostgreSQL replication",
+      "lang": "en",
+      "expect_terms": [
+        "replication",
+        "postgres"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "FastAPI Server-Sent Events streaming",
+      "lang": "en",
+      "expect_terms": [
+        "fastapi",
+        "streaming"
+      ],
+      "categories": [
+        "general",
+        "developer"
+      ]
+    },
+    {
+      "query": "SearXNG configuration JSON format",
+      "lang": "en",
+      "expect_terms": [
+        "searxng"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "retrieval augmented generation là gì",
+      "lang": "vi",
+      "expect_terms": [
+        "rag",
+        "retrieval",
+        "generation"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "arxiv attention is all you need transformer",
+      "lang": "en",
+      "expect_terms": [
+        "attention",
+        "transformer"
+      ],
+      "categories": [
+        "academic"
+      ]
+    },
+    {
+      "query": "Wikipedia Python programming language",
+      "lang": "en",
+      "expect_terms": [
+        "python"
+      ],
+      "categories": [
+        "reference"
+      ]
+    },
+    {
+      "query": "pgvector similarity search postgres",
+      "lang": "en",
+      "expect_terms": [
+        "pgvector",
+        "similarity"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "trafilatura web scraping extraction",
+      "lang": "en",
+      "expect_terms": [
+        "trafilatura",
+        "extraction"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "so sánh MySQL và PostgreSQL hiệu năng",
+      "lang": "vi",
+      "expect_terms": [
+        "mysql",
+        "postgres"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "model context protocol MCP tools",
+      "lang": "en",
+      "expect_terms": [
+        "model context protocol",
+        "mcp"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "python asyncio task cancelled exception handling",
+      "lang": "en",
+      "expect_terms": [
+        "asyncio",
+        "cancelled"
+      ],
+      "categories": [
+        "developer"
+      ]
+    },
+    {
+      "query": "how to resolve CORS errors in Next.js",
+      "lang": "en",
+      "expect_terms": [
+        "cors",
+        "next.js"
+      ],
+      "categories": [
+        "developer"
+      ]
+    },
+    {
+      "query": "Stack Overflow Python memory leak diagnosis",
+      "lang": "en",
+      "expect_terms": [
+        "python",
+        "memory"
+      ],
+      "categories": [
+        "developer"
+      ]
+    },
+    {
+      "query": "Reddit discussions local LLM inference hardware",
+      "lang": "en",
+      "expect_terms": [
+        "llm",
+        "inference",
+        "hardware"
+      ],
+      "categories": [
+        "social"
+      ]
+    },
+    {
+      "query": "Reddit best open source search engines",
+      "lang": "en",
+      "expect_terms": [
+        "search",
+        "engine"
+      ],
+      "categories": [
+        "social"
+      ]
+    },
+    {
+      "query": "arxiv direct preference optimization dpo",
+      "lang": "en",
+      "expect_terms": [
+        "dpo",
+        "preference",
+        "optimization"
+      ],
+      "categories": [
+        "academic"
+      ]
+    },
+    {
+      "query": "arxiv mixture of experts deepseek v3",
+      "lang": "en",
+      "expect_terms": [
+        "experts",
+        "deepseek"
+      ],
+      "categories": [
+        "academic"
+      ]
+    },
+    {
+      "query": "Wikipedia Turing machine definition",
+      "lang": "en",
+      "expect_terms": [
+        "turing",
+        "machine"
+      ],
+      "categories": [
+        "reference"
+      ]
+    },
+    {
+      "query": "Wikipedia lịch sử thủ đô Hà Nội",
+      "lang": "vi",
+      "expect_terms": [
+        "hà nội",
+        "lịch sử"
+      ],
+      "categories": [
+        "reference"
+      ]
+    },
+    {
+      "query": "cách hoạt động của vector embedding trong tìm kiếm ngữ nghĩa",
+      "lang": "vi",
+      "expect_terms": [
+        "vector",
+        "embedding"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "Server Side Request Forgery SSRF prevention techniques",
+      "lang": "en",
+      "expect_terms": [
+        "ssrf",
+        "forgery",
+        "prevention"
+      ],
+      "categories": [
+        "general",
+        "developer"
+      ]
+    },
+    {
+      "query": "DNS rebinding attack protection IP pinning",
+      "lang": "en",
+      "expect_terms": [
+        "dns",
+        "rebinding",
+        "pinning"
+      ],
+      "categories": [
+        "developer"
+      ]
+    },
+    {
+      "query": "Redis sliding window rate limiter sorted set",
+      "lang": "en",
+      "expect_terms": [
+        "rate",
+        "limiter",
+        "redis"
+      ],
+      "categories": [
+        "developer"
+      ]
+    },
+    {
+      "query": "SimHash near duplicate document detection",
+      "lang": "en",
+      "expect_terms": [
+        "simhash",
+        "duplicate"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "BM25 ranking function information retrieval",
+      "lang": "en",
+      "expect_terms": [
+        "bm25",
+        "ranking"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "Docker compose memory limit configuration",
+      "lang": "en",
+      "expect_terms": [
+        "docker",
+        "compose",
+        "memory"
+      ],
+      "categories": [
+        "developer"
+      ]
+    },
+    {
+      "query": "hướng dẫn tối ưu hóa hiệu năng website Next.js",
+      "lang": "vi",
+      "expect_terms": [
+        "next.js",
+        "tối ưu"
+      ],
+      "categories": [
+        "developer"
+      ]
+    },
+    {
+      "query": "so sánh Ollama và vLLM tự host mô hình ngôn ngữ lớn",
+      "lang": "vi",
+      "expect_terms": [
+        "ollama",
+        "vllm"
+      ],
+      "categories": [
+        "general"
+      ]
+    },
+    {
+      "query": "Playwright headless browser web extraction python",
+      "lang": "en",
+      "expect_terms": [
+        "playwright",
+        "browser",
+        "extraction"
+      ],
+      "categories": [
+        "developer"
+      ]
+    },
+    {
+      "query": "FastMCP python model context protocol server implementation",
+      "lang": "en",
+      "expect_terms": [
+        "fastmcp",
+        "mcp"
+      ],
+      "categories": [
+        "developer"
+      ]
+    },
+    {
+      "query": "phân tích pháp y BCTC cổ phiếu FPT cấu trúc nợ và dòng tiền CFO",
+      "lang": "vi",
+      "expect_terms": [
+        "fpt",
+        "cfo",
+        "piotroski",
+        "z-score"
+      ],
+      "categories": [
+        "financial"
+      ]
+    },
+    {
+      "query": "thẩm định ngân hàng VCB hệ số CAR nợ xấu NPL và CASA",
+      "lang": "vi",
+      "expect_terms": [
+        "vcb",
+        "car",
+        "npl",
+        "casa"
+      ],
+      "categories": [
+        "financial"
+      ]
+    },
+    {
+      "query": "phân tích cổ phiếu HPG kế hoạch kinh doanh và dự án Dung Quất 2",
+      "lang": "vi",
+      "expect_terms": [
+        "hpg",
+        "dung quất",
+        "doanh thu"
+      ],
+      "categories": [
+        "financial"
+      ]
+    },
+    {
+      "query": "chứng khoán SSI dư nợ margin trên VCSH và danh mục tự doanh FVTPL",
+      "lang": "vi",
+      "expect_terms": [
+        "ssi",
+        "margin",
+        "fvtpl"
+      ],
+      "categories": [
+        "financial"
+      ]
+    },
+    {
+      "query": "cổ phiếu IDC doanh thu chưa thực hiện khu công nghiệp và cổ tức tiền mặt",
+      "lang": "vi",
+      "expect_terms": [
+        "idc",
+        "cổ tức",
+        "chưa thực hiện"
+      ],
+      "categories": [
+        "financial"
+      ]
+    },
+    {
+      "query": "phân tích kỹ thuật cổ phiếu FPT Fibonacci Golden Pocket và mây Ichimoku RSI 9",
+      "lang": "vi",
+      "expect_terms": [
+        "fpt",
+        "fibonacci",
+        "golden pocket",
+        "ichimoku",
+        "rsi(9)"
+      ],
+      "categories": [
+        "financial"
+      ]
+    },
+    {
+      "query": "$NVDA technical analysis Fibonacci retracement and Ichimoku Cloud",
+      "lang": "en",
+      "expect_terms": [
+        "nvda",
+        "fibonacci",
+        "ichimoku"
+      ],
+      "categories": [
+        "financial"
+      ]
+    },
+    {
+      "query": "giá vàng XAUUSD phân tích kỹ thuật hỗ trợ kháng cự Fibonacci",
+      "lang": "vi",
+      "expect_terms": [
+        "xauusd",
+        "fibo",
+        "ichimoku"
+      ],
+      "categories": [
+        "financial"
+      ]
+    },
+    {
+      "query": "tra cứu phong thủy bát trạch tuổi Canh Ngọ 1990 hướng tốt sinh khí",
+      "lang": "vi",
+      "expect_terms": [
+        "1990",
+        "canh ngọ",
+        "lộ bàng thổ",
+        "khảm"
+      ],
+      "categories": [
+        "fengshui"
+      ]
+    },
+    {
+      "query": "phong thủy tuổi Giáp Thìn 2024 mệnh gì hợp màu gì tam hợp",
+      "lang": "vi",
+      "expect_terms": [
+        "2024",
+        "giáp thìn",
+        "phúc đăng hỏa",
+        "tam hợp"
+      ],
+      "categories": [
+        "fengshui"
+      ]
+    },
+    {
+      "query": "site:stackoverflow.com python asyncio event loop best practices",
+      "lang": "en",
+      "expect_terms": [
+        "asyncio",
+        "event loop"
+      ],
+      "categories": [
+        "developer"
+      ],
+      "engines": [
+        "stackexchange"
+      ]
+    },
+    {
+      "query": "bluesky posts about local LLM tooling",
+      "lang": "en",
+      "expect_terms": [
+        "bluesky"
+      ],
+      "categories": [
+        "social"
+      ],
+      "engines": [
+        "bluesky"
+      ]
+    },
+    {
+      "query": "transformer architecture scholarly journal papers",
+      "lang": "en",
+      "expect_terms": [
+        "transformer"
+      ],
+      "categories": [
+        "academic"
+      ],
+      "engines": [
+        "openalex",
+        "crossref",
+        "europepmc"
+      ]
+    },
+    {
+      "query": "global semiconductor export controls news this week",
+      "lang": "en",
+      "expect_terms": [
+        "semiconductor"
+      ],
+      "categories": [
+        "news",
+        "global-fin"
+      ],
+      "engines": [
+        "gdelt",
+        "google_news"
+      ],
+      "news": true
+    },
+    {
+      "query": "hacker nẽws discussions on rust vs go for backend services",
+      "lang": "en",
+      "expect_terms": [
+        "rust",
+        "go"
+      ],
+      "categories": [
+        "developer"
+      ],
+      "engines": [
+        "hackernews"
+      ]
+    },
+    {
+      "query": "thị trường chứng khoán Việt Nam tuần qua",
+      "lang": "vi",
+      "expect_terms": [
+        "VN-Index",
+        "chứng khoán"
+      ],
+      "categories": [
+        "financial"
+      ],
+      "engines": [
+        "google_news"
+      ],
+      "news": true
+    }
   ],
   "thresholds": {
     "hit_at_5": 0.7,

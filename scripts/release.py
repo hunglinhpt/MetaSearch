@@ -326,7 +326,15 @@ def run_pre_commit_gate(root: Path, python_bin: Path) -> None:
         desc="Ruff Static Analysis & Linting",
     )
 
-    # 3. Bandit Security Scan
+    # 3. Mypy Type Check (audit round 11: local gates drifted from CI, which
+    # already ran mypy on app/core + app/api — mirror it here)
+    run_command(
+        [str(python_bin), "-m", "mypy"],
+        cwd=root / "api",
+        desc="Mypy Type Check (app/core + app/api)",
+    )
+
+    # 4. Bandit Security Scan
     run_command(
         [str(python_bin), "-m", "bandit", "-q", "-r", "app", "-x", "tests"],
         cwd=root / "api",

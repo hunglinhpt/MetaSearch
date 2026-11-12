@@ -236,12 +236,76 @@ def create_app() -> FastAPI:
     return app
 
 
+def _mcp_auth_guard(inner):
+    """ASGI wrapper enforcing the SAME api-key auth as /v1 routes.
+
+    Audit round 11 P1: the mounted MCP sub-app bypassed router-level
+    ``dependencies=_auth`` entirely — with AUTH_ENABLED=true the same port
+    served unauthenticated search/scrape/research through the 5 MCP tools.
+    require_api_key raises MetaSearchError (headers included) — render it.
+    """
+
+    async def guarded(scope, receive, send):
+        if scope["type"] != "http":
+            await inner(scope, receive, send)
+            return
+        from starlette.requests import Request
+
+        request = Request(scope, receive)
+        try:
+            from app.core.auth import require_api_key
+
+            await require_api_key(request)
+        except Exception as exc:
+            from starlette.responses import JSONResponse
+
+            from app.core.errors import MetaSearchError
+
+            if isinstance(exc, MetaSearchError):
+                status = exc.status_code or 401
+                headers = getattr(exc, "headers", None) or {}
+                payload = {
+                    "error": {
+                        "code": exc.code.value if hasattr(exc.code, "value") else str(exc.code),
+                        "message": exc.message,
+                    }
+                }
+            else:
+                status = 401
+                headers = {}
+                payload = {"error": {"code": "unauthorized", "message": "missing API key"}}
+            resp = JSONResponse(payload, status_code=status, headers=headers)
+            await resp(scope, receive, send)
+            return
+        await inner(scope, receive, send)
+
+    return guarded
+
+
 def _mount_mcp(app: FastAPI) -> None:
     """Mount the MCP streamable-HTTP server at /mcp (optional dep)."""
     try:
         from app.mcp.server import build_server
 
-        app.mount("/mcp", build_server().streamable_http_app())
+        server = build_server()
+        http_app = server.streamable_http_app()
+        app.mount("/mcp", _mcp_auth_guard(http_app))
+        # Audit round 11 P1: FastAPI never runs MOUNTED sub-app lifespans, but
+        # FastMCP's streamable HTTP app needs session_manager.run() alive for
+        # the whole process — wire it into the app's event handlers.
+        import contextlib as _contextlib
+
+        manager_cm = server.session_manager.run()
+
+        async def _open_mcp_manager() -> None:
+            await manager_cm.__aenter__()
+
+        async def _close_mcp_manager() -> None:
+            with _contextlib.suppress(Exception):
+                await manager_cm.__aexit__(None, None, None)
+
+        app.add_event_handler("startup", _open_mcp_manager)
+        app.add_event_handler("shutdown", _close_mcp_manager)
         logger.info("mcp_http_mounted", path="/mcp")
     except SystemExit as exc:
         logger.warning("mcp_mount_skipped", reason=str(exc))
