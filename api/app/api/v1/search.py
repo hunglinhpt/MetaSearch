@@ -42,6 +42,7 @@ async def search(request: SearchRequest) -> SearchResponse:
                     timeout_ms=request.timeout_ms,
                     include_domains=request.include_domains,
                     exclude_domains=request.exclude_domains,
+                    deep=request.deep,
                 )
             )
             # WP-15: empty results with healthy engines = 200 complete:true;

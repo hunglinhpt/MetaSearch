@@ -81,30 +81,37 @@ class GoogleNewsAdapter:
             if days is not None and not _WHEN_OPERATOR_RE.search(q):
                 q = f"{q} when:{days}d"
 
-        # Determine locale: respect explicit lang="vi" or Vietnamese markers in query
-        is_vietnamese = (lang or "").lower().startswith("vi") or bool(
-            re.search(
-                r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]",
-                q,
-                re.IGNORECASE,
+        # Explicit lang wins (docs/19 W3): map it to a Google News locale.
+        # Otherwise fall back to the Vietnamese-marker heuristic below.
+        explicit = (lang or "").split("-")[0].lower().strip()
+        if explicit and re.fullmatch(r"[a-z]{2}", explicit):
+            hl = "vi" if explicit == "vi" else ("en-US" if explicit == "en" else explicit)
+            gl = explicit.upper()
+            ceid = f"{gl}:{explicit}"
+        else:
+            # No explicit lang: detect Vietnamese markers in the query text.
+            is_vietnamese = bool(
+                re.search(
+                    r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]",
+                    q,
+                    re.IGNORECASE,
+                )
+                or any(
+                    w in q.lower()
+                    for w in [
+                        "chứng khoán",
+                        "cổ phiếu",
+                        "việt nam",
+                        "vn-index",
+                        "kinh tế",
+                        "hôm nay",
+                        "tin tức",
+                    ]
+                )
             )
-            or any(
-                w in q.lower()
-                for w in [
-                    "chứng khoán",
-                    "cổ phiếu",
-                    "việt nam",
-                    "vn-index",
-                    "kinh tế",
-                    "hôm nay",
-                    "tin tức",
-                ]
-            )
-        )
-
-        hl = "vi" if is_vietnamese else "en-US"
-        gl = "VN" if is_vietnamese else "US"
-        ceid = "VN:vi" if is_vietnamese else "US:en"
+            hl = "vi" if is_vietnamese else "en-US"
+            gl = "VN" if is_vietnamese else "US"
+            ceid = "VN:vi" if is_vietnamese else "US:en"
 
         params = {
             "q": q,

@@ -152,11 +152,13 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
     if any(t in q for t in fengshui_terms):
         inferred.add("fengshui")
 
-    news_terms = ("tin tức", "thời sự", "mới nhất", "breaking news", "bản tin hôm nay")
+    news_terms: tuple[str, ...] = (
+        "tin tức", "thời sự", "mới nhất", "breaking news", "bản tin hôm nay",
+    )
     if any(t in q for t in news_terms):
         inferred.add("news")
 
-    acad_terms = (
+    acad_terms: tuple[str, ...] = (
         "arxiv",
         "pubmed",
         "semanticscholar",
@@ -169,6 +171,8 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
 
     dev_terms = (
         "stackoverflow",
+        "stackexchange",
+        "stack exchange",
         "github repo",
         "huggingface",
         "traceback",
@@ -176,9 +180,97 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "syntaxerror",
         "typeerror",
         "nullpointerexception",
+        "hacker news",
+        "news.ycombinator",
     )
     if any(t in q for t in dev_terms):
         inferred.add("developer")
+
+    # v2.4.0 global (docs/19): social networks & forums
+    social_terms = (
+        "reddit",
+        "twitter",
+        "x.com",
+        "tweet",
+        "mastodon",
+        "bluesky",
+        "bsky",
+        "linkedin",
+        "facebook",
+        "instagram",
+        "tiktok",
+        "youtube",
+        "telegram",
+        "discord",
+        "forum",
+        "diễn đàn",
+        "thảo luận",
+        "Ý kiến cộng đồng",
+        "hacker news",
+        "news.ycombinator",
+    )
+    if any(t in q for t in social_terms):
+        inferred.add("social")
+
+    # v2.4.0 global: scholarly sources beyond arxiv/pubmed
+    acad_terms += (
+        "doi:",
+        "doi.org",
+        "openalex",
+        "crossref",
+        "europe pmc",
+        "europepmc",
+        "ssrn",
+        "dblp",
+        "semantic scholar",
+        "google scholar",
+        "journal",
+        "tạp chí",
+        "preprint",
+        "peer review",
+        "meta-analysis",
+        "systematic review",
+        "research paper",
+        "bài báo khoa học",
+    )
+    if any(t in q for t in acad_terms):
+        inferred.add("academic")
+
+    # v2.4.0 global: fund/institutional research signals
+    global_fin_terms = (
+        "etf",
+        "nav",
+        "13f",
+        "prospectus",
+        "fact sheet",
+        "morningstar",
+        "seeking alpha",
+        "reuters",
+        "bloomberg",
+        "imf",
+        "world bank",
+        "oecd",
+        "bis",
+        "ecb",
+        "federal reserve",
+        "the fed",
+        "fred",
+        "13f filing",
+        "annual report",
+        "báo cáo thường niên",
+        "quỹ đầu tư",
+        "mutual fund",
+        "hedge fund",
+        "pension fund",
+        "sovereign wealth",
+    )
+    if any(t in q for t in global_fin_terms):
+        inferred.add("financial")
+
+    # v2.4.0 global: world news signals (English included)
+    news_terms += ("gdelt", "world news", "global news", "international news", "breaking")
+    if any(t in q for t in news_terms):
+        inferred.add("news")
 
     return inferred
 
@@ -198,6 +290,9 @@ class SearchParams:
     # fan-out. A filter that removes every result marks the outcome incomplete, not empty.
     include_domains: list[str] | None = None
     exclude_domains: list[str] | None = None
+    # docs/19 W4: deep=True → fan out to ALL enabled engines, ignoring the
+    # category filter, so "deepest possible" search is one flag away.
+    deep: bool = False
 
 
 @contextlib.contextmanager
@@ -451,6 +546,10 @@ class SearchPipeline:
             # Explicit engine list wins over category defaults.
             wanted = set(params.engines)
             candidates = [(cfg, ad) for cfg, ad in candidates if cfg.id in wanted]
+        elif params.deep:
+            # Deep mode (docs/19 W4): every enabled engine joins the fan-out —
+            # general + all verticals (social, academic, developer, financial…).
+            pass
         else:
             # Vertical engines (arXiv, Wikipedia, VietStock, Stooq, ...) join when
             # the request asks for their category OR when the query unambiguously
@@ -1325,6 +1424,7 @@ class AnswerPipeline:
                     freshness_days=params.freshness_days,
                     engines=params.engines,
                     news=params.news,
+                    deep=params.deep,
                 )
             )
             if payload and payload.get("answer_md"):
@@ -1391,6 +1491,7 @@ class AnswerPipeline:
                 freshness_days=params.freshness_days,
                 engines=params.engines,
                 news=params.news,
+                deep=params.deep,
             ),
             {
                 "answer_id": str(answer_id),

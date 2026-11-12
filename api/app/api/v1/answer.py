@@ -55,6 +55,7 @@ def _params(request: AnswerRequest) -> SearchParams:
         timeout_ms=request.timeout_ms,
         include_domains=request.include_domains,
         exclude_domains=request.exclude_domains,
+        deep=request.deep,
     )
 
 

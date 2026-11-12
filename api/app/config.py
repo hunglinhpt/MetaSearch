@@ -199,6 +199,9 @@ class Settings(BaseSettings):
     podcast_items_per_category: int = Field(default=3, ge=1, le=10)
     podcast_timeout_s: float = Field(default=120.0, gt=0)
     podcast_search_timeout_ms: int = Field(default=8000, ge=500, le=30000)
+    # Polite-pool contact for keyless scholarly APIs (OpenAlex/Crossref, docs/19 W1).
+    # Empty = omit mailto; both APIs still work, just without the polite-pool lane.
+    global_search_mailto: str = ""
     # Optional public base URL for the RSS enclosure (behind a reverse proxy,
     # request.base_url would be the internal host). Empty = derive per request.
     public_base_url: str = ""

@@ -54,6 +54,14 @@ ADAPTER_PATHS = {
     "google_news": "app.retrieval.adapters.google_news:GoogleNewsAdapter",
     "fengshui": "app.retrieval.adapters.fengshui:FengShuiAdapter",
     "viet_stock": "app.retrieval.adapters.viet_stock:VietStockAdapter",
+    # v2.4.0 global deep search (docs/19 W1) — all keyless
+    "hackernews": "app.retrieval.adapters.hackernews:HackerNewsAdapter",
+    "stackexchange": "app.retrieval.adapters.stackexchange:StackExchangeAdapter",
+    "bluesky": "app.retrieval.adapters.bluesky:BlueskyAdapter",
+    "openalex": "app.retrieval.adapters.openalex:OpenAlexAdapter",
+    "crossref": "app.retrieval.adapters.crossref:CrossrefAdapter",
+    "europepmc": "app.retrieval.adapters.europepmc:EuropePmcAdapter",
+    "gdelt": "app.retrieval.adapters.gdelt:GdeltAdapter",
 }
 
 
@@ -290,6 +298,84 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             requires_key=False,
             adapter_path=ADAPTER_PATHS["fengshui"],
         ),
+        # --- v2.4.0 global deep search (docs/19) — all keyless ---
+        "hackernews": EngineConfig(
+            id="hackernews",
+            name="Hacker News (Algolia HN API)",
+            category="social",
+            weight=1.0,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["hackernews"],
+        ),
+        "stackexchange": EngineConfig(
+            id="stackexchange",
+            name="Stack Exchange network API (forums)",
+            category="developer",
+            weight=1.0,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["stackexchange"],
+        ),
+        "bluesky": EngineConfig(
+            id="bluesky",
+            name="Bluesky public search (ATProto)",
+            category="social",
+            weight=0.9,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["bluesky"],
+        ),
+        "openalex": EngineConfig(
+            id="openalex",
+            name="OpenAlex scholarly works",
+            category="academic",
+            weight=1.0,
+            enabled=True,
+            timeout_ms=5000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["openalex"],
+        ),
+        "crossref": EngineConfig(
+            id="crossref",
+            name="Crossref DOI metadata",
+            category="academic",
+            weight=0.9,
+            enabled=True,
+            timeout_ms=5000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["crossref"],
+        ),
+        "europepmc": EngineConfig(
+            id="europepmc",
+            name="Europe PMC (biomedical, open access)",
+            category="academic",
+            weight=1.0,
+            enabled=True,
+            timeout_ms=5000,
+            max_results=10,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["europepmc"],
+        ),
+        "gdelt": EngineConfig(
+            id="gdelt",
+            name="GDELT global news/events (100+ languages)",
+            category="news",
+            weight=1.1,
+            enabled=True,
+            timeout_ms=5000,
+            max_results=15,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["gdelt"],
+        ),
     }
 
 
@@ -433,6 +519,16 @@ class DbEngineStore:
                 if not rows:
                     await self._guarded(self._seed_rows())
                     rows = await self._guarded(self._load_rows())
+                else:
+                    # v2.4.0 upgrade path (docs/19): engines added to
+                    # default_configs after a deployment already seeded must
+                    # still appear. _seed_rows upserts with on_conflict_do_
+                    # nothing, so existing rows (incl. operator tweaks) are
+                    # never overwritten — only missing ids are inserted.
+                    defaults = default_configs(self._settings)
+                    if any(k not in rows for k in defaults):
+                        await self._guarded(self._seed_rows())
+                        rows = await self._guarded(self._load_rows())
                 self._cache = rows
                 self._cache_at = time.monotonic()
                 self._db_error_until = 0.0

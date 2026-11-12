@@ -151,6 +151,9 @@ class SearchRequest(BaseModel):
     # removes every result returns complete=false, not a confirmed empty answer.
     include_domains: list[str] | None = Field(default=None, max_length=50)
     exclude_domains: list[str] | None = Field(default=None, max_length=50)
+    # docs/19 W4: deep=True fans out to ALL enabled engines (category filter is
+    # ignored) so the answer is built from the widest possible result set.
+    deep: bool = False
 
 
 class CitationItem(BaseModel):

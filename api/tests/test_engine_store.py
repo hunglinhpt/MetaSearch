@@ -131,6 +131,14 @@ class TestDefaults:
             "fengshui",
             "viet_stock",
             "stooq",
+            # v2.4.0 global deep search (docs/19)
+            "hackernews",
+            "stackexchange",
+            "bluesky",
+            "openalex",
+            "crossref",
+            "europepmc",
+            "gdelt",
         }
         assert configs["arxiv"].category == "academic"
         assert configs["wikipedia"].category == "reference"
@@ -140,6 +148,13 @@ class TestDefaults:
         assert configs["pubmed"].category == "academic"
         assert configs["huggingface"].category == "developer"
         assert configs["semanticscholar"].category == "academic"
+        assert configs["hackernews"].category == "social"
+        assert configs["bluesky"].category == "social"
+        assert configs["stackexchange"].category == "developer"
+        assert configs["openalex"].category == "academic"
+        assert configs["crossref"].category == "academic"
+        assert configs["europepmc"].category == "academic"
+        assert configs["gdelt"].category == "news"
         assert configs["yahoo_finance"].category == "financial"
         assert configs["sec_edgar"].category == "financial"
         assert configs["google_news"].category == "news"

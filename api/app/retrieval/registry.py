@@ -17,18 +17,25 @@ from app.orchestration.engine_store import (
 )
 from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import SearchAdapter
+from app.retrieval.adapters.bluesky import BlueskyAdapter
 from app.retrieval.adapters.brave import BraveAdapter
+from app.retrieval.adapters.crossref import CrossrefAdapter
 from app.retrieval.adapters.ddg import DuckDuckGoAdapter
+from app.retrieval.adapters.europepmc import EuropePmcAdapter
 from app.retrieval.adapters.fengshui import FengShuiAdapter
+from app.retrieval.adapters.gdelt import GdeltAdapter
 from app.retrieval.adapters.github import GitHubAdapter
 from app.retrieval.adapters.google_news import GoogleNewsAdapter
+from app.retrieval.adapters.hackernews import HackerNewsAdapter
 from app.retrieval.adapters.huggingface import HuggingFaceAdapter
+from app.retrieval.adapters.openalex import OpenAlexAdapter
 from app.retrieval.adapters.pubmed import PubMedAdapter
 from app.retrieval.adapters.reddit import RedditAdapter
 from app.retrieval.adapters.searxng import SearXNGAdapter
 from app.retrieval.adapters.sec_edgar import SecEdgarAdapter
 from app.retrieval.adapters.semanticscholar import SemanticScholarAdapter
 from app.retrieval.adapters.serper import SerperAdapter
+from app.retrieval.adapters.stackexchange import StackExchangeAdapter
 from app.retrieval.adapters.stackoverflow import StackOverflowAdapter
 from app.retrieval.adapters.stooq import StooqFinanceAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
@@ -89,6 +96,14 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "google_news": GoogleNewsAdapter(),
         "fengshui": FengShuiAdapter(),
         "viet_stock": VietStockAdapter(),
+        # v2.4.0 global deep search (docs/19) — keyless
+        "hackernews": HackerNewsAdapter(),
+        "stackexchange": StackExchangeAdapter(),
+        "bluesky": BlueskyAdapter(),
+        "openalex": OpenAlexAdapter(mailto=settings.global_search_mailto),
+        "crossref": CrossrefAdapter(mailto=settings.global_search_mailto),
+        "europepmc": EuropePmcAdapter(),
+        "gdelt": GdeltAdapter(),
     }
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)

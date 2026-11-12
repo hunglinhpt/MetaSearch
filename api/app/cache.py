@@ -256,6 +256,7 @@ def search_cache_key(query: str, params: Any, *, news: bool = False) -> str:
         params.freshness_days,
         engines_part,
         news,
+        getattr(params, "deep", False),
     )
     return f"sr:v2:{h}"
 
@@ -271,6 +272,7 @@ def answer_cache_key(
     engines: list[str] | None = None,
     news: bool = False,
     domain: str | None = None,
+    deep: bool = False,
 ) -> str:
     """Answer key covers the search params that shape the context (docs/03 §7)."""
     engines_part = sorted(engines) if engines else []
@@ -284,6 +286,7 @@ def answer_cache_key(
         engines_part,
         news,
         domain,
+        deep,
     )
     return f"an:v2:{h}"
 

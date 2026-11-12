@@ -36,6 +36,11 @@
             "title": "Council Mode",
             "type": "boolean"
           },
+          "deep": {
+            "default": false,
+            "title": "Deep",
+            "type": "boolean"
+          },
           "domain": {
             "default": "auto",
             "maxLength": 60,
@@ -553,6 +558,11 @@
             "title": "Categories",
             "type": "array"
           },
+          "deep": {
+            "default": false,
+            "title": "Deep",
+            "type": "boolean"
+          },
           "domain": {
             "default": "auto",
             "maxLength": 60,
@@ -746,6 +756,11 @@
               }
             ],
             "title": "Chunks"
+          },
+          "deep": {
+            "default": false,
+            "title": "Deep",
+            "type": "boolean"
           },
           "domain": {
             "default": "auto",
@@ -1742,6 +1757,11 @@
             },
             "title": "Categories",
             "type": "array"
+          },
+          "deep": {
+            "default": false,
+            "title": "Deep",
+            "type": "boolean"
           },
           "engines": {
             "anyOf": [

@@ -23,6 +23,34 @@ logger = get_logger(__name__)
 # freshness_days → SearXNG time_range bucket.
 _TIME_RANGES: tuple[tuple[int, str], ...] = ((1, "day"), (7, "week"), (30, "month"), (365, "year"))
 
+# MetaSearch category → SearXNG category (docs/19 W2). SearXNG would 400 on an
+# unknown category name (e.g. our "financial"), so map explicitly; anything
+# unmapped falls back to "general" (dedup keeps one entry).
+_CATEGORY_MAP: dict[str, str] = {
+    "general": "general",
+    "news": "news",
+    "social": "social media",
+    "developer": "it",
+    "academic": "science",
+    "reference": "general",
+    "financial": "general",
+    "fengshui": "general",
+    "images": "images",
+    "videos": "videos",
+}
+
+
+def map_categories(categories: list[str] | None) -> list[str]:
+    """Translate MetaSearch categories to SearXNG category names, deduped."""
+    if not categories:
+        return ["general"]
+    out: list[str] = []
+    for c in categories:
+        mapped = _CATEGORY_MAP.get(c.strip().lower(), "general")
+        if mapped not in out:
+            out.append(mapped)
+    return out or ["general"]
+
 
 def _time_range(freshness_days: int | None) -> str | None:
     if not freshness_days or freshness_days <= 0:
@@ -109,8 +137,9 @@ class SearXNGAdapter:
         }
         if lang:
             params["language"] = lang
-        if categories:
-            params["categories"] = ",".join(categories)
+        # Map to SearXNG's own category names (docs/19 W2) — never send our
+        # internal ids like "financial", which SearXNG does not know.
+        params["categories"] = ",".join(map_categories(categories))
         time_range = _time_range(freshness_days)
         if time_range:
             params["time_range"] = time_range
