@@ -153,7 +153,11 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         inferred.add("fengshui")
 
     news_terms: tuple[str, ...] = (
-        "tin tức", "thời sự", "mới nhất", "breaking news", "bản tin hôm nay",
+        "tin tức",
+        "thời sự",
+        "mới nhất",
+        "breaking news",
+        "bản tin hôm nay",
     )
     if any(t in q for t in news_terms):
         inferred.add("news")
