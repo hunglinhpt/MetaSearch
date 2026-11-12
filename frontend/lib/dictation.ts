@@ -78,6 +78,28 @@ export function startDictation(opts: DictationOptions): DictationHandle | null {
   let stopped = false;
   let ended = false; // onerror + onend can BOTH fire for one failure — report once
   let finalSoFar = "";
+  // Audit round 9: Chrome may re-deliver already-seen results with
+  // continuous=true — a processed-index watermark prevents double-merging.
+  let processedUpTo = 0;
+  // docs/18 A1: auto-stop after ~1.2s of silence (reset on every result).
+  const SILENCE_MS = 1200;
+  let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  const armSilence = () => {
+    if (silenceTimer) clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => {
+      try {
+        recognition.stop(); // engine onend fires -> natural finish path
+      } catch {
+        // already stopped by the engine
+      }
+    }, SILENCE_MS);
+  };
+  const disarmSilence = () => {
+    if (silenceTimer) {
+      clearTimeout(silenceTimer);
+      silenceTimer = null;
+    }
+  };
 
   const finish = (reason: string) => {
     if (ended) return;
@@ -88,7 +110,7 @@ export function startDictation(opts: DictationOptions): DictationHandle | null {
 
   recognition.onresult = (event: SpeechRecognitionEventLike) => {
     let interim = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
+    for (let i = processedUpTo; i < event.results.length; i++) {
       const result = event.results[i];
       const text = result[0]?.transcript ?? "";
       if (result.isFinal) {
@@ -97,15 +119,19 @@ export function startDictation(opts: DictationOptions): DictationHandle | null {
         interim += text;
       }
     }
+    processedUpTo = Math.max(processedUpTo, event.results.length);
+    armSilence();
     opts.onUpdate(finalSoFar, interim.trim());
   };
 
   recognition.onerror = (event: { error?: string }) => {
+    disarmSilence();
     if (stopped) return; // our own stop() can surface "aborted"
     finish(dictationErrorReason(event.error ?? ""));
   };
 
   recognition.onend = () => {
+    disarmSilence();
     if (stopped) return;
     // Natural stop (silence / server cut): report the accumulated text once.
     finish("finished");
@@ -122,6 +148,7 @@ export function startDictation(opts: DictationOptions): DictationHandle | null {
     stop: () => {
       if (stopped) return;
       stopped = true;
+      disarmSilence();
       try {
         recognition.stop();
       } catch {

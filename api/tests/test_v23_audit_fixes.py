@@ -359,6 +359,66 @@ def test_watchlist_memory_mode_recovers_to_db(client, monkeypatch, mem_db):
     assert [i["query"] for i in body["items"]] == ["VCB"]  # migrated, not lost
 
 
+def test_watchlist_migration_write_failure_keeps_memory_items(client, monkeypatch, mem_db):
+    """Audit round 9 P2: when the DB recovers for READS but the migration
+    WRITE fails, the memory items must survive (they are the only copy) and
+    the response must keep storage="memory" — never lie with storage="db"
+    while dropping the accumulated items on the floor."""
+    import time as _t
+
+    _use_owner(monkeypatch, "keyWF")
+
+    # Phase 1: DB down -> memory mode with one item.
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(deps, "get_session_factory", boom)
+    monkeypatch.setattr("app.db.session.get_engine", boom)
+    monkeypatch.setattr(watchlist, "_table_ready", False)
+    monkeypatch.setattr(watchlist, "_mem_owners", set())
+    monkeypatch.setattr(watchlist, "_mem_probe_at", {})
+    monkeypatch.setattr(watchlist, "_mem_store", OrderedDict())
+    assert client.post("/v1/watchlist", json={"query": "FPT"}).status_code == 201
+    assert client.get("/v1/watchlist").json()["storage"] == "memory"
+
+    # Phase 2: DB reads work again but every WRITE fails: point the factory
+    # at a working engine whose sessions always fail at begin().
+    engine2 = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    factory2 = async_sessionmaker(engine2, expire_on_commit=False, autoflush=False)
+    monkeypatch.setattr("app.db.session.get_engine", lambda: engine2)
+
+    def failing_factory():
+        session = factory2()
+
+        class BrokenBegin:
+            def __init__(self, session):
+                self._session = session
+
+            async def __aenter__(self):
+                raise RuntimeError("migration write fails")
+
+            async def __aexit__(self, *args):
+                return False
+
+        session.begin = lambda: BrokenBegin(session)  # type: ignore[method-assign]
+        return session
+
+    monkeypatch.setattr(deps, "get_session_factory", failing_factory)
+    monkeypatch.setattr(watchlist, "_table_ready", False)
+    watchlist._mem_probe_at["keyWF"] = _t.monotonic() - 9999  # probe due now
+
+    body = client.get("/v1/watchlist").json()
+    assert body["storage"] == "memory"  # honest: still memory-backed
+    assert [i["query"] for i in body["items"]] == ["FPT"]  # NOT lost
+
+    # The sticky flag is untouched: a later request re-probes (retry window).
+    assert "keyWF" in watchlist._mem_owners
+
+
 def test_watchlist_delete_during_outage_is_not_resurrected(client, monkeypatch, mem_db):
     """Loop-3: the memory list is the authoritative id set during an outage —
     an item deleted while the DB was down must NOT come back when the DB

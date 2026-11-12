@@ -63,9 +63,9 @@ class OpenAlexAdapter:
         if raw_lang and _LANG_RE.match(raw_lang):
             filters.append(f"language:{raw_lang}")
         if freshness_days:
-            from datetime import date, timedelta
+            from datetime import timedelta
 
-            since = date.today() - timedelta(days=int(freshness_days))
+            since = datetime.now(UTC).date() - timedelta(days=int(freshness_days))
             filters.append(f"from_publication_date:{since.isoformat()}")
         params: dict[str, Any] = {
             "search": q,

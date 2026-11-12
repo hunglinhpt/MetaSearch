@@ -988,6 +988,7 @@
         "properties": {
           "symbols": {
             "items": {
+              "maxLength": 15,
               "type": "string"
             },
             "maxItems": 20,
@@ -1339,6 +1340,7 @@
           "days": {
             "anyOf": [
               {
+                "minimum": 1.0,
                 "type": "integer"
               },
               {

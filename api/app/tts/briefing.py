@@ -92,7 +92,11 @@ def latest_briefing(data_dir: str | Path) -> Path | None:
     if not d.is_dir():
         return None
     candidates = sorted(
-        (p for p in d.iterdir() if p.is_file() and _BRIEFING_FILE_RE.match(p.name)),
+        (
+            p
+            for p in d.iterdir()
+            if p.is_file() and not p.is_symlink() and _BRIEFING_FILE_RE.match(p.name)
+        ),
         key=lambda p: p.name,
         reverse=True,
     )
@@ -112,7 +116,7 @@ def cleanup_retention(
     if not d.is_dir():
         return 0
     for p in d.iterdir():
-        if not p.is_file():
+        if not p.is_file() or p.is_symlink():
             continue
         if _BRIEFING_TMP_RE.match(p.name):
             # Temp file from a crashed write — but NEVER one that is actively

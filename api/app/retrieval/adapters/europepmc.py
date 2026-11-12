@@ -55,9 +55,9 @@ class EuropePmcAdapter:
             return []
         full_q = q
         if freshness_days:
-            from datetime import date, timedelta
+            from datetime import timedelta
 
-            since = date.today() - timedelta(days=int(freshness_days))
+            since = datetime.now(UTC).date() - timedelta(days=int(freshness_days))
             full_q = f"({q}) AND FIRST_PDATE:[{since.isoformat()} TO 3000-12-31]"
         params: dict[str, Any] = {
             "query": full_q,

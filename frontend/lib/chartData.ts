@@ -112,9 +112,21 @@ export function chartModel(resp: MarketOhlcvResponse): {
   volumes: VolumeBar[];
   stats: ChartStats;
 } {
+  const candles = toCandles(resp.candles);
+  const rendered = candles;
+  // Stats over the SAME sorted+deduped series the chart renders (audit
+  // round 9): a future feed drift must not make "Biến động" use a different
+  // first candle than displayed. Map the kept times back to the payload rows
+  // so volume survives (Candle has no volume field).
+  const rawByTime = new Map(
+    resp.candles.filter((c) => Number.isFinite(c.time)).map((c) => [c.time, c])
+  );
+  const renderedRaw = rendered
+    .map((c) => rawByTime.get(c.time))
+    .filter((c): c is OhlcvCandle => Boolean(c));
   return {
-    candles: toCandles(resp.candles),
+    candles,
     volumes: toVolumeBars(resp.candles),
-    stats: computeStats(resp.candles),
+    stats: computeStats(renderedRaw),
   };
 }

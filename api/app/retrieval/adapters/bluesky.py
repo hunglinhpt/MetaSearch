@@ -77,13 +77,12 @@ class BlueskyAdapter:
             # at://did:.../app.bsky.feed.post/<rkey> -> https://bsky.app/profile/<handle>/post/<rkey>
             rkey = uri.rsplit("/", 1)[-1] if uri else ""
             handle = (post.get("author") or {}).get("handle") or ""
-            url = (
-                f"https://bsky.app/profile/{handle}/post/{rkey}"
-                if handle and rkey
-                else "https://bsky.app"
-            )
-            if not text:
+            # Audit v2.4 round 9: without handle+rkey there is NO honest URL —
+            # dropping the post beats a fabricated homepage link that the
+            # merger would collapse every drifted post onto.
+            if not (handle and rkey) or not text:
                 continue
+            url = f"https://bsky.app/profile/{handle}/post/{rkey}"
             results.append(
                 RawResult(
                     url=url,

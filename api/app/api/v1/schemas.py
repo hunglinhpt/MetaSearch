@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.llm.providers import LLMOverride
 
@@ -25,7 +25,13 @@ class TtsSynthesizeRequest(BaseModel):
 class FaCompareRequest(BaseModel):
     """POST /v1/fa/compare — cross-source fundamentals for 1..N symbols."""
 
-    symbols: list[str] = Field(min_length=1, max_length=20)
+    # Item-level bound (audit 9): ensure_symbol rejects >15 chars anyway —
+    # failing early at the schema costs one 400 instead of N parse work.
+    symbols: list[Annotated[str, StringConstraints(max_length=15)]] = Field(
+        min_length=1, max_length=20
+    )
+    # Per-item bound: ensure_symbol rejects >15 chars anyway — failing
+    # early at the schema costs one 400 instead of N parse work (audit 9).
     timeout_ms: int | None = Field(default=None, ge=500, le=30000)
 
 
@@ -59,7 +65,9 @@ class MarketOhlcvRequest(BaseModel):
     """POST /v1/market/ohlcv — daily candles for the chart (docs/18 B2)."""
 
     symbol: str = Field(min_length=1, max_length=15)
-    days: int | None = None
+    days: int | None = Field(default=None, ge=1)
+    # Upper bound is the server-side clamp to [market_ohlcv_min/max_days] —
+    # schema ge=1 only rejects nonsense negatives early (audit 9).
     timeout_ms: int | None = Field(default=None, ge=500, le=30000)
 
 

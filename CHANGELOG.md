@@ -13,6 +13,38 @@ version tuân theo [SemVer](https://semver.org/).
 - `google_news` map lang→đúng country code cho `gl` (en→US, vi→VN, fr→FR…, fallback US; trước đây en→"EN" sai).
 - UI: bật Deep tự gửi `k=30` (cap 50) cho cả `/v1/search` và `/v1/answer` để tập kết quả merge không bị hẹp.
 
+## [Unreleased] — Audit round 9 (3 expert đối kháng độc lập trên v2.3.0+v2.4.0)
+
+### Fixed
+- **SearXNG settings.yml (P1)**: 6/16 engine được liệt kê không có module upstream
+  (`reddit`, `twitter`, `linkedin`, `dblp` — SearXNG bỏ qua im lặng; `stackexchange`,
+  `mastodon` sai tên) → thay bằng tên thật (stackoverflow/askubuntu/superuser,
+  mastodon users/hashtags); docs/19 sửa các claim sai.
+- **L2 semantic cache bỏ qua `deep`**: answer deep không còn có thể replay từ
+  answer shallow tương tự ngữ nghĩa.
+- **crossref `_parse_issued`**: guard drift lồng (`issued` non-dict, `date-parts[0]`
+  scalar) — 1 record hỏng bị skip, không chết cả adapter.
+- **`_http.fetch_json`**: bỏ `follow_redirects=True` (giữ mặc định False của pool —
+  redirect không gửi header của ta tới host lạ).
+- **watchlist**: khôi phục từ memory khi DB sống lại mà WRITE lỗi giờ GIỮ nguyên
+  items memory (trước đây mất sạch + báo storage="db" sai) + regression test.
+- **bluesky**: post thiếu handle/rkey bị drop thay vì bịa URL trang chủ (tránh
+  merger gộp đống post drift vào 1 nhóm).
+- **pipeline**: timeout engine bị clamp dưới fan-out budget (không còn TIMEOUT
+  oan cho engine chậm-hợp-lệ khi budget đã cạn); term inference chữ hoa chết
+  ("Ý kiến cộng đồng") đã lower-case.
+- **frontend**: mic tự dừng khi rời tab tìm kiếm; hint permission/no-mic/network
+  cho dictation; poll podcast dừng ở `cancelled` + cap 150 lần; ResearchPanel
+  settled-guard chống double-finalize + không để error che report; chip Deep tự
+  vô hiệu + nhãn trung thực khi đã ghim engine; audio podcast hint 401/auth;
+  faTable lọc charset sớm; chart stats tính trên đúng chuỗi đã sort/dedupe;
+  dictation auto-stop im 1.2s + watermark chống double-merge; nút watchlist có
+  busy state.
+- **podcast/briefing**: `_status_for` stat guarded (không 500 khi retention sweep
+  đua), retention sweep chạy cả ở /status (status/latest không còn mâu thuẫn),
+  symlink hardening, tài liệu hóa lựa chọn mốc UTC.
+- 3 test mới/khôi phục (migration write-fail, days clamp contract giữ nguyên).
+
 ## [2.4.0] — 2026-11-12 — Global Deep Search (docs/19): 7 engine toàn cầu keyless mới, tiếng Anh end-to-end, deep mode
 
 ### Added

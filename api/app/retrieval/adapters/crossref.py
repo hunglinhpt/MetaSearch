@@ -19,11 +19,16 @@ DEFAULT_BASE_URL = "https://api.crossref.org/works"
 
 
 def _parse_issued(value: Any) -> datetime | None:
-    parts = (value or {}).get("date-parts")
-    if not parts or not parts[0]:
+    # Nested-field drift guard (audit v2.4 round 9): `issued` may arrive as a
+    # non-dict or `date-parts[0]` as a scalar — a malformed record must be
+    # skipped, never fail the whole adapter.
+    if not isinstance(value, dict):
         return None
-    ymd = parts[0] + [1] * (3 - len(parts[0]))
+    parts = value.get("date-parts")
+    if not isinstance(parts, list) or not parts or not isinstance(parts[0], list):
+        return None
     try:
+        ymd = [int(x) for x in [*parts[0], 1, 1]][:3]
         return datetime(ymd[0], ymd[1], ymd[2], tzinfo=UTC)
     except (TypeError, ValueError):
         return None
@@ -65,9 +70,9 @@ class CrossrefAdapter:
             ),
         }
         if freshness_days:
-            from datetime import date, timedelta
+            from datetime import timedelta
 
-            since = date.today() - timedelta(days=int(freshness_days))
+            since = datetime.now(UTC).date() - timedelta(days=int(freshness_days))
             params["filter"] = f"from-issued-date:{since.isoformat()}"
         if self.mailto:
             params["mailto"] = self.mailto

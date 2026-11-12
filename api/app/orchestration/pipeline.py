@@ -222,7 +222,7 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "forum",
         "diễn đàn",
         "thảo luận",
-        "Ý kiến cộng đồng",
+        "ý kiến cộng đồng",
         "hacker news",
         "news.ycombinator",
     )
@@ -602,13 +602,20 @@ class SearchPipeline:
         async def call_engine(cfg: EngineConfig, adapter: SearchAdapter) -> list[RawResult]:
             started = time.perf_counter()
             try:
+                # Audit v2.4 round 9: an engine whose own timeout exceeds the
+                # fan-out budget would ALWAYS be cancelled by the wait loop and
+                # record a TIMEOUT penalty for a response that could never be
+                # used. Clamp the per-engine timeout under the stage budget.
+                engine_timeout = min(
+                    cfg.timeout_ms / 1000, max(0.5, hard_timeout - 0.05)
+                )
                 results = await adapter.search(
                     query,
                     lang=params.lang,
                     categories=params.categories,
                     freshness_days=params.freshness_days,
                     max_results=cfg.max_results,
-                    timeout_s=cfg.timeout_ms / 1000,
+                    timeout_s=engine_timeout,
                 )
             except Exception as exc:
                 ms = int((time.perf_counter() - started) * 1000)
@@ -652,10 +659,6 @@ class SearchPipeline:
                 on_event(("engine_done", {"engine": cfg.id, "results": len(results), "ms": ms}))
             return results
 
-        tasks = {
-            asyncio.create_task(call_engine(cfg, adapter)): cfg.id
-            for cfg, adapter in active_candidates
-        }
         from app.core.budget import get_current_budget
 
         budget = get_current_budget()
@@ -665,6 +668,11 @@ class SearchPipeline:
             else self.settings.search_fanout_budget_s
         )
         soft_timeout = min(self.settings.search_soft_budget_s, hard_timeout)
+
+        tasks = {
+            asyncio.create_task(call_engine(cfg, adapter)): cfg.id
+            for cfg, adapter in active_candidates
+        }
         min_engines = self.settings.search_quorum_min_engines
 
         done: set[asyncio.Task[Any]] = set()
@@ -1450,6 +1458,11 @@ class AnswerPipeline:
                 CACHE_EVENTS.labels(kind="answer", outcome="hit").inc()
                 return self._replay(payload)
             CACHE_EVENTS.labels(kind="answer", outcome="miss").inc()
+        # Deep answers must never replay from the L2 semantic cache: a
+        # semantically-similar SHALLOW answer would be served as deep (audit
+        # v2.4 round 9 — the row does not carry deep/lang/k).
+        if params.deep:
+            return None
         payload = await self._semantic_lookup(query)
         if payload is not None:
             CACHE_EVENTS.labels(kind="semantic", outcome="hit").inc()

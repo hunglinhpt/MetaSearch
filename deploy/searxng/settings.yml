@@ -49,22 +49,25 @@ engines:
     disabled: true
   - name: marginalia
     disabled: true
-  # ── v2.4.0 Global Deep Search (docs/19): bật thêm các engine toàn cầu ──
-  # Mạng xã hội / diễn đàn / code (một số nền tảng có thể block bot — searxng tự
-  # bỏ qua engine lỗi, breaker của MetaSearch không bị ảnh hưởng):
-  - name: reddit
+  # ── v2.4.0 Global Deep Search (docs/19): bật thêm engine toàn cầu ──
+  # CHỈ liệt kê engine có module thật trong upstream SearXNG (audit vòng 9):
+  # reddit/twitter/linkedin/dblp KHÔNG có module upstream — SearXNG bỏ qua im
+  # lặng khi boot (đã từng bịa tên); reddit có adapter riêng của MetaSearch,
+  # stackexchange/mastodon dùng đúng tên per-site của upstream.
+  # Mạng xã hội / diễn đàn / code:
+  - name: stackoverflow
     disabled: false
-  - name: stackexchange
+  - name: askubuntu
+    disabled: false
+  - name: superuser
+    disabled: false
+  - name: mastodon users
+    disabled: false
+  - name: mastodon hashtags
     disabled: false
   - name: github
     disabled: false
   - name: youtube
-    disabled: false
-  - name: mastodon
-    disabled: false
-  - name: twitter
-    disabled: false
-  - name: linkedin
     disabled: false
   # Học thuật / tạp chí (phục vụ "tạp chí quỹ", nghiên cứu toàn cầu):
   - name: arxiv
@@ -72,8 +75,6 @@ engines:
   - name: pubmed
     disabled: false
   - name: crossref
-    disabled: false
-  - name: dblp
     disabled: false
   - name: semantic scholar
     disabled: false

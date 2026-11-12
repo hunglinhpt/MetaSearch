@@ -36,9 +36,10 @@ async def fetch_json(
         hdrs.update(headers)
     http_client = client or get_http_client("search")
     try:
-        resp = await http_client.get(
-            url, params=params, headers=hdrs, follow_redirects=True, timeout=timeout_s
-        )
+        # follow_redirects stays at the pool default (False, AGENTS §4): none
+        # of the fixed API hosts need it, and a redirect would send our
+        # headers to an arbitrary third host with no per-hop re-check.
+        resp = await http_client.get(url, params=params, headers=hdrs, timeout=timeout_s)
     except httpx.PoolTimeout as exc:
         raise AdapterError(f"{adapter_id} pool timeout", kind=Outcome.LOCAL_OVERLOAD) from exc
     except httpx.TimeoutException as exc:
@@ -59,6 +60,8 @@ async def fetch_json(
             kind=Outcome.UPSTREAM_ERROR,
             retryable=False,
         )
+    # NOTE: the byte cap below runs after the body is buffered; it bounds
+    # what we PARSE. A streaming hard-cap is tracked as follow-up polish.
     if len(resp.content or b"") > max_bytes:
         raise AdapterError(
             f"{adapter_id} payload too large", kind=Outcome.UPSTREAM_ERROR, retryable=False

@@ -171,6 +171,8 @@ export default function NewsPanel() {
   const [listening, setListening] = useState(false);
   const micHandleRef = useRef<DictationHandle | null>(null);
   const micBaseRef = useRef("");
+  const [micHint, setMicHint] = useState("");
+  const [watchAddBusy, setWatchAddBusy] = useState(false);
   // Watchlist + alerts (docs/18 C) — poll-on-demand, no background poller.
   const [watchItems, setWatchItems] = useState<WatchlistItem[]>([]);
   const [alerts, setAlerts] = useState<WatchlistAlertsResponse | null>(null);
@@ -229,11 +231,25 @@ export default function NewsPanel() {
       return;
     }
     micBaseRef.current = customQuery;
+    setMicHint("");
     const handle = startDictation({
       onUpdate: (committed, interim) => {
         setCustomQuery(mergeTranscripts(micBaseRef.current, committed, interim));
       },
-      onEnd: () => setListening(false),
+      onEnd: (reason) => {
+        setListening(false);
+        setMicHint(
+          reason === "permission"
+            ? "❌ Trình duyệt chặn micro — cấp quyền rồi thử lại."
+            : reason === "no-microphone"
+              ? "❌ Không tìm thấy micro trên máy."
+              : reason === "network"
+                ? "❌ Nhận dạng giọng nói lỗi mạng — thử lại."
+                : reason === "no-speech"
+                  ? "⚠️ Không nghe thấy lời nói — nói lại sau khi bấm 🎙️."
+                  : ""
+        );
+      },
     });
     if (handle) {
       micHandleRef.current = handle;
@@ -256,15 +272,19 @@ export default function NewsPanel() {
 
   const addCurrentToWatchlist = useCallback(async () => {
     const q = (customQuery.trim() || appliedQuery || "").trim();
-    if (!q) return;
+    if (!q || watchAddBusy) return;
+    setWatchAddBusy(true);
     try {
       await addWatchlist(q, activeCat.label);
       await refreshWatchlist();
       setWatchError("");
     } catch (e) {
       setWatchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWatchAddBusy(false);
     }
-  }, [customQuery, appliedQuery, activeCat.label, refreshWatchlist]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customQuery, appliedQuery, activeCat.label, refreshWatchlist, watchAddBusy]);
 
   const deleteWatchItem = useCallback(
     async (id: string) => {
@@ -322,14 +342,28 @@ export default function NewsPanel() {
       if (st.status === "ready") return;
       if (podcastPollRef.current) clearInterval(podcastPollRef.current);
       let consecutiveErrors = 0;
+      let pollAttempts = 0;
       podcastPollRef.current = setInterval(async () => {
+        // Audit round 9: a job can also end "cancelled" (backend shutdown),
+        // and any stuck job must not be polled forever (2s x infinity).
+        pollAttempts += 1;
+        if (pollAttempts > 150) {
+          // ~5 minutes at 2s — beyond any legitimate synthesis window.
+          if (podcastPollRef.current) clearInterval(podcastPollRef.current);
+          podcastPollRef.current = null;
+          setPodcastError("Hết thời gian chờ bản tin audio — thử tạo lại.");
+          return;
+        }
         try {
           consecutiveErrors = 0;
           const s = await podcastBriefingStatus();
           setPodcast(s);
-          if (s.status === "ready" || s.status === "error") {
+          if (s.status === "ready" || s.status === "error" || s.status === "cancelled") {
             if (podcastPollRef.current) clearInterval(podcastPollRef.current);
             podcastPollRef.current = null;
+            if (s.status === "cancelled") {
+              setPodcastError("Tạo bản tin audio bị huỷ (server tắt) — thử lại.");
+            }
           }
         } catch {
           // Backend down mid-poll: stop after 5 consecutive failures instead
@@ -517,6 +551,7 @@ export default function NewsPanel() {
           onChange={(e) => setCustomQuery(e.target.value)}
           disabled={loading}
         />
+        {micHint && <span className="news-tts-hint">{micHint}</span>}
         {micReady && (
           <button
             type="button"
@@ -629,12 +664,20 @@ export default function NewsPanel() {
       {podcastError && <p className="error">Bản tin audio: {podcastError}</p>}
       {podcast && podcast.status === "ready" && (
         <div className="podcast-player">
-          <audio controls preload="none" src={podcastLatestUrl()} style={{ width: "100%" }}>
+          <audio
+            controls
+            preload="none"
+            src={podcastLatestUrl()}
+            style={{ width: "100%" }}
+            onError={() => setPodcastError("Không tải được audio (401 nếu AUTH_ENABLED=true — trình duyệt không gửi API key qua <audio>; hoặc file chưa sẵn sàng).")}
+          >
             Trình duyệt không hỗ trợ audio.
           </audio>
           <span className="muted small">
             Bản tin ngày {podcast.date} · {podcast.audio_bytes} byte ·{" "}
             <a href={podcastFeedUrl()} target="_blank" rel="noreferrer">RSS feed</a>
+            {""}{' '}
+            <span className="muted small">(RSS/audio cần API key qua header khi bật auth — dùng client MCP/REST)</span>
           </span>
         </div>
       )}
@@ -648,8 +691,14 @@ export default function NewsPanel() {
       <div className="watchlist-block">
         <div className="watchlist-head">
           <strong>Theo dõi truy vấn</strong>
-          <button type="button" className="tts-btn" onClick={addCurrentToWatchlist}>
-            + Theo dõi truy vấn này
+          <button
+            type="button"
+            className="tts-btn"
+            onClick={addCurrentToWatchlist}
+            disabled={watchAddBusy}
+            aria-busy={watchAddBusy}
+          >
+            {watchAddBusy ? "Đang thêm..." : "+ Theo dõi truy vấn này"}
           </button>
           <button
             type="button"

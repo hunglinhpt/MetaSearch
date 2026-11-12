@@ -56,6 +56,7 @@ export default function ResearchPanel() {
   const [vsEnabled, setVsEnabled] = useState(false);
   const ttsHandleRef = useRef<TtsHandle | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const settledRef = useRef(false);
   const sectionsRef = useRef<{ title: string; text: string }[]>([]);
   const reportRef = useRef("");
   const rafRef = useRef<number | null>(null);
@@ -119,6 +120,7 @@ export default function ResearchPanel() {
     setLearnings([]);
     setError("");
     setJobId(null);
+    settledRef.current = false;
     stopSpeaking();
     try {
       const created = await createResearch(
@@ -147,6 +149,9 @@ export default function ResearchPanel() {
    * still-running job after a dropped stream is re-attached to SSE (the
    * backend replays its event buffer) up to `reattachLeft` times. */
   const finalize = async (id: string, signal: AbortSignal, reattachLeft = 0, expectDone = false) => {
+    // Audit round 9: the done event and the stream-close fallback can both
+    // call finalize — only the first may settle the phase.
+    if (settledRef.current) return;
     try {
       let status: ResearchStatus | null = null;
       // After a "done" SSE event the DB status can lag a beat behind the event
@@ -163,11 +168,14 @@ export default function ResearchPanel() {
         setCitations(status.citations ?? []);
         setLearnings(status.learnings ?? []);
         setStage("");
+        setError(""); // a transient poll failure must not shadow the report
+        settledRef.current = true;
         setPhase("done");
         return;
       }
       if (status.status === "failed" || status.error) {
         setError(status.error || "Job nghiên cứu thất bại");
+        settledRef.current = true;
         setPhase("error");
         return;
       }

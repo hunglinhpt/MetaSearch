@@ -11,9 +11,13 @@
   stackoverflow, reddit, github, pubmed, huggingface, semanticscholar, yahoo_finance,
   sec_edgar, stooq, google_news, viet_stock, fengshui.
 - SearXNG chỉ enable ~11 engine general (xem `deploy/searxng/settings.yml`) — **đây
-  là đòn bẩy lớn nhất**, gần như miễn phí: searxng đã có sẵn engine cho reddit,
-  stackexchange, github, youtube, mastodon, x/twitter, linkedin, arxiv, pubmed,
-  crossref, dblp, wikidata, semantic scholar…
+  là đòn bẩy lớn nhất**, gần như miễn phí. LƯU Ý (audit vòng 9): chỉ engine có
+  module thật trong upstream mới hoạt động — settings.yml giờ bật
+  stackoverflow/askubuntu/superuser/mastodon users/mastodon hashtags/github/
+  youtube/arxiv/pubmed/crossref/semantic scholar/wikidata/goodreads/imdb/openverse;
+  reddit/x-twitter/linkedin/dblp KHÔNG có module upstream (đã từng liệt kê sai —
+  SearXNG bỏ qua im lặng); reddit có adapter riêng của MetaSearch, X/LinkedIn/DBLP
+  chưa được cover ở bất kỳ nguồn nào.
 - `lang` đã có ở schema (`SearchRequest.lang`) và được plumbed tới searxng (language),
   ddg (region), wikipedia (subdomain); **chưa** tới google_news (hl/gl), và chưa có
   ở các adapter mới.
@@ -38,11 +42,11 @@
 
 | Yêu cầu của user | Nguồn sau v2.4.0 |
 |---|---|
-| Diễn đàn | StackExchange API (stackoverflow + toàn bộ site SE), searxng `stackexchange`, Discourse/forum qua general web, HN comments |
-| Mạng xã hội | Reddit adapter + searxng reddit; Bluesky public API; Mastodon/X/LinkedIn/YouTube qua searxng (một số có thể bị nền tảng chặn — có breaker, không làm chết request); Telegram/Discord/Facebook không có API public — tìm qua web (ddg/searxng) + kênh public t.me |
+| Diễn đàn | StackExchange API (stackoverflow + toàn bộ site SE), searxng stackoverflow/askubuntu/superuser, Discourse/forum qua general web, HN comments |
+| Mạng xã hội | Reddit adapter (JSON keyless); Bluesky public API; Mastodon qua searxng (mastodon users/hashtags); YouTube qua searxng. X/Twitter/LinkedIn KHÔNG có nguồn API public miễn phí — chỉ tìm qua web (ddg/searxng general); Telegram/Discord/Facebook tương tự + kênh public t.me |
 | GitHub | GitHub adapter (search API, token tuỳ chọn) + searxng github + searchcode qua searxng |
 | Reddit | Reddit adapter (JSON keyless) + searxng |
-| Tạp chí học thuật / quỹ | arXiv, PubMed, Europe PMC, Semantic Scholar (đã có) + OpenAlex, Crossref, DBLP qua searxng; Google Scholar qua searxng; SSRN/research institute qua web |
+| Tạp chí học thuật / quỹ | arXiv, PubMed, Europe PMC, Semantic Scholar (đã có) + OpenAlex, Crossref (adapter trực tiếp); Google Scholar qua searxng; SSRN/research institute qua web |
 | Báo cáo quỹ & macro toàn cầu | SEC EDGAR (13F/portfolio US funds), Stooq, Yahoo Finance (đã có) + GDELT global events + tin tức thế giới Google News (gl/hl theo lang) |
 | "Sâu nhất có thể" | `deep=true` fan-out mọi engine + k=50 + rerank; kết hợp tab Deep Research (FR-9 multi-hop) cho câu hỏi cần tổng hợp |
 
@@ -63,7 +67,7 @@
 
 | Rủi ro | Giảm thiểu |
 |---|---|
-| SearXNG engine mới chết (x/twitter, linkedin hay bị block) | searxng tự bỏ qua engine lỗi; breaker ở MetaSearch; không enable engine cần key/searxng-secret |
+| SearXNG engine liệt kê sai tên (không có module upstream) | SearXNG bỏ qua im lặng → đã rà soát lại settings.yml chỉ giữ engine thật (audit vòng 9); searxng tự bỏ qua engine lỗi; breaker ở MetaSearch; không enable engine cần key/searxng-secret |
 | GDELT query syntax đặc biệt (`sourcelang:`) | chỉ append khi lang hợp lệ; sai cú pháp → gdelt trả lỗi → adapter trả [] + log, không 500 |
 | Bluesky public API đổi schema | parse phòng thủ (dict.get chuỗi), test pin schema giả |
 | Fan-out deep quá tải | deep vẫn qua admission + budget + health breaker; k cap 50; timeout tổng có sẵn |

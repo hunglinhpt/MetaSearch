@@ -123,6 +123,7 @@ export default function HomePage() {
   const [listening, setListening] = useState(false);
   const micHandleRef = useRef<DictationHandle | null>(null);
   const micBaseRef = useRef("");
+  const [micHint, setMicHint] = useState("");
   const [voiceMode, setVoiceMode] = useState<TtsVoiceMode>("none");
   const [ttsEngine, setTtsEngine] = useState<TtsEngine>("webspeech");
   const [vsEnabled, setVsEnabled] = useState(false);
@@ -351,6 +352,7 @@ export default function HomePage() {
   }, []);
 
   const toggleMic = () => {
+    setMicHint("");
     if (listening) {
       micHandleRef.current?.stop();
       micHandleRef.current = null;
@@ -362,7 +364,21 @@ export default function HomePage() {
       onUpdate: (committed, interim) => {
         setQuery(mergeTranscripts(micBaseRef.current, committed, interim));
       },
-      onEnd: () => setListening(false),
+      onEnd: (reason) => {
+        setListening(false);
+        // docs/18 A1 promised actionable hints — deliver them per reason.
+        setMicHint(
+          reason === "permission"
+            ? "❌ Trình duyệt chặn micro — cấp quyền truy cập micro rồi thử lại."
+            : reason === "no-microphone"
+              ? "❌ Không tìm thấy micro trên máy."
+              : reason === "network"
+                ? "❌ Nhận dạng giọng nói lỗi mạng — thử lại."
+                : reason === "no-speech"
+                  ? "⚠️ Không nghe thấy lời nói — bấm 🎙️ và nói lại."
+                  : ""
+        );
+      },
     });
     if (handle) {
       micHandleRef.current = handle;
@@ -393,6 +409,11 @@ export default function HomePage() {
       answerTtsRef.current = null;
       ttsStop();
       setAnswerSpeaking(false);
+      // P2 audit round 9: the mic button unmounts with the tab but the
+      // recognizer would keep streaming audio with no visible control.
+      micHandleRef.current?.stop();
+      micHandleRef.current = null;
+      setListening(false);
     }
   }, [activeTab]);
 
@@ -702,6 +723,7 @@ export default function HomePage() {
                 <button type="submit" disabled={busy || !query.trim()}>
                   {busy ? "Đang xử lý..." : "Tìm kiếm"}
                 </button>
+                {micHint && <span className="news-tts-hint">{micHint}</span>}
               </div>
 
               <div className="mode-toggle" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -808,10 +830,14 @@ export default function HomePage() {
                   type="button"
                   className={`chip chip-toggle ${deepSearch ? "on" : ""}`}
                   onClick={() => setDeepSearch((v) => !v)}
-                  disabled={busy}
-                  title="Deep search: fan-out tới TẤT CẢ engine đã bật (bỏ lọc chuyên ngành), k tối đa — dùng cho câu hỏi cần mọi nguồn toàn cầu (docs/19)"
+                  disabled={busy || selectedEngines.length > 0}
+                  title={
+                    selectedEngines.length > 0
+                      ? "Deep chỉ tác động khi KHÔNG ghim engine cụ thể (engine được chọn thắng deep ở backend)"
+                      : "Deep search: fan-out tới TẤT CẢ engine đã bật (bỏ lọc chuyên ngành), k tối đa — dùng cho câu hỏi cần mọi nguồn toàn cầu (docs/19)"
+                  }
                 >
-                  🌐 Deep
+                  🌐 Deep{selectedEngines.length > 0 ? " (không áp dụng)" : ""}
                 </button>
               </div>
 

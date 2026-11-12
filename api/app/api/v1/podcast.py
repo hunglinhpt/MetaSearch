@@ -18,6 +18,7 @@ the key, or keep auth off on loopback (docs/18 §7, item 4 — RSS stays behind 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import OrderedDict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -63,6 +64,9 @@ def _data_dir() -> str:
 
 
 def _today() -> date:
+    # UTC calendar day on purpose (documented, audit 9): idempotency and
+    # retention align with server-side file names; note that on Asia/Ho_Chi_Minh
+    # the day rolls at 07:00 local. An operator-configurable tz is a follow-up.
     return datetime.now(UTC).date()
 
 
@@ -93,6 +97,11 @@ def _status_for(day: date) -> PodcastBriefingStatus:
     # The file on disk wins whenever the job is not actively running: a job
     # can end "error" AFTER the file was written (e.g. retention hiccup), and
     # /latest still serves that file — status must not contradict it.
+    # Retention sweep on every status read (audit 9): without it /status can
+    # report a beyond-horizon file that /latest would prune away — the two
+    # endpoints must never disagree.
+    with contextlib.suppress(Exception):
+        cleanup_retention(_data_dir(), retention_days=get_settings().podcast_retention_days)
     if job is not None and job.get("status") in ("pending", "running"):
         return PodcastBriefingStatus(
             date=day.isoformat(),
@@ -102,13 +111,19 @@ def _status_for(day: date) -> PodcastBriefingStatus:
             audio_bytes=int(job.get("audio_bytes") or 0),
             created_at=job.get("created_at"),
         )
-    if path.is_file():
+    try:
+        stat = path.stat() if path.is_file() else None
+    except OSError:
+        # Concurrent retention sweep replaced/removed the file between
+        # is_file() and stat() — report "none" instead of a 500 (audit 9).
+        stat = None
+    if stat is not None:
         return PodcastBriefingStatus(
             date=day.isoformat(),
             status="ready",
             chars=int(job.get("chars") or 0) if job else 0,
-            audio_bytes=path.stat().st_size,
-            created_at=datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+            audio_bytes=stat.st_size,
+            created_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
         )
     if job is not None:
         return PodcastBriefingStatus(

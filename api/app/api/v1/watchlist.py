@@ -6,6 +6,9 @@ DELETE /v1/watchlist/{id}      -> remove (404 unless owner)
 GET    /v1/watchlist/alerts    -> poll-on-demand: one search per item (bounded
                                   concurrency + total wall-clock), diff top URLs
                                   against the stored baseline
+     ACCEPTED (audit round 9): the per-owner lock is held across the
+     whole poll (serialize per owner); single-operator Lite is the
+     target — a multi-tenant deployment should snapshot-unlock-merge.
 
 Design notes:
 - Tenancy by ``current_api_key_id`` (anonymous single-operator Lite uses the
@@ -207,10 +210,16 @@ async def _list_items(owner: str) -> tuple[list[dict[str, Any]], str]:
                 # is absent from memory was deleted mid-outage and must NOT be
                 # resurrected. _save_items upserts these and deletes the rest.
                 items = _list_mem(owner)
-                await _save_items(owner, items, "db")
-                _mem_owners.discard(owner)
-                _mem_store.pop(owner, None)
-                return items, "db"
+                if await _save_items(owner, items, "db"):
+                    # Migration SUCCEEDED: only now may the memory copies go.
+                    _mem_owners.discard(owner)
+                    _mem_store.pop(owner, None)
+                    return items, "db"
+                # Migration write FAILED: the items live in memory only —
+                # dropping them here would silently destroy everything the
+                # user added during the outage (audit round 9, P2). Stay in
+                # memory mode; the probe retries on a later request.
+                return _list_mem(owner), "memory"
         return _list_mem(owner), "memory"
     rows = await _list_db(owner)
     if rows is not None:
@@ -220,12 +229,16 @@ async def _list_items(owner: str) -> tuple[list[dict[str, Any]], str]:
     return _list_mem(owner), "memory"
 
 
-async def _save_items(owner: str, items: list[dict[str, Any]], storage: str) -> None:
+async def _save_items(owner: str, items: list[dict[str, Any]], storage: str) -> bool:
     """UPSERT per item id + delete removed ids, in ONE transaction — never a
-    delete-all + re-insert, so concurrent requests cannot lose rows."""
+    delete-all + re-insert, so concurrent requests cannot lose rows.
+
+    Returns True when the write definitely succeeded (memory stores always
+    succeed); False means the DB write failed and the memory copy stays
+    authoritative for this owner."""
     if storage == "memory":
         _mem_put(owner, items)
-        return
+        return True
     try:
         async with deps.get_session_factory()() as session, session.begin():
             existing = (
@@ -263,12 +276,14 @@ async def _save_items(owner: str, items: list[dict[str, Any]], storage: str) -> 
                     row.last_hash = it.get("last_hash")
                     row.last_urls = it.get("last_urls")
                     row.last_checked_at = it.get("last_checked_at")
+        return True
     except Exception as exc:
         # DB write failed: fall back to memory for THIS owner stickily, so the
         # next read does not silently resurrect stale DB rows (split-brain).
         logger.warning("watchlist_db_write_failed", error=type(exc).__name__)
         _mem_owners.add(owner)
         _mem_put(owner, items)
+        return False
 
 
 # --- endpoints ---------------------------------------------------------------
