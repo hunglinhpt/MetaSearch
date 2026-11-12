@@ -88,6 +88,10 @@ export default function HomePage() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<Mode>("answer");
   const [selectedCategory, setSelectedCategory] = useState<string>("auto");
+  // docs/19: global search — language selector (auto = let the backend detect)
+  // and deep mode (fan out to ALL engines, ignoring the category filter).
+  const [searchLang, setSearchLang] = useState<string>("auto");
+  const [deepSearch, setDeepSearch] = useState<boolean>(false);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
   const [engines, setEngines] = useState<EngineDone[]>([]);
@@ -538,6 +542,8 @@ export default function HomePage() {
           signal: controller.signal,
           engines: selectedEngines.length ? selectedEngines : undefined,
           categories: categoriesParam,
+          lang: searchLang === "auto" ? undefined : searchLang,
+          deep: deepSearch,
         });
         setHits(resp.results);
         const incomplete = resp.complete === false;
@@ -572,7 +578,9 @@ export default function HomePage() {
           undefined,
           councilMode,
           councilEndpointsParam,
-          selectedDomain || undefined
+          selectedDomain || undefined,
+          searchLang === "auto" ? undefined : searchLang,
+          deepSearch
         );
       }
     } catch (err: unknown) {
@@ -591,6 +599,8 @@ export default function HomePage() {
     selectedCategory,
     selectedDomain,
     selectedEngines,
+    searchLang,
+    deepSearch,
   ]);
 
   const citationByUrl = new Map(citations.map((c) => [c.n, c]));
@@ -770,6 +780,37 @@ export default function HomePage() {
                   ))}
                 </div>
               )}
+
+              <div className="category-bar">
+                <span className="engine-filter-label" style={{ marginRight: "0.4rem" }}>
+                  Ngôn ngữ:
+                </span>
+                {[
+                  { id: "auto", label: "Tự động" },
+                  { id: "vi", label: "🇻🇳 VI" },
+                  { id: "en", label: "🇬🇧 EN" },
+                ].map((l) => (
+                  <button
+                    key={l.id}
+                    type="button"
+                    className={`chip chip-toggle ${searchLang === l.id ? "on" : ""}`}
+                    onClick={() => setSearchLang(l.id)}
+                    disabled={busy}
+                    title="Ngôn ngữ tìm kiếm: truyền tới searxng/ddg/wikipedia/google news/GDELT/OpenAlex (docs/19)"
+                  >
+                    {l.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={`chip chip-toggle ${deepSearch ? "on" : ""}`}
+                  onClick={() => setDeepSearch((v) => !v)}
+                  disabled={busy}
+                  title="Deep search: fan-out tới TẤT CẢ engine đã bật (bỏ lọc chuyên ngành), k tối đa — dùng cho câu hỏi cần mọi nguồn toàn cầu (docs/19)"
+                >
+                  🌐 Deep
+                </button>
+              </div>
 
               <div className="category-bar">
                 <span className="engine-filter-label" style={{ marginRight: "0.4rem" }}>

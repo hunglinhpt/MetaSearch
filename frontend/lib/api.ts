@@ -215,6 +215,11 @@ export type SearchOptions = {
   // news=true → backend uses the news cache TTL (900s) and the news freshness
   // weight; the news tab always sets it.
   news?: boolean;
+  // docs/19: lang ("vi"/"en"/…) plumbed to engines (searxng language, ddg region,
+  // wikipedia subdomain, google news hl/gl, gdelt sourcelang, openalex filter).
+  lang?: string;
+  // docs/19 W4: deep=true fans out to ALL enabled engines (category filter off).
+  deep?: boolean;
 };
 
 /** Only http(s) links become hrefs — defense against a misbehaving engine. */
@@ -236,6 +241,8 @@ export async function search(
       categories: opts.categories ?? undefined,
       freshness_days: opts.freshnessDays ?? undefined,
       news: opts.news ?? undefined,
+      lang: opts.lang ?? undefined,
+      deep: opts.deep ?? undefined,
     }),
     signal: opts.signal,
   });
@@ -419,7 +426,9 @@ export async function streamAnswer(
   llm?: LLMOverridePayload,
   councilMode?: boolean,
   councilEndpoints?: string[],
-  domain?: string
+  domain?: string,
+  lang?: string,
+  deep?: boolean
 ): Promise<void> {
   const resp = await fetch(`${API_BASE_URL}/v1/answer`, {
     method: "POST",
@@ -433,6 +442,8 @@ export async function streamAnswer(
       council_mode: councilMode ?? undefined,
       council_endpoints: councilEndpoints ?? undefined,
       domain: domain ?? undefined,
+      lang: lang ?? undefined,
+      deep: deep ?? undefined,
     }),
     signal,
   });
