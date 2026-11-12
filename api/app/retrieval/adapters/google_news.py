@@ -82,11 +82,18 @@ class GoogleNewsAdapter:
                 q = f"{q} when:{days}d"
 
         # Explicit lang wins (docs/19 W3): map it to a Google News locale.
-        # Otherwise fall back to the Vietnamese-marker heuristic below.
+        # gl must be a COUNTRY code (not the language code), so map the common
+        # languages; unknown 2-letter langs fall back to US.
+        _GL_MAP = {"en": "US", "vi": "VN", "zh": "CN", "ja": "JP", "ko": "KR"}
         explicit = (lang or "").split("-")[0].lower().strip()
         if explicit and re.fullmatch(r"[a-z]{2}", explicit):
             hl = "vi" if explicit == "vi" else ("en-US" if explicit == "en" else explicit)
-            gl = explicit.upper()
+            gl = _GL_MAP.get(
+                explicit,
+                explicit.upper()
+                if explicit in ("fr", "de", "es", "pt", "it", "ru", "th", "id", "hi", "ar")
+                else "US",
+            )
             ceid = f"{gl}:{explicit}"
         else:
             # No explicit lang: detect Vietnamese markers in the query text.

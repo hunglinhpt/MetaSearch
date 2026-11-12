@@ -79,9 +79,13 @@ class OpenAlexAdapter:
         payload = await fetch_json(
             self.id, self.base_url, params=params, timeout_s=timeout_s, client=self._client
         )
+        if not isinstance(payload, dict):
+            return []
         works = payload.get("results") or []
         results: list[RawResult] = []
         for w in works:
+            if not isinstance(w, dict):
+                continue
             wid = w.get("id") or ""
             doi = w.get("doi") or ""
             url = doi or (f"https://openalex.org/{wid}" if wid else "")

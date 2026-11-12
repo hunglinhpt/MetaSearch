@@ -428,7 +428,8 @@ export async function streamAnswer(
   councilEndpoints?: string[],
   domain?: string,
   lang?: string,
-  deep?: boolean
+  deep?: boolean,
+  k?: number
 ): Promise<void> {
   const resp = await fetch(`${API_BASE_URL}/v1/answer`, {
     method: "POST",
@@ -444,6 +445,7 @@ export async function streamAnswer(
       domain: domain ?? undefined,
       lang: lang ?? undefined,
       deep: deep ?? undefined,
+      k: k ?? undefined,
     }),
     signal,
   });

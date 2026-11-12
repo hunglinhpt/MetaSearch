@@ -74,9 +74,13 @@ class HackerNewsAdapter:
             timeout_s=timeout_s,
             client=self._client,
         )
+        if not isinstance(payload, dict):
+            return []  # schema drift: never crash on a non-object body
         hits = payload.get("hits") or []
         results: list[RawResult] = []
         for hit in hits:
+            if not isinstance(hit, dict):
+                continue
             url = hit.get("url") or (
                 f"https://news.ycombinator.com/item?id={hit.get('objectID')}"
                 if hit.get("objectID")

@@ -74,9 +74,16 @@ class CrossrefAdapter:
         payload = await fetch_json(
             self.id, self.base_url, params=params, timeout_s=timeout_s, client=self._client
         )
-        items = ((payload.get("message") or {}).get("items")) or []
+        if not isinstance(payload, dict):
+            return []
+        message = payload.get("message")
+        if not isinstance(message, dict):
+            return []
+        items = message.get("items") or []
         results: list[RawResult] = []
         for it in items:
+            if not isinstance(it, dict):
+                continue
             doi = str(it.get("DOI") or "").lower()
             if not doi:
                 continue

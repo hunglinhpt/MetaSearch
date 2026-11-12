@@ -87,6 +87,19 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
     if len(q) < 3:
         return inferred
 
+    def _has_term(terms) -> bool:
+        # Word-boundary match for ASCII terms so short tickers/abbreviations do
+        # not substring-match inside other words ("nav" in "navigation",
+        # "eps" in "steps"). Boundaries only apply where the term itself starts/
+        # ends with an ASCII word char, so "doi:" still matches "doi:10..." and
+        # Vietnamese phrases keep plain substring semantics.
+        for t in terms:
+            pre = r"(?<![a-z0-9])" if t[0].isascii() and t[0].isalnum() else ""
+            post = r"(?![a-z0-9])" if t[-1].isascii() and t[-1].isalnum() else ""
+            if re.search(pre + re.escape(t) + post, q):
+                return True
+        return False
+
     fin_terms = (
         "cổ phiếu",
         "chứng khoán",
@@ -128,7 +141,7 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "kết quả kinh doanh",
         "pháp y tài chính",
     )
-    if any(t in q for t in fin_terms) or _DOLLAR_TICKER_RE.search(q) or _has_vn_ticker(query):
+    if _has_term(fin_terms) or _DOLLAR_TICKER_RE.search(q) or _has_vn_ticker(query):
         inferred.add("financial")
 
     fengshui_terms = (
@@ -149,7 +162,7 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "mệnh hỏa",
         "mệnh thổ",
     )
-    if any(t in q for t in fengshui_terms):
+    if _has_term(fengshui_terms):
         inferred.add("fengshui")
 
     news_terms: tuple[str, ...] = (
@@ -159,7 +172,7 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "breaking news",
         "bản tin hôm nay",
     )
-    if any(t in q for t in news_terms):
+    if _has_term(news_terms):
         inferred.add("news")
 
     acad_terms: tuple[str, ...] = (
@@ -170,7 +183,7 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "nghiên cứu lâm sàng",
         "peer-reviewed",
     )
-    if any(t in q for t in acad_terms):
+    if _has_term(acad_terms):
         inferred.add("academic")
 
     dev_terms = (
@@ -187,7 +200,7 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "hacker news",
         "news.ycombinator",
     )
-    if any(t in q for t in dev_terms):
+    if _has_term(dev_terms):
         inferred.add("developer")
 
     # v2.4.0 global (docs/19): social networks & forums
@@ -213,7 +226,7 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "hacker news",
         "news.ycombinator",
     )
-    if any(t in q for t in social_terms):
+    if _has_term(social_terms):
         inferred.add("social")
 
     # v2.4.0 global: scholarly sources beyond arxiv/pubmed
@@ -237,7 +250,7 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "research paper",
         "bài báo khoa học",
     )
-    if any(t in q for t in acad_terms):
+    if _has_term(acad_terms):
         inferred.add("academic")
 
     # v2.4.0 global: fund/institutional research signals
@@ -268,12 +281,12 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "pension fund",
         "sovereign wealth",
     )
-    if any(t in q for t in global_fin_terms):
+    if _has_term(global_fin_terms):
         inferred.add("financial")
 
     # v2.4.0 global: world news signals (English included)
     news_terms += ("gdelt", "world news", "global news", "international news", "breaking")
-    if any(t in q for t in news_terms):
+    if _has_term(news_terms):
         inferred.add("news")
 
     return inferred
@@ -665,7 +678,9 @@ class SearchPipeline:
             remaining_hard = hard_timeout - elapsed
             if remaining_hard <= 0.0:
                 break
-            if elapsed >= soft_timeout and successful_engines >= min_engines:
+            # docs/19 W4: deep mode disables the quorum early-return — the whole
+            # point is to wait for ALL engines (still bounded by hard budget).
+            if not params.deep and elapsed >= soft_timeout and successful_engines >= min_engines:
                 quorum_met = True
                 break
 

@@ -92,4 +92,14 @@
 - [x] Gates: ruff/format/bandit/mypy/pytest/vitest/tsc/build xanh
 - [x] Audit (child-limit của agent runner chạm trần nên tự audit 8 lens fresh-eyes 2 vòng: fix P1 upgrade-path seed, kiểm tra SSRF/lang-injection/cache/deep — hết P0/P1/P2) đối kháng 8 lens × 2 vòng, hết P0/P1/P2
 - [x] Docs: README song ngữ, AGENTS.md, docs/12, CHANGELOG [2.4.0], env.example
-- [x] Release (sau khi gates xanh): tag v2.4.0 + push + CI xanh + GitHub Release
+- [x] Release: v2.4.0 (tag + push + GitHub Release + CI xanh); các fix sau audit → patch v2.4.1
+
+## 8. Audit 3 vòng sau release (2026-11-12, tự audit 8 lens fresh-eyes vì agent runner chạm child-limit)
+
+| Vòng | Phát hiện | Fix |
+|---|---|---|
+| 1 | 6/7 adapter gọi `payload.get(...)` không guard — upstream trả JSON array/string hoặc item không phải dict sẽ ném AttributeError (breaker ghi nhận lỗi thay vì trả rỗng) | `isinstance` guard ở payload lẫn từng item của cả 7 adapter + 12 test schema-drift mới; `import re` trong hàm của stackexchange dời lên đầu |
+| 2 | (a) `infer_categories_from_query` so khớp substring nên "nav" khớp "navigation", "eps" khớp "steps" → category sai; (b) `deep=true` vẫn bị quorum soft-budget cắt engine → không thực sự "sâu nhất" | (a) matcher word-boundary cho term ASCII (lookaround chỉ khi term bắt đầu/kết bằng word char — "doi:" vẫn khớp, cụm Việt giữ substring); (b) deep mode tắt quorum early-return, vẫn bounded bởi hard budget; test 2 chiều shallow/deep |
+| 3 | (a) google_news map `lang=en` sai thành `gl=EN` (phải là country code); (b) UI deep mode không nới `k` nên kết quả merge vẫn hẹp | (a) map ngôn ngữ→quốc gia đúng (en→US, vi→VN, fr→FR…, fallback US) + test; (b) UI gửi `k=30` khi bật Deep (schema cap 50), plumbed vào cả search và streamAnswer |
+
+Kết quả sau 3 vòng: full pytest EXIT=0, ruff/format/bandit/mypy (CI scope) sạch, vitest 49/49, tsc + next build xanh. Không còn P0/P1/P2.: tag v2.4.0 + push + CI xanh + GitHub Release

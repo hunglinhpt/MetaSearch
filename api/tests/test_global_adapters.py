@@ -436,7 +436,7 @@ class TestGoogleNewsLang:
         monkeypatch.setattr(gn, "get_http_client", lambda *a, **kw: mock_client(handler))
         ad = gn.GoogleNewsAdapter()
         await ad.search("việt nam chứng khoán", lang="en")  # explicit en beats VI text
-        assert seen["hl"] == "en-US" and seen["gl"] == "EN" and seen["ceid"] == "EN:en"
+        assert seen["hl"] == "en-US" and seen["gl"] == "US" and seen["ceid"] == "US:en"
 
     async def test_heuristic_vi_default(self, monkeypatch):
         import app.retrieval.adapters.google_news as gn
@@ -455,6 +455,26 @@ class TestGoogleNewsLang:
         ad = gn.GoogleNewsAdapter()
         await ad.search("chứng khoán việt nam hôm nay")  # no lang -> heuristic
         assert seen["hl"] == "vi" and seen["gl"] == "VN" and seen["ceid"] == "VN:vi"
+
+    async def test_explicit_lang_fr_maps_country(self, monkeypatch):
+        import app.retrieval.adapters.google_news as gn
+
+        seen = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.update(dict(request.url.params))
+            return httpx.Response(
+                200,
+                text='<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>',
+                headers={"Content-Type": "application/rss+xml"},
+            )
+
+        monkeypatch.setattr(gn, "get_http_client", lambda *a, **kw: mock_client(handler))
+        ad = gn.GoogleNewsAdapter()
+        await ad.search("nouvelles économie", lang="fr")
+        assert seen["hl"] == "fr" and seen["gl"] == "FR" and seen["ceid"] == "FR:fr"
+        await ad.search("some english news", lang="en")
+        assert seen["gl"] == "US"  # en maps to country US, not "EN"
 
 
 # --- category inference (docs/19 terms) ---------------------------------------
@@ -599,3 +619,132 @@ async def test_db_store_seeds_missing_default_engines_on_upgrade(monkeypatch, tm
         assert new_id in snap, new_id
     # operator tweak preserved (brave was disabled in the old DB)
     assert snap["brave"].enabled is False
+
+
+# --- round-1 audit: schema drift must yield [] not a crash --------------------
+
+
+class TestSchemaDrift:
+    @pytest.mark.parametrize(
+        "adapter_cls",
+        [
+            HackerNewsAdapter,
+            StackExchangeAdapter,
+            BlueskyAdapter,
+            OpenAlexAdapter,
+            CrossrefAdapter,
+            EuropePmcAdapter,
+            GdeltAdapter,
+        ],
+    )
+    async def test_non_object_payload_returns_empty(self, adapter_cls):
+        # upstream returns a JSON array instead of an object
+        client = mock_client(lambda r: httpx.Response(200, text="[1,2,3]"))
+        ad = adapter_cls(client=client)
+        assert await ad.search("anything") == []
+
+    @pytest.mark.parametrize(
+        "adapter_cls,key",
+        [
+            (HackerNewsAdapter, "hits"),
+            (OpenAlexAdapter, "results"),
+            (CrossrefAdapter, "items"),
+            (EuropePmcAdapter, "result"),
+            (GdeltAdapter, "articles"),
+        ],
+    )
+    async def test_non_dict_items_are_skipped(self, adapter_cls, key):
+        if adapter_cls is CrossrefAdapter:
+            payload = {
+                "message": {
+                    "items": [
+                        "junk",
+                        {"DOI": "10.1/x", "title": ["T"], "issued": {"date-parts": [[2026]]}},
+                    ]
+                }
+            }
+        elif adapter_cls is EuropePmcAdapter:
+            payload = {"resultList": {"result": [None, {"title": "T", "pmid": "1"}]}}
+        else:
+            payload = {key: ["junk", None]}
+            if adapter_cls is HackerNewsAdapter:
+                payload = {
+                    "hits": ["junk", {"objectID": "9", "title": "T", "url": "https://x.example"}]
+                }
+            elif adapter_cls is OpenAlexAdapter:
+                payload = {"results": ["junk", {"id": "W1", "title": "T"}]}
+            elif adapter_cls is GdeltAdapter:
+                payload = {"articles": ["junk", {"title": "T", "url": "https://x.example"}]}
+        client = mock_client(lambda r: json_resp(payload))
+        ad = adapter_cls(client=client)
+        out = await ad.search("q")
+        assert all(isinstance(r, RawResult) for r in out)
+        assert len(out) == 1  # only the well-formed item survives
+
+
+class TestInferenceWordBoundaries:
+    """Round-2 audit: short ASCII terms must not substring-match inside words."""
+
+    def test_nav_eps_not_financial(self):
+        assert "financial" not in infer_categories_from_query("how to navigate steps in kubernetes")
+        assert "financial" not in infer_categories_from_query("the steps to deploy")
+
+    def test_real_fin_terms_still_match(self):
+        assert "financial" in infer_categories_from_query("etf nav comparison")
+        assert "financial" in infer_categories_from_query("p/e ratio of a bank")
+        assert "financial" in infer_categories_from_query("13f filing berkshire")
+
+    def test_doi_colon_matches(self):
+        assert "academic" in infer_categories_from_query("doi:10.1038/x paper")
+
+    def test_vietnamese_phrases_unchanged(self):
+        assert "financial" in infer_categories_from_query("giá cổ phiếu VCB")
+        assert "news" in infer_categories_from_query("tin tức hôm nay")
+
+
+@pytest.mark.asyncio
+async def test_deep_waits_past_soft_budget_for_all_engines():
+    """Round-2: deep=True must NOT stop at the quorum soft budget — the slow
+    engine's results are included; shallow mode cancels it (existing behavior)."""
+    import asyncio
+
+    from app.config import Settings as _S
+
+    class _Ad:
+        def __init__(self, aid, delay=0.0):
+            self.id = aid
+            self.delay = delay
+
+        async def search(self, query, **kw):
+            if self.delay:
+                await asyncio.sleep(self.delay)
+            return [
+                RawResult(
+                    url=f"https://{self.id}.example.com/",
+                    title=self.id,
+                    snippet="s",
+                    adapter=self.id,
+                )
+            ]
+
+    configs = {
+        c.id: c
+        for c in [
+            EngineConfig(id="fast1", name="f1", category="general", enabled=True),
+            EngineConfig(id="fast2", name="f2", category="general", enabled=True),
+            EngineConfig(id="slow", name="s", category="social", enabled=True),
+        ]
+    }
+    adapters = {"fast1": _Ad("fast1"), "fast2": _Ad("fast2"), "slow": _Ad("slow", delay=0.6)}
+    registry = EngineRegistry(InMemoryEngineStore(configs), adapters)
+    settings = _S(search_soft_budget_s=0.1, search_fanout_budget_s=5.0, search_quorum_min_engines=2)
+    pipeline = SearchPipeline(settings, registry)
+
+    shallow = await pipeline.run(SearchParams(query="anything", deep=False))
+    assert "slow" not in {s.engine for s in shallow.statuses if s.status == "ok"} or True
+    shallow_ok = {s.engine for s in shallow.statuses if s.status == "ok"}
+    assert "slow" not in shallow_ok  # quorum cut it at soft budget
+
+    deep = await pipeline.run(SearchParams(query="anything", deep=True))
+    deep_ok = {s.engine for s in deep.statuses if s.status == "ok"}
+    assert {"fast1", "fast2", "slow"} <= deep_ok  # deep waited for the slow engine

@@ -4,6 +4,15 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [2.4.1] — 2026-11-12 — audit fixes cho v2.4.0 (docs/19 §8, 3 vòng audit)
+
+### Fixed
+- 7 adapter toàn cầu mới: guard `isinstance` cho payload/item — upstream đổi schema (JSON không phải object, item không phải dict) thì trả [] thay vì ném lỗi vào breaker. 12 test schema-drift mới.
+- `infer_categories_from_query` khớp word-boundary cho term ASCII: "nav" không còn khớp "navigation", "eps" không khớp "steps"; "doi:" vẫn khớp; cụm tiếng Việt giữ nguyên. Test hồi quy 2 chiều.
+- `deep=true` tắt quorum early-return ở fan-out: deep mode chờ ĐỦ mọi engine (vẫn bounded bởi hard budget) — đúng nghĩa "sâu nhất". Test shallow vs deep.
+- `google_news` map lang→đúng country code cho `gl` (en→US, vi→VN, fr→FR…, fallback US; trước đây en→"EN" sai).
+- UI: bật Deep tự gửi `k=30` (cap 50) cho cả `/v1/search` và `/v1/answer` để tập kết quả merge không bị hẹp.
+
 ## [2.4.0] — 2026-11-12 — Global Deep Search (docs/19): 7 engine toàn cầu keyless mới, tiếng Anh end-to-end, deep mode
 
 ### Added

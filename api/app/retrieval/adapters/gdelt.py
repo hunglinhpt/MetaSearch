@@ -101,9 +101,13 @@ class GdeltAdapter:
         payload = await fetch_json(
             self.id, self.base_url, params=params, timeout_s=timeout_s, client=self._client
         )
+        if not isinstance(payload, dict):
+            return []
         articles = payload.get("articles") or []
         results: list[RawResult] = []
         for art in articles:
+            if not isinstance(art, dict):
+                continue
             url = art.get("url")
             title = str(art.get("title") or "").strip()
             if not url or not title:

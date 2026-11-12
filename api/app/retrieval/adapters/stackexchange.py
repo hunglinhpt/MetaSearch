@@ -8,6 +8,7 @@ askubuntu...). No key (300 req/day anonymous, gzip). Category: ``developer``
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -21,8 +22,8 @@ DEFAULT_BASE_URL = "https://api.stackexchange.com/2.3/search/advanced"
 
 def _site_from_query(query: str, default: str = "stackoverflow") -> tuple[str, str]:
     """Allow ``site:mathoverflow`` in the query to pick the SE site; returns
-    (cleaned_query, site). Site is strictly validated — it goes into a URL path."""
-    import re
+    (cleaned_query, site). Site is strictly validated: charset whitelist,
+    fixed host, so no "/", "?" or "&" can reach the query string."""
 
     m = re.search(r"(?:^|\s)site:([a-z0-9.]+)", query, re.IGNORECASE)
     if not m:
@@ -93,9 +94,13 @@ class StackExchangeAdapter:
             client=self._client,
             headers={"Accept-Encoding": "gzip"},
         )
+        if not isinstance(payload, dict):
+            return []
         items = payload.get("items") or []
         results: list[RawResult] = []
         for it in items:
+            if not isinstance(it, dict):
+                continue
             link = it.get("link")
             title = str(it.get("title") or "").strip()
             if not link or not title:

@@ -68,9 +68,16 @@ class EuropePmcAdapter:
         payload = await fetch_json(
             self.id, self.base_url, params=params, timeout_s=timeout_s, client=self._client
         )
-        hits = (payload.get("resultList") or {}).get("result") or []
+        if not isinstance(payload, dict):
+            return []
+        result_list = payload.get("resultList")
+        if not isinstance(result_list, dict):
+            return []
+        hits = result_list.get("result") or []
         results: list[RawResult] = []
         for h in hits:
+            if not isinstance(h, dict):
+                continue
             pmid = h.get("pmid") or ""
             pmcid = h.get("pmcid") or ""
             doi = h.get("doi") or ""

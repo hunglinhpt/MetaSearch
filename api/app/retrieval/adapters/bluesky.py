@@ -68,6 +68,8 @@ class BlueskyAdapter:
         posts = (payload.get("posts") or []) if isinstance(payload, dict) else []
         results: list[RawResult] = []
         for post in posts:
+            if not isinstance(post, dict):
+                continue
             record = post.get("record") or {}
             author = (post.get("author") or {}).get("handle") or "unknown"
             text = str(record.get("text") or "").strip()
