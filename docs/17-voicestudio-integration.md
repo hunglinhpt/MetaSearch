@@ -1,8 +1,9 @@
 > Mục tiêu: đánh giá và tích hợp [debpalash/VoiceStudio](https://github.com/debpalash/VoiceStudio)
 > làm **engine đọc máy chủ-side tuỳ chọn** cho tab Tin tức (và câu trả lời), giữ Web Speech API
-> làm mặc định; đồng thời đề xuất các chức năng mở rộng khác của VoiceStudio nếu việt hơn
-> (nếu ưu việt hơn phần TTS hiện tại). Trạng thái: **đã triển khai phần TTS server-side
-> (chưa release — [Unreleased] trong CHANGELOG)**; các tính năng mở rộng (dictation, tải bản tin audio) là phase sau — xem §6.
+> làm mặc định; đồng thời đề xuất các chức năng mở rộng khác của VoiceStudio nếu ưu việt hơn
+> (nếu ưu việt hơn phần TTS hiện tại). Trạng thái: **đã release v2.2.0 (TTS server-side)**; các tính năng
+> mở rộng (dictation, tải bản tin audio) **đã làm ở v2.3.0** — xem §6 (dictation dùng Web Speech API
+> của trình duyệt, podcast bản tin dùng chính VoiceStudio).
 
 ## 1. VoiceStudio là gì (nguồn: README + docs chính thức, 2026-11)
 
@@ -85,12 +86,12 @@ Lite profile: **không hỗ trợ** (quá nặng) — UI tự ẩn tuỳ chọn 
   cap text (`tts_max_chars`); timeout riêng (`voicestudio_timeout_s`).
 - Port 3900 publish `127.0.0.1` trong compose; remote cần HTTPS/WSS + bearer theo docs của VoiceStudio.
 
-## 6. Các chức năng khác của VoiceStudio — đề xuất (chưa làm, đánh giá theo từng cái)
+## 6. Các chức năng khác của VoiceStudio — đề xuất (cập nhật v2.3.0: 2 mục đầu đã làm)
 
 | Chức năng | Phù hợp với MetaSearch? | Đề xuất |
 |---|---|---|
-| **Dictation / ASR streaming** (`/v1/audio/transcriptions/stream`) vào ô tìm kiếm & ô tin riêng | ✅ Rất phù hợp — nhập truy vấn tiếng Việt bằng giọng nói | Phase sau: nút mic ở ô search, stream WS tới backend proxy (hoặc trực tiếp tới VoiceStudio nếu cùng mạng); partial text vào input |
-| **Narrate & batch → tải cả bản tin thành file audio (mp3)** | ✅ Phù hợp — "tải bản tin về nghe offline/share" | Phase sau: nút "Tải audio" ở tab Tin tức, ghép các chunk thành 1 file |
+| **Dictation / ASR streaming** vào ô tìm kiếm & ô tin riêng | ✅ Rất phù hợp — nhập truy vấn tiếng Việt bằng giọng nói | **ĐÃ LÀM v2.3.0** theo hướng an toàn hơn: Web Speech API của trình duyệt (`frontend/lib/dictation.ts`, mic ở ô search + ô lọc tin, vi-VN, không egress backend). VoiceStudio ASR server-side vẫn là tuỳ chọn phase sau nếu cần ASR chất lượng cao hơn mà không phụ thuộc trình duyệt |
+| **Narrate & batch → tải cả bản tin thành file audio (mp3)** | ✅ Phù hợp — "tải bản tin về nghe offline/share" | **ĐÃ LÀM v2.3.0**: podcast bản tin server-side qua VoiceStudio (`POST /v1/podcast/briefing` → file mp3 trong `api/podcast_data/`, retention 7 ngày, RSS `/v1/podcast/briefing/feed.xml` + player ở tab Tin tức) — đúng use-case này, không cần ghép chunk client-side |
 | Transcribe audio/video URL | ⚠️ Ít liên quan (news là text) | Không làm |
 | Video dubbing | ❌ Không có video trong sản phẩm | Không làm |
 | Voice cloning / voice design | ❌ Rủi ro consent/giả mạo, trái chính sách riêng tư hiện tại | **Không làm** |
@@ -117,7 +118,7 @@ Lite profile: **không hỗ trợ** (quá nặng) — UI tự ẩn tuỳ chọn 
   body, media whitelist, admission tier + single-flight + LRU, `Cache-Control: private`,
   compose `mem_limit`, prefetch + blob cache + revoke URL + `ttsStop` dừng remote ở frontend).
   Vòng 2 xác nhận toàn bộ FIXED với evidence file:line, verdict **PASS ×3**, không P1/P2 mới.
-  Kết quả chi tiết ghi ở CHANGELOG (Unreleased).
+  Kết quả chi tiết ghi ở CHANGELOG mục [2.2.0].
 
 **Vận hành (audit vòng 8):**
 - **Host size**: `mem_limit: 8g` của voicestudio là *cap* chứ không phải phân bổ,

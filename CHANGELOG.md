@@ -63,55 +63,6 @@ version tuân theo [SemVer](https://semver.org/).
 - Kết quả cuối: ruff/format/bandit/mypy sạch, full pytest xanh, frontend 49 vitest
   + tsc + next build xanh, OpenAPI snapshot khớp router.
 
-## [Unreleased] — VoiceStudio server-side TTS (tuỳ chọn) — xem docs/17
-
-### Hardening (audit vòng 8 — security/SA + QA/data-integrity đối kháng, PASS)
-- **ETag chống cross-field collision**: key cache audio giờ length-prefix từng
-  trường (model/voice chứa `|` không còn trộn khóa giữa các request).
-- **Admission vào trong single-flight**: waiter của request trùng dùng chung
-  slot leader, không đốt permit `admit("tts")` cho cuộc gọi không xảy ra.
-- **Fallback thật khi VoiceStudio lỗi** (docs/17 §2 giờ đúng): chuỗi remote
-  fail → phần còn lại được đọc bằng Web Speech API thay vì im lặng; `ttsSpeakRemote`
-  cũng huếy giọng Web Speech đang chạy (bất đẳng thức one-speaker đã bỏ).
-- Nút đọc máy hiện khi có Web Speech **hoặc** VoiceStudio (webview không có
-  speechSynthesis vẫn nghe được qua server); hint hết giọng vi tự sửa theo
-  `voiceschanged`; bỏ field ETag chết ở client; tooltip bỏ ghim "Web Speech API".
-- 4 test mới: ETag collision, redirect 3xx → 502 KHÔNG theo, LRU eviction
-  (count/bytes), auth 401 cho cả 2 route TTS. TTS suite: 34/34.
-- docs/17: ghi chú host ≥16GB cho profile tts, Safari transient-activation,
-  capabilities cache 1 lần/trang; compose thêm hướng dẫn pin digest image.
-
-### Added
-- **Engine đọc máy thứ 2: VoiceStudio local server** (docs/17): backend mới
-  `GET /v1/tts/capabilities` + `POST /v1/tts/synthesize` proxy tới OpenAI-compatible
-  API của VoiceStudio (`VOICESTUDIO_URL`, chỉ từ env — SSRF-safe; cap audio 8MB;
-  ETag + Cache-Control hỗ trợ 304; lỗi rõ: `tts_disabled` 503 / `tts_upstream_error` 502 /
-  timeout 504). Web Speech API vẫn là mặc định; UI tự fallback khi chưa cấu hình.
-- Web UI: menu chọn "Giọng đọc" (Trình duyệt / VoiceStudio server) ở toolbar tab Tin
-  tức, áp dụng cả nút đọc câu trả lời; lựa chọn lưu localStorage; ghi chú riêng tư
-  trên tooltip đổi theo engine thực dùng (VoiceStudio = gửi text tới server nội bộ).
-- `ttsSpeakRemote` trong `lib/tts.ts`: strip + chunk ≤220 ký tự như đường trình
-  duyệt, gọi tuần tự từng chunk, phát bằng một `<audio>` duy nhất, generation guard.
-- Deploy: compose thêm service `voicestudio` (image `ghcr.io/debpalash/voicestudio:stable`)
-  dưới `profiles: ["tts"]` — không chạy mặc định; `.env.example` thêm `VOICESTUDIO_*`.
-- Test: 30 backend (`test_tts_voicestudio.py`), frontend vitest lên 21; OpenAPI
-  snapshot regen (chỉ additive). docs/17 ghi nhận so sánh, cách bật, rủi ro
-  license (AGPL — chỉ tích hợp qua HTTP process riêng) và các tính năng mở rộng
-  đề xuất (dictation, tải bản tin audio) cho phase sau.
-- Hardening sau audit vòng 1 (perf phát hiện 2 P1: pool riêng `tts` + per-phase
-  timeout giữ `POOL_ACQUIRE_TIMEOUT_S`, PoolTimeout→503; wall-clock
-  `asyncio.timeout`; cap error-body 64KB; media whitelist; bytearray buffer;
-  admission tier `tts` (8,1.0) + single-flight + LRU 16 entry/32MB theo ETag;
-  `Cache-Control: private`; rate-limit cost 5; compose `mem_limit: 8g`;
-  `reset_pipelines` clear tts client; URL validate cả port/path/userinfo).
-  Frontend: prefetch chunk tiếp theo + blob cache 24/32MB + revoke URL trên mọi
-  nhánh + `ttsStop` dừng cả remote + cancel remote cũ khi speak mới + onError 1
-  lần + shared capabilities promise.
-- **Audit 2 vòng (3 expert/vòng: perf / quality / data-sec)**: vòng 1 phát hiện
-  2 P1 + các P2/P3 → fix hết; vòng 2 xác nhận tất cả FIXED, verdict **PASS ×3**,
-  không P1/P2 mới (chỉ còn P3 note). Backend full suite 788+ passed, frontend
-  21/21, ruff/bandit clean, CI 13/13.
-
 ## [2.2.0] — 2026-11-11 — Web UI: tab Tin tức đa lĩnh vực + đọc máy tiếng Việt (TTS)
 
 ### Docs
@@ -206,6 +157,55 @@ version tuân theo [SemVer](https://semver.org/).
   (`api/*.db*`, `*.retention`, `api/.env.*` trừ `*.example`) và không crash khi
   file bị tiến trình local giữ lock (PermissionError → WARN bỏ qua) — bản vá
   đúng promesse trong AGENTS.md sau sự cố 2026-11-10.
+
+### VoiceStudio server-side TTS (tuỳ chọn) — docs/17 (đã release trong v2.2.0, commit b82e00c/60c69dc)
+
+### Hardening (audit vòng 8 — security/SA + QA/data-integrity đối kháng, PASS)
+- **ETag chống cross-field collision**: key cache audio giờ length-prefix từng
+  trường (model/voice chứa `|` không còn trộn khóa giữa các request).
+- **Admission vào trong single-flight**: waiter của request trùng dùng chung
+  slot leader, không đốt permit `admit("tts")` cho cuộc gọi không xảy ra.
+- **Fallback thật khi VoiceStudio lỗi** (docs/17 §2 giờ đúng): chuỗi remote
+  fail → phần còn lại được đọc bằng Web Speech API thay vì im lặng; `ttsSpeakRemote`
+  cũng huếy giọng Web Speech đang chạy (bất đẳng thức one-speaker đã bỏ).
+- Nút đọc máy hiện khi có Web Speech **hoặc** VoiceStudio (webview không có
+  speechSynthesis vẫn nghe được qua server); hint hết giọng vi tự sửa theo
+  `voiceschanged`; bỏ field ETag chết ở client; tooltip bỏ ghim "Web Speech API".
+- 4 test mới: ETag collision, redirect 3xx → 502 KHÔNG theo, LRU eviction
+  (count/bytes), auth 401 cho cả 2 route TTS. TTS suite: 34/34.
+- docs/17: ghi chú host ≥16GB cho profile tts, Safari transient-activation,
+  capabilities cache 1 lần/trang; compose thêm hướng dẫn pin digest image.
+
+### Added
+- **Engine đọc máy thứ 2: VoiceStudio local server** (docs/17): backend mới
+  `GET /v1/tts/capabilities` + `POST /v1/tts/synthesize` proxy tới OpenAI-compatible
+  API của VoiceStudio (`VOICESTUDIO_URL`, chỉ từ env — SSRF-safe; cap audio 8MB;
+  ETag + Cache-Control hỗ trợ 304; lỗi rõ: `tts_disabled` 503 / `tts_upstream_error` 502 /
+  timeout 504). Web Speech API vẫn là mặc định; UI tự fallback khi chưa cấu hình.
+- Web UI: menu chọn "Giọng đọc" (Trình duyệt / VoiceStudio server) ở toolbar tab Tin
+  tức, áp dụng cả nút đọc câu trả lời; lựa chọn lưu localStorage; ghi chú riêng tư
+  trên tooltip đổi theo engine thực dùng (VoiceStudio = gửi text tới server nội bộ).
+- `ttsSpeakRemote` trong `lib/tts.ts`: strip + chunk ≤220 ký tự như đường trình
+  duyệt, gọi tuần tự từng chunk, phát bằng một `<audio>` duy nhất, generation guard.
+- Deploy: compose thêm service `voicestudio` (image `ghcr.io/debpalash/voicestudio:stable`)
+  dưới `profiles: ["tts"]` — không chạy mặc định; `.env.example` thêm `VOICESTUDIO_*`.
+- Test: 30 backend (`test_tts_voicestudio.py`), frontend vitest lên 21; OpenAPI
+  snapshot regen (chỉ additive). docs/17 ghi nhận so sánh, cách bật, rủi ro
+  license (AGPL — chỉ tích hợp qua HTTP process riêng) và các tính năng mở rộng
+  đề xuất (dictation, tải bản tin audio) cho phase sau.
+- Hardening sau audit vòng 1 (perf phát hiện 2 P1: pool riêng `tts` + per-phase
+  timeout giữ `POOL_ACQUIRE_TIMEOUT_S`, PoolTimeout→503; wall-clock
+  `asyncio.timeout`; cap error-body 64KB; media whitelist; bytearray buffer;
+  admission tier `tts` (8,1.0) + single-flight + LRU 16 entry/32MB theo ETag;
+  `Cache-Control: private`; rate-limit cost 5; compose `mem_limit: 8g`;
+  `reset_pipelines` clear tts client; URL validate cả port/path/userinfo).
+  Frontend: prefetch chunk tiếp theo + blob cache 24/32MB + revoke URL trên mọi
+  nhánh + `ttsStop` dừng cả remote + cancel remote cũ khi speak mới + onError 1
+  lần + shared capabilities promise.
+- **Audit 2 vòng (3 expert/vòng: perf / quality / data-sec)**: vòng 1 phát hiện
+  2 P1 + các P2/P3 → fix hết; vòng 2 xác nhận tất cả FIXED, verdict **PASS ×3**,
+  không P1/P2 mới (chỉ còn P3 note). Backend full suite 788+ passed, frontend
+  21/21, ruff/bandit clean, CI 13/13.
 
 ## [2.1.0] — 2026-11-11 — Multi-source FA: bỏ điểm hụt đơn nguồn VNDIRECT/Simplize
 
