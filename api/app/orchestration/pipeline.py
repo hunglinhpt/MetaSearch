@@ -606,9 +606,7 @@ class SearchPipeline:
                 # fan-out budget would ALWAYS be cancelled by the wait loop and
                 # record a TIMEOUT penalty for a response that could never be
                 # used. Clamp the per-engine timeout under the stage budget.
-                engine_timeout = min(
-                    cfg.timeout_ms / 1000, max(0.5, hard_timeout - 0.05)
-                )
+                engine_timeout = min(cfg.timeout_ms / 1000, max(0.5, hard_timeout - 0.05))
                 results = await adapter.search(
                     query,
                     lang=params.lang,
