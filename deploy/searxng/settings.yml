@@ -19,7 +19,7 @@ outgoing:
 search:
   safe_search: 0
   autocomplete: ""
-  default_lang: "vi"
+  default_lang: "auto"   # v2.4.0 global: tự nhận ngôn ngữ query (VI/EN/…), client có thể override bằng param language
   formats:
     - html
     - json
@@ -49,3 +49,40 @@ engines:
     disabled: true
   - name: marginalia
     disabled: true
+  # ── v2.4.0 Global Deep Search (docs/19): bật thêm các engine toàn cầu ──
+  # Mạng xã hội / diễn đàn / code (một số nền tảng có thể block bot — searxng tự
+  # bỏ qua engine lỗi, breaker của MetaSearch không bị ảnh hưởng):
+  - name: reddit
+    disabled: false
+  - name: stackexchange
+    disabled: false
+  - name: github
+    disabled: false
+  - name: youtube
+    disabled: false
+  - name: mastodon
+    disabled: false
+  - name: twitter
+    disabled: false
+  - name: linkedin
+    disabled: false
+  # Học thuật / tạp chí (phục vụ "tạp chí quỹ", nghiên cứu toàn cầu):
+  - name: arxiv
+    disabled: false
+  - name: pubmed
+    disabled: false
+  - name: crossref
+    disabled: false
+  - name: dblp
+    disabled: false
+  - name: semantic scholar
+    disabled: false
+  - name: wikidata
+    disabled: false
+  # Tham khảo giải trí/đời sống (mở rộng phạm vi "mọi thông tin"):
+  - name: goodreads
+    disabled: false
+  - name: imdb
+    disabled: false
+  - name: openverse
+    disabled: false

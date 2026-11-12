@@ -13,7 +13,14 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-12 — v2.3.0 feature roadmap docs/18: dictation, Deep Research UI, so sánh mã + biểu đồ nến, watchlist, podcast)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-12 — v2.4.0 Global Deep Search docs/19: 7 engine toàn cầu mới, EN end-to-end, deep mode)
+
+- ✅ **v2.4.0 Global Deep Search (docs/19)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/19-global-deep-search-v2.4.md](docs/19-global-deep-search-v2.4.md):
+  - 7 adapter keyless mới: `hackernews`, `stackexchange` (site: đổi site), `bluesky`, `openalex`, `crossref`, `europepmc`, `gdelt` (sourcelang + time window); helper chung `_http.fetch_json` map lỗi đúng Outcome cho breaker.
+  - SearXNG bật thêm 16 engine toàn cầu + `default_lang: auto`; adapter map category MetaSearch→SearXNG (tránh 400 do category lạ).
+  - `lang` end-to-end tới google_news (hl/gl/ceid), gdelt (sourcelang), openalex (language filter); UI chọn ngôn ngữ Tự động/VI/EN.
+  - `deep: true` trên /v1/search + /v1/answer: fan-out TẤT CẢ engine (bỏ lọc category); cache key đã gồm deep; category inference mở rộng social/academic/global-fin.
+  - Upgrade path: DB engine store cũ tự seed engine mới khi thiếu (không đè tweak của operator) — có test. 25 test mới, OpenAPI snapshot regen.
 
 - ✅ **v2.3.0 feature roadmap (docs/18)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/18-feature-roadmap-v2.3.md](docs/18-feature-roadmap-v2.3.md):
   - **A**: dictation vi-VN (Web Speech) ở ô tìm kiếm + ô lọc tin; tab 🔬 Deep Research tiêu thụ FR-9 (SSE live + đọc theo section).

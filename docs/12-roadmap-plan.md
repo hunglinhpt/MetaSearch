@@ -12,6 +12,7 @@
 | **5 — Institutional Release (v1.0.0)** | 9 | 5-Wave Deep Audit, BCTC Forensics theo ngành (CAMELS/Margin/BĐS), Quantitative Technicals, 19 Engines, 40 Golden Evals | 333 unit tests pass, 0 ruff/bandit issues, Next.js build clean |
 | **6 — Readiness cho hệ thống bên ngoài** | Xong phần repo này (v2.0.0); còn tích hợp thật ở phía hệ thống gọi tới và đo trên Postgres, Linux | Bảo mật, liêm chính dữ liệu, tải, quan sát, vận hành và CI trước khi một hệ thống bên ngoài dùng thật; hợp đồng ở [15-integration-guide.md](15-integration-guide.md) |
 | **7 — Web UI Tin tức + TTS tiếng Việt (v2.2.0)** | ✅ Hoàn tất 2026-11-11 | Tab Tin tức 6 mục (google_news + `when:Nd` thật) + đọc máy vi-VN (Web Speech API), `safeHref` mọi href từ payload; plan ở [16-web-ui-news-tts.md](16-web-ui-news-tts.md) | `npm run typecheck` + `build` PASS; backend suite 100%; audit vòng 5 (QA + AI/TTS) PASS |
+| **9 — v2.4.0 Global Deep Search (docs/19)** | ✅ Hoàn tất 2026-11-12 | 7 engine toàn cầu keyless mới (HN, StackExchange, Bluesky, OpenAlex, Crossref, Europe PMC, GDELT) + searxng bật thêm 16 engine + lang EN end-to-end + `deep` fan-out mọi engine; plan ở [19-global-deep-search-v2.4.md](19-global-deep-search-v2.4.md) | full pytest xanh; 25 test mới; frontend typecheck/build xanh; self-audit 8-lens clean |
 | **8 — v2.3.0 feature roadmap (docs/18)** | ✅ Hoàn tất 2026-11-12 | dictation vi-VN + tab Deep Research (SSE) + `POST /v1/fa/compare` + `POST /v1/market/ohlcv` (biểu đồ nến lightweight-charts@5.3.0) + watchlist/alerts poll-on-demand + podcast bản tin VoiceStudio; plan ở [18-feature-roadmap-v2.3.md](18-feature-roadmap-v2.3.md) | full pytest xanh; ruff/bandit/mypy sạch; frontend 49 vitest + tsc + build xanh; 3 vòng audit 8-lens PASS, hết P0/P1/P2 (docs/18 §8) |
 
 ## 2. Task breakdown chi tiết
@@ -218,6 +219,16 @@
 - [x] **C watchlist + alerts poll-on-demand**: model `WatchlistItem` (alembic 0006), CRUD `/v1/watchlist` (per-owner lock + upsert, cap 20), `GET /v1/watchlist/alerts` (Semaphore(4) + cap 30s + partial, baseline không advance khi outcome incomplete); **bỏ background poller** (docs/18 §7.1); memory fallback có re-probe DB throttle 30s.
 - [x] **D podcast bản tin** (VoiceStudio only): `POST /v1/podcast/briefing` idempotent theo ngày + single-flight, `/status`, `/latest`, `/feed.xml` (RSS sau auth, enclosure không nhận scheme lạ); file `api/podcast_data/` retention 7 ngày, dọn orphan tmp chỉ khi già >1h.
 - [x] **3 vòng audit đối kháng 8 lens** (finance, technical/SA, AI/LLM, QA, auditor/security, data-engineer, dream-rsi, perf): hết P0/P1, mọi P2 đã fix + test (docs/18 §8); full pytest xanh, ruff/bandit/mypy sạch, 49 vitest + tsc + next build xanh, OpenAPI snapshot regen.
+
+### v2.4.0 Global Deep Search (docs/19 — 2026-11-12) — ✅ HOÀN TẤT
+
+- [x] **W1 7 adapter keyless mới** + seed/registry/config (`global_search_mailto`): hackernews, stackexchange, bluesky, openalex, crossref, europepmc, gdelt — helper chung `_http.fetch_json`, `published_at` thật từ payload.
+- [x] **W2 SearXNG**: 16 engine mới trong `deploy/searxng/settings.yml`, `default_lang: auto`, `map_categories` trong adapter (news/social media/it/science).
+- [x] **W3 lang end-to-end**: google_news hl/gl/ceid theo lang, gdelt `sourcelang:`, openalex `language:` filter; UI chọn Auto/VI/EN.
+- [x] **W4 `deep: true`** trên /v1/search + /v1/answer — fan-out mọi engine; cache key gồm deep; inference thêm social/academic/global-fin terms.
+- [x] **W5 UI**: language selector + nút 🌐 Deep.
+- [x] **W6 tests**: 25 test `test_global_adapters.py` (parse/filter/lang/freshness/error-kind từng adapter, deep fan-out, inference, searxng map, upgrade-path seed), OpenAPI regen.
+- [x] Gates xanh: full pytest, ruff/format/bandit/mypy, vitest 49, tsc, next build.
 
 ## 4. Rủi ro thực thi
 

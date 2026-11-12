@@ -4,6 +4,37 @@ Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).
 
+## [2.4.0] — 2026-11-12 — Global Deep Search (docs/19): 7 engine toàn cầu keyless mới, tiếng Anh end-to-end, deep mode
+
+### Added
+- **7 vertical engine keyless mới** (26 engines tổng cộng): `hackernews` (Algolia HN API),
+  `stackexchange` (api.stackexchange.com, `site:` trong query để đổi site),
+  `bluesky` (public AppView searchPosts), `openalex`, `crossref`, `europepmc` (tạp chí
+  học thuật toàn cầu), `gdelt` (tin tức/sự kiện toàn cầu 100+ ngôn ngữ, hỗ trợ
+  `sourcelang` + cửa sổ thời gian). Chung một helper `_http.fetch_json` map lỗi
+  đúng `Outcome` cho breaker. `published_at` luôn lấy từ payload, không bao giờ bịa.
+- **SearXNG mở rộng**: bật thêm 16 engine (reddit, stackexchange, github, youtube,
+  mastodon, twitter, linkedin, arxiv, pubmed, crossref, dblp, semantic scholar,
+  wikidata, goodreads, imdb, openverse) và `default_lang: auto`; adapter map category
+  của MetaSearch sang category của SearXNG (news/social media/it/science) để không
+  bao giờ gửi category searxng không biết (tránh 400 cả request).
+- **Ngôn ngữ end-to-end (docs/19 W3)**: `lang` giờ tới được google_news (map
+  hl/gl/ceid — lang ví/en rõ ràng), gdelt (`sourcelang:`), openalex
+  (`filter=language:`); searxng/ddg/wikipedia đã có sẵn. UI có bộ chọn
+  Ngôn ngữ Tự động / VI / EN.
+- **`deep: true` trên `/v1/search` + `/v1/answer`**: fan-out tới TẤT CẢ engine đã
+  bật (bỏ lọc category), k tối đa 50 — "tìm mọi thông tin theo yêu cầu sâu nhất".
+  Cache key (search + answer) đã bao gồm `deep` để không nhiễm chéo.
+- **Category inference mở rộng**: social (reddit, hacker news, bluesky, mastodon,
+  x.com, youtube, forum…), academic toàn cầu (doi:, ssrn, journal, preprint,
+  meta-analysis…), global-finance (13F, ETF, prospectus, fact sheet, IMF, World Bank,
+  OECD, BIS, ECB, Fed…), world news.
+- **Upgrade path**: DB engine store cũ tự seed thêm engine mới khi thiếu
+  (`on_conflict_do_nothing` — không đè tuỳ chỉnh của operator); có test.
+- UI: checkbox 🌐 Deep + chọn ngôn ngữ ở thanh công cụ tìm kiếm.
+- 25 test mới (`tests/test_global_adapters.py`), OpenAPI snapshot regen (additive),
+  engine-store test cập nhật; `GLOBAL_SEARCH_MAILTO` cho polite pool (tuỳ chọn).
+
 ## [2.3.0] — 2026-11-12 — feature roadmap (docs/18): dictation, Deep Research UI, so sánh mã + biểu đồ nến, watchlist, podcast
 
 ### Added (docs/18 — 6 wave)
