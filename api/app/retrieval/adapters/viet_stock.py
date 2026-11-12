@@ -538,13 +538,16 @@ def _build_financials_from_aggregated(
         if implied_eps > 0:
             eps_ratio = max(eps, implied_eps) / min(eps, implied_eps)
             if eps_ratio > 3.0:
+                # ONLY a real disagreement drops the field — consistent data
+                # (ratio <= 3) must survive (audit round 10 P2: the previous
+                # indentation dropped eps whenever pe+close existed).
                 logger.warning(
                     "fa_suspect_unit: %s eps_vnd=%s vs implied=%.1f — dropped",
                     sym,
                     eps,
                     implied_eps,
                 )
-            eps = None
+                eps = None
 
     n_validated = sum(1 for fv in agg.fields.values() if fv.validated)
     # Advertised metric count excludes the inert FireAnt balance-sheet anchors

@@ -138,7 +138,13 @@ class SSIFASource:
             logger.debug("ssi_series_schema_drift: %s times_not_ascending", sym)
             return None
 
-        if any(x < 0 for x in closes) or any(x < 0 for x in series["volumes"]):
+        if (
+            any(x < 0 for x in closes)
+            or any(x < 0 for x in series["volumes"])
+            or any(x < 0 for x in series["opens"])
+            or any(x < 0 for x in series["highs"])
+            or any(x < 0 for x in series["lows"])
+        ):
             raise FASourceError(self.source_id, "upstream_error", "negative_values")
 
         return SourceOHLCV(

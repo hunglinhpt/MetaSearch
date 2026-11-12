@@ -51,7 +51,9 @@ def _iso(dt: datetime | None) -> str | None:
 def _ticker_meta(sym: str) -> tuple[str | None, str | None]:
     """Name/exchange from the DAT-06 registry; unknown codes stay None."""
     rec = load_vn_tickers().get(sym) or {}
-    name = str(rec.get("name") or "").strip() or None
+    # Registry records key the name as `company_name` (DAT-06) — `name` never
+    # exists, so /v1/fa/compare served name=null for every symbol (round 10).
+    name = str(rec.get("company_name") or "").strip() or None
     exchange = str(rec.get("exchange") or "").strip() or None
     return name, exchange
 
@@ -189,6 +191,7 @@ async def market_ohlcv(request: MarketOhlcvRequest) -> MarketOhlcvResponse:
             deadline_hit = False
             try:
                 async with asyncio.timeout(timeout_s * 2 + 2.0):
+                    primary_t0 = time.perf_counter()
                     try:
                         series = await fetch_vndirect_ohlcv_series(
                             sym, days=days, timeout_s=timeout_s
@@ -198,12 +201,21 @@ async def market_ohlcv(request: MarketOhlcvRequest) -> MarketOhlcvResponse:
                     except Exception:
                         series = None
                     if series is None:
+                        # Remaining-budget rule (audit round 10): the fallback
+                        # leg gets what the wall clock still allows, mirroring
+                        # the search path — never a fresh full timeout after a
+                        # slow primary.
+                        elapsed = time.perf_counter() - primary_t0
+                        fallback_timeout = min(
+                            timeout_s,
+                            max(0.5, timeout_s * 2 + 2.0 - elapsed - 0.25),
+                        )
                         # Fallback: direct FA sources (SSI first) through the shared
                         # aggregator — same fan-out the search adapter uses (docs/15 §8.2).
                         # Guarded: any failure here is "no data" (503 below), never a 500.
                         try:
                             src = await deps.get_fa_aggregator().fetch_ohlcv(
-                                sym, timeout_s=timeout_s
+                                sym, timeout_s=fallback_timeout
                             )
                         except asyncio.CancelledError:
                             raise

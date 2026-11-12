@@ -173,6 +173,9 @@ class CitationItem(BaseModel):
 
 class AnswerRequest(SearchRequest):
     stream: bool = False
+    # DAT-10 valve (docs/18): bounds acceptable answer staleness; presence
+    # allows financial answers to be cached with ttl = min(answer_ttl, this).
+    max_age_s: int | None = Field(default=None, ge=30, le=86_400)
     model: str | None = Field(default=None, max_length=150)
     llm: LLMOverride | None = None
     council_mode: bool = False

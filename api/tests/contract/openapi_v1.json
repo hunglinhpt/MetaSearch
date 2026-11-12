@@ -138,6 +138,19 @@
               }
             ]
           },
+          "max_age_s": {
+            "anyOf": [
+              {
+                "maximum": 86400.0,
+                "minimum": 30.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Age S"
+          },
           "model": {
             "anyOf": [
               {

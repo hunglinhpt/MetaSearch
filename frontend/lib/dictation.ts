@@ -80,7 +80,12 @@ export function startDictation(opts: DictationOptions): DictationHandle | null {
   let finalSoFar = "";
   // Audit round 9: Chrome may re-deliver already-seen results with
   // continuous=true — a processed-index watermark prevents double-merging.
-  let processedUpTo = 0;
+  // Audit round 10 P1: Chrome finalizes a segment at the SAME resultIndex it
+  // delivered its interims, and `results.length` only grows when a NEW phrase
+  // starts — a max-length watermark skips the finalization event entirely
+  // (dictated text would vanish). The correct exactly-once guard is a Set of
+  // already-merged final (index, text) keys; interim updates are idempotent.
+  const mergedFinalKeys = new Set<string>();
   // docs/18 A1: auto-stop after ~1.2s of silence (reset on every result).
   const SILENCE_MS = 1200;
   let silenceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -110,16 +115,21 @@ export function startDictation(opts: DictationOptions): DictationHandle | null {
 
   recognition.onresult = (event: SpeechRecognitionEventLike) => {
     let interim = "";
-    for (let i = processedUpTo; i < event.results.length; i++) {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
       const result = event.results[i];
       const text = result[0]?.transcript ?? "";
       if (result.isFinal) {
-        finalSoFar = mergeTranscripts(finalSoFar, text, null);
+        // Exactly-once via the key, not a max-length watermark: re-delivery
+        // of the same finalized segment merges at most once.
+        const key = `${i}:${text}`;
+        if (!mergedFinalKeys.has(key)) {
+          mergedFinalKeys.add(key);
+          finalSoFar = mergeTranscripts(finalSoFar, text, null);
+        }
       } else {
         interim += text;
       }
     }
-    processedUpTo = Math.max(processedUpTo, event.results.length);
     armSilence();
     opts.onUpdate(finalSoFar, interim.trim());
   };

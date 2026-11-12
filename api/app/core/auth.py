@@ -115,6 +115,11 @@ async def create_key(
             )
         )
         await session.commit()
+    # Audit round 10: the authenticate path may have negative-cached this
+    # hash in the window before the create committed — drop any stale entry
+    # so a freshly created key authenticates immediately.
+    async with _key_cache_lock:
+        _key_cache.pop(key_hash, None)
     return plaintext, key_prefix
 
 
@@ -268,6 +273,26 @@ async def check_rate_limit(
         now_ms = int(time.time() * 1000)
         window_ms = window_s * 1000
         key = f"rl:{ctx.key_id}"
+        # Audit round 10 P2: pre-check the window WITHOUT writing. Zadding the
+        # full cost before the limit check made every 429 consume quota — a
+        # cost=20 poller over the limit kept itself locked out forever.
+        # getattr guard: thin test doubles may not implement zcard — skip the
+        # pre-check there (real redis-py clients always have it).
+        zcard = getattr(client, "zcard", None)
+        current = (await zcard(key)) if callable(zcard) else 0
+        if current >= limit:
+            oldest = await client.zrange(key, 0, 0, withscores=True)
+            retry_after_pre = window_s
+            if oldest and isinstance(oldest[0], (list, tuple)) and len(oldest[0]) > 1:
+                retry_after_pre = max(1, int((oldest[0][1] + window_ms - now_ms) / 1000.0 + 0.999))
+            headers["X-RateLimit-Remaining"] = "0"
+            headers["Retry-After"] = str(retry_after_pre)
+            raise MetaSearchError(
+                ErrorCode.RATE_LIMITED,
+                "rate limit exceeded",
+                details={"limit": limit, "window_s": window_s},
+                headers=headers,
+            )
         async with client.pipeline(transaction=True) as pipe:
             pipe.zremrangebyscore(key, 0, now_ms - window_ms)
             for i in range(cost):

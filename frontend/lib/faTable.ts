@@ -46,7 +46,7 @@ export function parseSymbolsInput(raw: string, cap = 5): string[] {
     const sym = part.trim().toUpperCase();
     // Charset guard (audit round 9): invalid tokens would 400 at the backend
     // with a raw error — drop them inline instead.
-    if (!sym || !/^[A-Z0-9]{1,10}$/.test(sym) || seen.has(sym)) continue;
+    if (!sym || !/^[A-Z0-9]{1,15}$/.test(sym) || seen.has(sym)) continue;
     seen.add(sym);
     out.push(sym);
     if (out.length >= cap) break;

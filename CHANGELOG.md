@@ -13,6 +13,29 @@ version tuân theo [SemVer](https://semver.org/).
 - `google_news` map lang→đúng country code cho `gl` (en→US, vi→VN, fr→FR…, fallback US; trước đây en→"EN" sai).
 - UI: bật Deep tự gửi `k=30` (cap 50) cho cả `/v1/search` và `/v1/answer` để tập kết quả merge không bị hẹp.
 
+## [Unreleased] — Audit round 10 (3 expert: core cũ + verify vòng 9 + viet_stock/market)
+
+### Fixed
+- **P1 L2 semantic cache bỏ qua luật tươi mới**: financial/news answers không còn
+  ghi/đọc L2 7 ngày (DAT-10) — `_semantic_cacheable()` + guard ở `_semantic_lookup`.
+- **P1 dictation watermark** (regression của vòng 9): Chrome finalize tại CÙNG
+  resultIndex → watermark max-length làm MẤT chữ đã nói → đúng pattern resultIndex
+  + Set khóa exactly-once.
+- **P2 `max_age_s`** (valve DAT-10 chết từ trước): field mới trên AnswerRequest →
+  financial answers cache được với `ttl = min(answer_ttl, max_age_s)`.
+- **P2 implied-EPS gate** (viet_stock): `eps = None` sai thụt lề — trước đây LUÔN
+  drop EPS khi có pe+close → chỉ drop khi ratio > 3x như docs.
+- **P2 /v1/fa/compare name=null**: registry key là `company_name` không phải `name`.
+- **P2 crossref `[[]]`**: date-parts rỗng → IndexError không được bắt → thêm guard
+  + IndexError (verify-agent tìm ra lỗ hổng của chính fix vòng 9).
+- **P2 Redis rate-limit self-lockout**: zadd trước khi check làm 429 tiêu quota —
+  pre-check zcard trước, rejected không ghi nữa.
+- P3: dead "research" admission tier ghi chú; L2→L1 shortcut near-always-miss bỏ;
+  cache set_json serialize ngoài try (bug caller không trip breaker Redis);
+  create_key clears negative cache; faTable {1,15} khớp backend; SSI negative
+  guard đủ o/h/l; ohlcv fallback theo remaining budget; docs/15 ghi đúng 2 statement
+  FireAnt; Deep chip gửi deep=false khi đã ghim engine; quorum empty-ok note.
+
 ## [Unreleased] — Audit round 9 (3 expert đối kháng độc lập trên v2.3.0+v2.4.0)
 
 ### Fixed

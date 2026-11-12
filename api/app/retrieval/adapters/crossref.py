@@ -25,12 +25,17 @@ def _parse_issued(value: Any) -> datetime | None:
     if not isinstance(value, dict):
         return None
     parts = value.get("date-parts")
-    if not isinstance(parts, list) or not parts or not isinstance(parts[0], list):
+    if (
+        not isinstance(parts, list)
+        or not parts
+        or not isinstance(parts[0], list)
+        or not parts[0]  # [[]] = "no date" shape — verified audit round 10
+    ):
         return None
     try:
         ymd = [int(x) for x in [*parts[0], 1, 1]][:3]
         return datetime(ymd[0], ymd[1], ymd[2], tzinfo=UTC)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, IndexError):
         return None
 
 

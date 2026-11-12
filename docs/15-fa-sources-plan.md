@@ -191,6 +191,9 @@ Authorization: Bearer {JWT}
 ```
 
 - `quarterCount` = số quý gần nhất, `years=0` = chỉ lấy theo quý
+- Đã triển khai: income-statement + balance-sheet (2 fetch song song); cash-flow
+  endpoint có sẵn khi cần — hiện chưa map vào canonical fields (docs/15 §8.1
+  ghi 3 statement là mục tiêu, hiện trạng là 2)
 - JWT lấy từ login fireant.vn, đặt trong env `FA_FIREANT_TOKEN` (không hardcode,
   không commit); 401/403 → breaker record + mark token stale để chủ cấp lại
 - Cùng pattern như TCBS: tự gọi httpx, tự parse, respx fake trong unit test

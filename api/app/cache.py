@@ -208,8 +208,16 @@ class CacheClient:
             return
         written_to_redis = False
         if self._client is not None and is_redis_available():
+            # Serialize OUTSIDE the transport try: a json.dumps TypeError is a
+            # caller bug, not a Redis outage — it must not trip the shared
+            # breaker for 30s (audit round 10).
             try:
-                await self._client.set(key, json.dumps(value, ensure_ascii=False), ex=ttl_s)
+                payload = json.dumps(value, ensure_ascii=False)
+            except (TypeError, ValueError) as exc:
+                logger.warning("cache_serialize_failed", key=key[:24], error=type(exc).__name__)
+                return
+            try:
+                await self._client.set(key, payload, ex=ttl_s)
                 written_to_redis = True
             except Exception as exc:
                 logger.warning(

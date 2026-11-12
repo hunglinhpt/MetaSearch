@@ -564,7 +564,7 @@ export default function HomePage() {
           engines: selectedEngines.length ? selectedEngines : undefined,
           categories: categoriesParam,
           lang: searchLang === "auto" ? undefined : searchLang,
-          deep: deepSearch,
+          deep: deepSearch && selectedEngines.length === 0,
           // deep mode widens the merged result set too (schema cap k=50)
           k: deepSearch ? 30 : undefined,
         });
@@ -603,7 +603,7 @@ export default function HomePage() {
           councilEndpointsParam,
           selectedDomain || undefined,
           searchLang === "auto" ? undefined : searchLang,
-          deepSearch,
+          deepSearch && selectedEngines.length === 0,
           deepSearch ? 30 : undefined
         );
       }

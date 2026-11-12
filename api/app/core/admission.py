@@ -30,7 +30,9 @@ _TIER_CONFIG: dict[str, tuple[int, float]] = {
     "context": (16, 1.0),
     "answer": (16, 1.0),
     "scrape": (16, 1.0),
-    "research": (5, 0.0),
+    # "research": (5, 0.0) — DEAD (audit round 10): no admit("research") call
+    # exists; research concurrency is enforced by the job store's global cap
+    # (research_max_concurrent). Restore only with an admit call in run_job.
     "tts": (8, 1.0),
     "market": (16, 1.0),
     "watchlist": (4, 1.0),

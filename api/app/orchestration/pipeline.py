@@ -307,6 +307,9 @@ class SearchParams:
     # fan-out. A filter that removes every result marks the outcome incomplete, not empty.
     include_domains: list[str] | None = None
     exclude_domains: list[str] | None = None
+    # Caller-bounded acceptable staleness (seconds) — opens the DAT-10
+    # financial-cache valve with ttl = min(answer_ttl, max_age_s).
+    max_age_s: int | None = None
     # docs/19 W4: deep=True → fan out to ALL enabled engines, ignoring the
     # category filter, so "deepest possible" search is one flag away.
     deep: bool = False
@@ -325,6 +328,16 @@ def _stage(name: str):
 def _norm_domain(domain: str) -> str:
     d = domain.strip().lower().rstrip(".")
     return d[4:] if d.startswith("www.") else d
+
+
+def _semantic_cacheable(params: SearchParams) -> bool:
+    """Audit round 10 P1: financial/news answers must not enter the 7-day L2
+    semantic cache (the row carries no freshness metadata — a near-identical
+    future query would replay stale quantitative content)."""
+    inferred = set(params.categories or [])
+    if inferred == {"general"} or params.news:
+        inferred |= infer_categories_from_query(params.query, news=params.news)
+    return not (params.news or "financial" in inferred or "news" in inferred)
 
 
 def _has_domain_filter(params: SearchParams) -> bool:
@@ -1238,6 +1251,7 @@ class AnswerPipeline:
                 query=normalize_query(params.query),
                 status=answer_status,
                 cacheable=not _has_domain_filter(params),
+                semantic_cacheable=_semantic_cacheable(params),
             )
         )
         _background_tasks.add(finalize)
@@ -1398,6 +1412,7 @@ class AnswerPipeline:
         query: str,
         status: str = "complete",
         cacheable: bool = True,
+        semantic_cacheable: bool = False,
     ) -> None:
         if pages:
             await persist.persist_pages_async(pages, chunks)
@@ -1413,7 +1428,12 @@ class AnswerPipeline:
             citations=citations,
             status=status,
         )
-        if cacheable and self.embedder is not None and self.embedder.enabled:
+        # Audit round 10 P1: financial/news answers must not enter the 7-day
+        # L2 semantic cache — the row carries no freshness metadata, so a
+        # near-identical future query would replay stale quantitative content
+        # (same DAT-10 rule as the L1 guard above). The caller decides: it has
+        # params.
+        if cacheable and semantic_cacheable and self.embedder is not None and self.embedder.enabled:
             await self._semantic_cache_store(query, answer_id, model)
 
     # -- rerank ------------------------------------------------------------
@@ -1460,6 +1480,12 @@ class AnswerPipeline:
         # semantically-similar SHALLOW answer would be served as deep (audit
         # v2.4 round 9 — the row does not carry deep/lang/k).
         if params.deep:
+            return None
+        # Audit round 10 P1: financial/news answers live under DAT-10 and the
+        # 15-min news TTL — a cosine-similar week-old row must never replay
+        # for them (the semantic row carries no freshness metadata).
+        inferred = infer_categories_from_query(params.query, news=params.news)
+        if params.news or "financial" in inferred or "news" in inferred:
             return None
         payload = await self._semantic_lookup(query)
         if payload is not None:
@@ -1508,9 +1534,13 @@ class AnswerPipeline:
         categories = set(params.categories or [])
         if categories == {"general"} or params.news:
             categories |= infer_categories_from_query(params.query, news=params.news)
-        if "financial" in categories and getattr(params, "max_age_s", None) is None:
+        max_age_s = getattr(params, "max_age_s", None)
+        if "financial" in categories and max_age_s is None:
             # DAT-10: Dynamic financial answers must not be cached without max_age_s
             return
+        # The max_age_s valve (round 10): when the caller bounds acceptable
+        # staleness, cache with that TTL so the answer can actually be reused
+        # inside its freshness window instead of recomputing every request.
         await self.cache.set_json(
             answer_cache_key(
                 normalize_query(params.query),
@@ -1533,7 +1563,11 @@ class AnswerPipeline:
                 "status": "complete",
                 "complete": True,
             },
-            ttl_s=self.settings.cache_answer_ttl_s,
+            ttl_s=(
+                min(self.settings.cache_answer_ttl_s, max_age_s)
+                if max_age_s
+                else self.settings.cache_answer_ttl_s
+            ),
         )
 
     async def _semantic_lookup(self, query: str) -> dict | None:
@@ -1571,12 +1605,10 @@ class AnswerPipeline:
             logger.warning("semantic_lookup_failed", error=type(exc).__name__)
             return None
         answer_id, content_md, model = row
-        if self.cache is not None:
-            cached = await self.cache.get_json(
-                answer_cache_key(query, model=model or "", lang=None)
-            )  # L2 replay: original search params unknown, default key shape
-            if cached and cached.get("answer_md"):
-                return cached
+        # No L1 re-lookup here (audit round 10): the original request's key
+        # shape (lang/k/categories/...) is unknown from an L2 row, so a
+        # default-shape lookup was a near-always miss. Always rebuild
+        # citations from the DB — it is the honest and correct path.
         # No L1 payload for this answer: rebuild citations from the DB so the
         # replayed answer still carries its sources.
         citations = await persist.load_citations(answer_id)
