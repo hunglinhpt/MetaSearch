@@ -414,6 +414,8 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
             cost = 3 + min(await _request_item_count(request), 20)
         elif path.endswith("/market/ohlcv") and request.method == "POST":
             cost = 2  # one upstream feed call + possible SSI fallback (docs/18 B2)
+        elif path.endswith("/crawl") and request.method == "POST":
+            cost = 8  # crawl/map fan out to dozens of guarded fetches (Pass 3 P3)
         elif path.endswith("/watchlist/alerts"):
             # Each alert runs a full pipeline search per watched item.
             cost = 1 + min(await _request_item_count(request), 100) // 4

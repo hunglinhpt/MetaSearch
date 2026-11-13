@@ -112,8 +112,10 @@ async def record_memory(
                 return True
 
         ok = await asyncio.wait_for(_write(), timeout=0.5)
-        if ok:
-            _boost_cache.pop(owner, None)  # new feedback must apply immediately
+        if ok and kind == "feedback":
+            # Pass 4 P2: only feedback changes boosts — invalidating on every
+            # recorded query defeated the 30s TTL on the hot path.
+            _boost_cache.pop(owner, None)
         return ok
     except Exception as exc:
         logger.warning("memory_record_failed", owner=owner, error=type(exc).__name__)

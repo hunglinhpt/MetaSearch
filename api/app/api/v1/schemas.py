@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 from app.llm.providers import LLMOverride
 
@@ -305,10 +305,42 @@ class SpaceCreateRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=1000)
-    domains: list[str] = Field(default_factory=list, max_length=50)
-    pinned_urls: list[str] = Field(default_factory=list, max_length=100)
-    query_terms: list[str] = Field(default_factory=list, max_length=50)
+    # Pass 3 P2: per-item bounds + charset — a multi-MB "domain" was persisted
+    # and echoed; good.com@evil.com would redirect the space crawl off-scope.
+    domains: list[Annotated[str, StringConstraints(max_length=253)]] = Field(
+        default_factory=list, max_length=50
+    )
+    pinned_urls: list[Annotated[str, StringConstraints(max_length=2000)]] = Field(
+        default_factory=list, max_length=100
+    )
+    query_terms: list[Annotated[str, StringConstraints(max_length=200)]] = Field(
+        default_factory=list, max_length=50
+    )
     restrict: bool = True
+
+    @field_validator("domains")
+    @classmethod
+    def _validate_domains(cls, value: list[str]) -> list[str]:
+        import re as _re
+
+        out = []
+        for d in value:
+            d = d.strip().lower().rstrip(".").removeprefix("www.")
+            if not d or not _re.fullmatch(r"[a-z0-9.-]+", d) or ".." in d:
+                raise ValueError(f"invalid domain: {d!r}")
+            out.append(d)
+        return out
+
+    @field_validator("pinned_urls")
+    @classmethod
+    def _validate_pinned_urls(cls, value: list[str]) -> list[str]:
+        from urllib.parse import urlsplit
+
+        for u in value:
+            parts = urlsplit(u.strip())
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise ValueError(f"pinned URL must be http(s): {u!r}")
+        return value
 
 
 class SpaceUpdateRequest(BaseModel):

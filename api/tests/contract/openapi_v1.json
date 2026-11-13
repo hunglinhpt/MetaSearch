@@ -2602,6 +2602,7 @@
           },
           "domains": {
             "items": {
+              "maxLength": 253,
               "type": "string"
             },
             "maxItems": 50,
@@ -2616,6 +2617,7 @@
           },
           "pinned_urls": {
             "items": {
+              "maxLength": 2000,
               "type": "string"
             },
             "maxItems": 100,
@@ -2624,6 +2626,7 @@
           },
           "query_terms": {
             "items": {
+              "maxLength": 200,
               "type": "string"
             },
             "maxItems": 50,
