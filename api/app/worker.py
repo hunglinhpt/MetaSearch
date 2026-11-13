@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
+from pathlib import Path
 
 from app.config import get_settings
 from app.core.logging import configure_logging, get_logger
@@ -48,6 +49,26 @@ async def _heartbeat(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_INTERVAL_S)
 
 
+async def _retention_cadence(stop: asyncio.Event) -> None:
+    """Audit round 13 P2: on the full (Postgres) profile retention ran ONLY
+    once at boot — the 90-day promises were enforced on Lite alone. The
+    worker now drives the same run_if_due cadence the Lite loop uses."""
+    from app.orchestration.retention import run_if_due
+
+    while not stop.is_set():
+        try:
+            # Marker file in the process cwd (compose workdir) so retention
+            # runs at most once per day — last_run_path=None would run the
+            # full purge on EVERY 120s tick (audit round 13 fix-up).
+            results = await run_if_due(last_run_path=str(Path.cwd() / ".retention_worker_last_run"))
+            if results:
+                logger.info("worker_retention_completed", **results)
+        except Exception as exc:
+            logger.warning("worker_retention_failed", error=type(exc).__name__)
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=HEARTBEAT_INTERVAL_S * 4)
+
+
 async def run() -> None:
     settings = get_settings()
     configure_logging()
@@ -63,9 +84,15 @@ async def run() -> None:
             signal.signal(sig, lambda *_: stop.set())
 
     try:
+        # Audit round 13 P2: full profile had NO recurring retention — the
+        # worker now drives the same run_if_due cadence Lite uses in-API.
+        retention_task = asyncio.create_task(_retention_cadence(stop), name="worker-retention")
         await _heartbeat(stop)
     finally:
         stop.set()
+        retention_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await retention_task
         await dispose_engine()
         logger.info("worker_stopped")
 

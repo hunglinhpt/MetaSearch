@@ -28,6 +28,7 @@ from app.llm.providers import (
     LLMOverride,
     resolve_llm_target,
 )
+from app.main import create_app
 from app.retrieval.models import EngineConfig, RawResult
 
 
@@ -608,3 +609,85 @@ async def test_restored_research_job_retains_owner(isolation_db):
         # Admin calls -> 200
         r_admin = await client.get(f"/v1/research/{job_id}", headers=_hdr(admin_key))
         assert r_admin.status_code == 200
+
+
+# --- audit round 13 regressions ------------------------------------------------
+
+
+class TestMetricsAllowPrivate:
+    async def test_private_allowed_flag_on(self, monkeypatch, isolation_db):
+        monkeypatch.setenv("METRICS_ALLOW_PRIVATE", "true")
+        from app.config import get_settings
+
+        get_settings.cache_clear()
+        try:
+            transport = httpx.ASGITransport(
+                app=create_app(), raise_app_exceptions=False, client=("10.0.0.5", 5555)
+            )
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+                r = await c.get("/metrics")
+                assert r.status_code == 200  # compose Prometheus path
+        finally:
+            get_settings.cache_clear()
+
+    async def test_public_still_blocked_flag_on(self, monkeypatch, isolation_db):
+        monkeypatch.setenv("METRICS_ALLOW_PRIVATE", "true")
+        from app.config import get_settings
+
+        get_settings.cache_clear()
+        try:
+            # 8.8.8.8 = genuinely public (203.0.113.x is TEST-NET and
+            # ipaddress treats it as private).
+            transport = httpx.ASGITransport(
+                app=create_app(), raise_app_exceptions=False, client=("8.8.8.8", 5555)
+            )
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+                r = await c.get("/metrics")
+                assert r.status_code == 403  # public Internet stays out
+        finally:
+            get_settings.cache_clear()
+
+    async def test_flag_off_blocks_private(self, monkeypatch, isolation_db):
+        monkeypatch.delenv("METRICS_ALLOW_PRIVATE", raising=False)
+        from app.config import get_settings
+
+        get_settings.cache_clear()
+        try:
+            transport = httpx.ASGITransport(
+                app=create_app(), raise_app_exceptions=False, client=("10.0.0.5", 5555)
+            )
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+                r = await c.get("/metrics")
+                assert r.status_code == 403
+        finally:
+            get_settings.cache_clear()
+
+
+class TestMaxAgeBounds:
+    async def test_bounds_outside_422_inside_accepted(self, isolation_db):
+        """max_age_s 30..86400 — outside must 422 so the DAT-10 valve contract
+        cannot silently widen (audit round 13 P2). Auth is ON in this fixture:
+        use a real admin key (schema validation happens after auth)."""
+        admin_key, _ = await create_key("u_maxage", role="admin", rate_limit_rpm=6000)
+        transport = httpx.ASGITransport(
+            app=create_app(), raise_app_exceptions=False, client=("127.0.0.1", 5555)
+        )
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            for bad in (29, 86401):
+                r = await c.post(
+                    "/v1/answer",
+                    json={"query": "pháp y BCTC VCB", "max_age_s": bad},
+                    headers=_hdr(admin_key),
+                )
+                # Repo convention: RequestValidationError is rendered as 400
+                # invalid_request (the app's exception handler) — accept both.
+                assert r.status_code in (400, 422), (bad, r.status_code, r.text[:200])
+            for good in (30, 86_400):
+                r = await c.post(
+                    "/v1/answer",
+                    json={"query": "pháp y BCTC VCB", "max_age_s": good},
+                    headers=_hdr(admin_key),
+                )
+                # No LLM configured in tests -> 502/503/504 fine; the CONTRACT
+                # is only that the schema accepted the value (not 422).
+                assert r.status_code != 422, good

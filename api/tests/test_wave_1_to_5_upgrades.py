@@ -48,8 +48,8 @@ class TestWave1InfrastructureAndSecurity:
         tools: dict[str, object] = {}
 
         class FakeFastMCP:
-            def __init__(self, name: str):
-                self.name = name
+            def __init__(self, name: str, **kwargs):  # server.py passes
+                self.name = name  # streamable_http_path / transport_security
 
             def tool(self):
                 def decorator(fn):

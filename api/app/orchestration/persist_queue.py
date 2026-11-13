@@ -67,6 +67,7 @@ class PersistQueue:
                 self._discard(self._queue.get_nowait())
                 self._dropped += 1
                 PERSIST_DROPPED.inc()
+                BACKGROUND_QUEUE_DEPTH.labels(queue="persist").set(self._queue.qsize())
                 logger.warning("persist_queue_dropped_oldest", total_dropped=self._dropped)
                 self._queue.put_nowait(item)
             except asyncio.QueueEmpty:

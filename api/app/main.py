@@ -67,11 +67,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.orchestration.persist_queue import get_persist_queue
 
     await get_persist_queue().start()
-    # F3: retention on Lite (no worker) — run once at boot if due.
+    # F3: retention on Lite (no worker) — run once at boot if due. Guarded by
+    # retention_enabled (audit round 13: the boot purge previously ignored the
+    # operator flag and deleted data against policy).
     from app.orchestration.retention import run_if_due
 
     try:
-        results = await run_if_due(last_run_path=str(Path(__file__).parent / ".retention_last_run"))
+        if settings.retention_enabled:
+            results = await run_if_due(
+                last_run_path=str(Path(__file__).parent / ".retention_last_run")
+            )
         if results:
             logger.info("retention_boot_completed", **results)
     except Exception as exc:
@@ -117,10 +122,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.api import ops as ops_module
 
     ops_module.reset_readiness_state()
+    # MCP streamable-HTTP session manager (audit round 13): entered HERE —
+    # the custom lifespan replaces legacy handlers, which is why the
+    # add_event_handler wiring never ran and /mcp returned
+    # "Task group is not initialized".
+    mcp_session_cm = getattr(app.state, "mcp_session_cm", None)
+    if mcp_session_cm is not None:
+        await mcp_session_cm.__aenter__()
     try:
         yield
     finally:
         ops_module.mark_shutting_down()
+        if mcp_session_cm is not None:
+            with contextlib.suppress(Exception):
+                await mcp_session_cm.__aexit__(None, None, None)
         if settings.scheduler_enabled and not settings.is_test:
             from app.api.deps import get_scanner
 
@@ -290,22 +305,13 @@ def _mount_mcp(app: FastAPI) -> None:
         server = build_server()
         http_app = server.streamable_http_app()
         app.mount("/mcp", _mcp_auth_guard(http_app))
-        # Audit round 11 P1: FastAPI never runs MOUNTED sub-app lifespans, but
-        # FastMCP's streamable HTTP app needs session_manager.run() alive for
-        # the whole process — wire it into the app's event handlers.
-        import contextlib as _contextlib
-
-        manager_cm = server.session_manager.run()
-
-        async def _open_mcp_manager() -> None:
-            await manager_cm.__aenter__()
-
-        async def _close_mcp_manager() -> None:
-            with _contextlib.suppress(Exception):
-                await manager_cm.__aexit__(None, None, None)
-
-        app.add_event_handler("startup", _open_mcp_manager)
-        app.add_event_handler("shutdown", _close_mcp_manager)
+        # Audit round 11 P1 + round 13: FastAPI never runs MOUNTED sub-app
+        # lifespans, and with an asynccontextmanager lifespan Starlette IGNORES
+        # legacy startup/shutdown handlers — so add_event_handler was a no-op
+        # and the transport stayed dead. The session manager is now entered by
+        # the main lifespan (which reads app.state.mcp_session_cm around its
+        # yield) and exited in its finally.
+        app.state.mcp_session_cm = server.session_manager.run()
         logger.info("mcp_http_mounted", path="/mcp")
     except SystemExit as exc:
         logger.warning("mcp_mount_skipped", reason=str(exc))

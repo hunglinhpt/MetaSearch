@@ -27,7 +27,25 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
             "MCP SDK missing: install with `pip install '.[mcp]'` (or pip install mcp>=1.2)"
         ) from exc
 
-    mcp = FastMCP("metasearch")
+    # Audit round 13: FastMCP defaults its streamable-HTTP route to "/mcp".
+    # Mounted at "/mcp" in main.py the effective URL would be /mcp/mcp — set
+    # the inner path to "/" so the mount serves at exactly /mcp.
+    # Audit round 13: disable the SDK's Host/Origin rebinding check — the
+    # /mcp mount is protected by api-key auth (require_api_key ASGI wrap) and
+    # a reverse proxy owns host policy; the SDK's default allowed-hosts list
+    # rejects every non-localhost Host header (421 on any real deployment).
+    # Older SDK builds lack transport_security — degrade instead of crashing.
+    try:
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    except ImportError:  # pragma: no cover - depends on SDK version
+        security = None
+
+    kwargs: dict = {"streamable_http_path": "/"}
+    if security is not None:
+        kwargs["transport_security"] = security
+    mcp = FastMCP("metasearch", **kwargs)
 
     @mcp.tool()
     async def web_search(
