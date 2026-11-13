@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import or_, select
 
 from app.core.logging import get_logger
+from app.core.offload import run_cpu
 from app.retrieval.canonical import canonicalize
 from app.retrieval.scoring import tokenize
 
@@ -185,6 +186,34 @@ async def hybrid_chunk_search(
 
     if not rows:
         return []
+    # Audit Pass 4 P1: BM25 + per-doc cosine over <=1000 docs is ~200-400 ms
+    # of pure-Python scoring — run it OFF the event loop via run_cpu, exactly
+    # like pipeline._score_chunks (AGENTS.md §4).
+    ranked = await run_cpu(_score_rows_sync, rows, query, embedding)
+
+    out: list[dict[str, Any]] = []
+    for item in ranked[: max(1, min(k, 50))]:
+        out.append(
+            {
+                "chunk_id": item["chunk_id"],
+                "url": item["url"],
+                "title": item["title"],
+                "domain": item["domain"],
+                "position": item["position"],
+                "heading_path": item["heading_path"],
+                "content": item["content"],
+                "score": round(item["score"], 6),
+                "dense": round(item["dense"], 6) if item["dense"] is not None else None,
+                "sparse": round(item["sparse"], 6),
+            }
+        )
+    return out
+
+
+def _score_rows_sync(
+    rows: list[Any], query: str, embedding: list[float] | None
+) -> list[dict[str, Any]]:
+    """Sync BM25 + cosine + RRF scoring (runs in run_cpu off the event loop)."""
     contents = [r.content or "" for r in rows]
     sparse = bm25_scores(query, contents)
     dense: list[float] | None = None
@@ -195,10 +224,10 @@ async def hybrid_chunk_search(
         ]
     fused = rrf_fuse(dense or [], sparse)
     order = sorted(range(len(rows)), key=lambda i: -fused[i])
-    out: list[dict[str, Any]] = []
-    for i in order[: max(1, min(k, 50))]:
+    ranked: list[dict[str, Any]] = []
+    for i in order:
         r = rows[i]
-        out.append(
+        ranked.append(
             {
                 "chunk_id": str(r.id),
                 "url": r.canonical_url,
@@ -207,9 +236,9 @@ async def hybrid_chunk_search(
                 "position": r.position,
                 "heading_path": r.heading_path or "",
                 "content": r.content,
-                "score": round(fused[i], 6),
-                "dense": round(dense[i], 6) if dense else None,
-                "sparse": round(sparse[i], 6),
+                "score": fused[i],
+                "dense": dense[i] if dense else None,
+                "sparse": sparse[i],
             }
         )
-    return out
+    return ranked
