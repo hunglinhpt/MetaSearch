@@ -130,7 +130,10 @@ class TestResearchPipeline:
         names = [n for n, _ in events]
         assert names[0] == "status"  # planning
         assert "plan" in names
-        assert names.count("iteration_start") == 2  # second iteration from gaps
+        # v2.6 P1-1 coverage gate: gaps are empty after iteration 2 but the
+        # planner sub-questions are not covered by the learnings yet, so the
+        # loop probes once more up to depth=3.
+        assert names.count("iteration_start") == 3
         assert "learnings" in names
         assert names[-1] == "done"
         done = events[-1][1]

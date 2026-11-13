@@ -263,6 +263,44 @@ class Settings(BaseSettings):
     search_extras_max_chars: int = 4000
     search_highlights_max: int = 2
 
+    # --- v2.6 wave P1 (docs/20 §4, docs/22) ----------------------------------
+    # P1-8: freshness decay half-lives in days. 30*ln2 ≈ 20.794 reproduces the
+    # legacy exp(-age/30) curve exactly, so news behavior is unchanged by
+    # default; non-news decays slower (45d half-life) so evergreen docs are
+    # not punished like stale news, while genuinely old sources still sink.
+    freshness_half_life_days_news: float = 20.794
+    freshness_half_life_days_other: float = 45.0
+    # P1-2: adaptive complexity router — heuristic auto-routes multi-hop /
+    # comparative / long queries to deep fan-out without deep=true.
+    adaptive_router_enabled: bool = True
+    adaptive_router_min_words_deep: int = 14
+    # P1-1: IRCoT research loop — reformulate sub-queries from evidence seen
+    # so far, and gate early stopping on planner sub-question coverage.
+    research_ircot_reformulate: bool = True
+    research_coverage_gate_enabled: bool = True
+    research_coverage_threshold: float = 0.6
+    # P1-5: per-key memory (Mem0-lite): past queries + per-URL feedback used
+    # as rerank boosts. DELETE /v1/memory wipes a key's memory (privacy).
+    memory_enabled: bool = True
+    memory_max_per_key: int = 500
+    memory_feedback_boost: float = 0.15
+    # P1-6: Spaces (named collections with pinned sources / domain scope).
+    spaces_enabled: bool = True
+    spaces_max_per_key: int = 20
+    # P1-7: /v1/map + /v1/crawl site exploration bounds.
+    map_max_urls: int = 200
+    crawl_max_pages: int = 50
+    crawl_max_depth: int = 2
+    # P1-3: late chunking for long documents (segment-window approximation
+    # of true late chunking on API embedding backends).
+    late_chunking_enabled: bool = True
+    late_chunking_doc_max_chars: int = 24_000
+    late_chunking_segment_chars: int = 6_000
+    late_chunking_segment_overlap_chars: int = 300
+    # P1-4: hybrid dense+sparse (tsvector/BM25) chunk retrieval, RRF-fused.
+    hybrid_search_enabled: bool = True
+    hybrid_rrf_weight: float = 0.5
+
     # --- Phase 2: cache + engine management -------------------------------
     cache_enabled: bool = True
     cache_search_ttl_s: int = 1800  # docs/03 §7: 15-60m, news 15m

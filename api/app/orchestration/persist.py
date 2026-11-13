@@ -12,7 +12,7 @@ import uuid
 from typing import Any
 from urllib.parse import urlsplit
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -21,12 +21,63 @@ from app.core.logging import get_logger
 from app.db.models import Answer, Citation, Document, Query, SearchResult
 from app.db.models import Chunk as ChunkRow
 from app.db.session import get_sessionmaker
-from app.extraction.chunker import Chunk
+from app.extraction.chunker import Chunk, segment_long_document
 from app.extraction.scraper import PageContent
 from app.retrieval.canonical import canonicalize
 from app.retrieval.models import ScoredResult
 
 logger = get_logger(__name__)
+
+# docs/20 P1-3: optional embedder used to fill Chunk.embedding at persist time
+# (late chunking: long docs are embedded per segment, chunks inherit their
+# segment's vector). Set once at startup via configure_embedder().
+_embedder: Any = None
+
+
+def configure_embedder(embedder: Any) -> None:
+    global _embedder
+    _embedder = embedder
+
+
+async def _doc_chunk_embeddings(
+    page: PageContent, doc_chunks: list[Chunk]
+) -> dict[int, list[float]]:
+    """Map chunk position -> embedding vector for one document.
+
+    Long documents (late chunking): embed the segment windows of the whole
+    document once (bounded batch), then each chunk inherits the vector of the
+    segment that contains it — the chunk vector therefore carries document
+    context. Short documents: embed the chunks directly. Any failure returns
+    {} (fail-open: the row is still stored, just without a vector)."""
+    if _embedder is None or not getattr(_embedder, "enabled", False) or not doc_chunks:
+        return {}
+    from app.config import get_settings
+
+    settings = get_settings()
+    try:
+        md = page.markdown or ""
+        if settings.late_chunking_enabled and len(md) > settings.late_chunking_doc_max_chars:
+            segments = segment_long_document(
+                md,
+                segment_chars=settings.late_chunking_segment_chars,
+                overlap_chars=settings.late_chunking_segment_overlap_chars,
+            )[:12]
+            vectors = await asyncio.wait_for(_embedder.embed_many(segments), timeout=10.0)
+            out: dict[int, list[float]] = {}
+            for chunk in doc_chunks[:64]:
+                probe = chunk.content[:200]
+                for seg, vec in zip(segments, vectors, strict=True):
+                    if probe and probe in seg:
+                        out[chunk.position] = vec
+                        break
+            return out
+        texts = [c.content for c in doc_chunks[:32]]
+        vectors = await asyncio.wait_for(_embedder.embed_many(texts), timeout=10.0)
+        return {c.position: v for c, v in zip(doc_chunks[:32], vectors, strict=True)}
+    except Exception as exc:
+        logger.warning("persist_embed_failed", url=page.url, error=type(exc).__name__)
+        return {}
+
 
 # Hold strong references to fire-and-forget tasks so Python's GC never collects
 # an in-flight coroutine before it finishes.
@@ -45,6 +96,11 @@ async def _run(label: str, coro: Any) -> None:
         await coro
     except Exception as exc:
         logger.warning("persist_failed", label=label, error=type(exc).__name__)
+
+
+def spawn_task(label: str, coro: Any) -> None:
+    """Public wrapper: hand one background write to the bounded persist queue."""
+    _spawn_task(label, coro)
 
 
 def _spawn_task(label: str, coro: Any) -> asyncio.Task[None] | None:
@@ -215,6 +271,22 @@ async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> N
                 doc_ids.setdefault(raw_target, doc_id)
                 doc_ids.setdefault(canon, doc_id)
 
+        # docs/20 P1-3: per-document embeddings (late chunking for long docs).
+        embeddings_by_doc: dict[uuid.UUID, dict[int, list[float]]] = {}
+        if _embedder is not None and getattr(_embedder, "enabled", False):
+            for page in pages:
+                doc_id = doc_ids.get(page.url)
+                if doc_id is None or doc_id not in new_doc_ids:
+                    continue
+                doc_chunks = [
+                    c
+                    for c in chunks
+                    if c.document_url == page.url
+                    or canonicalize(c.document_url) == canonicalize(page.url)
+                ]
+                embeddings_by_doc[doc_id] = await _doc_chunk_embeddings(page, doc_chunks)
+
+        is_pg = bool(session.bind) and session.bind.dialect.name == "postgresql"
         for chunk in chunks:
             doc_id = doc_ids.get(chunk.document_url) or doc_ids.get(
                 canonicalize(chunk.document_url)
@@ -225,6 +297,9 @@ async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> N
                 chunk_uuid = uuid.UUID(chunk.id)
             except ValueError:
                 chunk_uuid = uuid.uuid4()
+            # docs/20 P1-4: sparse side of the hybrid index — real tsvector on
+            # Postgres, raw text on SQLite (scored in Python by retrieval/hybrid).
+            tsv_value = func.to_tsvector("simple", chunk.content) if is_pg else chunk.content
             await session.execute(
                 insert(ChunkRow)
                 .values(
@@ -234,6 +309,8 @@ async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> N
                     heading_path=chunk.heading_path,
                     content=chunk.content,
                     token_count=chunk.word_count,
+                    tsv=tsv_value,
+                    embedding=embeddings_by_doc.get(doc_id, {}).get(chunk.position),
                 )
                 .on_conflict_do_nothing(index_elements=["id"])
             )

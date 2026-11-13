@@ -166,13 +166,28 @@ def engine_weight_score(adapters: list[str], registry: dict[str, EngineConfig]) 
     return min(sum(weights) / len(weights) / 2.0, 1.0)
 
 
-def freshness(published_at: datetime | None, now: datetime | None = None) -> float:
+def freshness(
+    published_at: datetime | None,
+    now: datetime | None = None,
+    *,
+    half_life_days: float | None = None,
+) -> float:
+    """Exponential decay of the freshness signal.
+
+    docs/20 P1-8: ``half_life_days`` switches to a true half-life curve
+    ``0.5 ** (age / half_life)``; ``None`` keeps the legacy ``exp(-age/30)``
+    (which is exactly half-life ``30 * ln2 ≈ 20.794`` days). News and
+    non-news results can therefore decay at different rates — stale
+    non-news sources are downranked automatically but gently.
+    """
     if published_at is None:
         return 0.3
     now = now or datetime.now(UTC)
     if published_at.tzinfo is None:
         published_at = published_at.replace(tzinfo=UTC)
     age_days = max((now - published_at).total_seconds() / 86400, 0.0)
+    if half_life_days is not None and half_life_days > 0:
+        return 0.5 ** (age_days / half_life_days)
     return math.exp(-age_days / 30.0)
 
 
@@ -205,13 +220,21 @@ def apply_signals(
     max_engines: int,
     now: datetime | None = None,
     news: bool = False,
+    # docs/20 P1-8: configurable half-lives (days); None = legacy exp(-age/30).
+    news_half_life_days: float | None = None,
+    other_half_life_days: float | None = None,
 ) -> float:
     """Fill the signal fields of ``item`` and return the combined score."""
     query_terms = tokenize(query)
     kw = keyword_relevance(query_terms, item.title, item.snippet)
     cons = consensus_score(item.consensus, max_engines)
     ew = engine_weight_score(item.adapters, registry)
-    fresh = 0.0 if item.data_kind == "computed" else freshness(item.published_at, now)
+    half_life = news_half_life_days if news else other_half_life_days
+    fresh = (
+        0.0
+        if item.data_kind == "computed"
+        else freshness(item.published_at, now, half_life_days=half_life)
+    )
     da = domain_authority(item.domain)
     sq = snippet_quality(item.snippet)
     fresh_weight = WEIGHTS["freshness_news"] if news else WEIGHTS["freshness_other"]

@@ -44,6 +44,7 @@ async def search(request: SearchRequest) -> SearchResponse:
                     exclude_domains=request.exclude_domains,
                     deep=request.deep,
                     include_fields=tuple(request.extras or ()),
+                    space=request.space,
                 )
             )
             # WP-15: empty results with healthy engines = 200 complete:true;

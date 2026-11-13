@@ -12,8 +12,8 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, DateTime, String, Uuid, func
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy import JSON, DateTime, String, Text, Uuid, func
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Embedding width is shared with the Alembic migration so both stay in sync.
@@ -26,6 +26,10 @@ UUIDType = Uuid()
 JSONType = JSON().with_variant(JSONB(), "postgresql")
 StringListType = JSON().with_variant(ARRAY(String()), "postgresql")
 EmbeddingType = JSON().with_variant(Vector(EMBEDDING_DIM), "postgresql")
+# docs/20 P1-4: sparse (BM25) side of the hybrid chunk index. Postgres gets a
+# real tsvector column; SQLite stores the raw text and the hybrid scorer
+# falls back to in-Python token matching.
+TSVType = Text().with_variant(TSVECTOR(), "postgresql")
 
 
 class Base(DeclarativeBase):

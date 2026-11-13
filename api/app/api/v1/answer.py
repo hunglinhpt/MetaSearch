@@ -57,6 +57,7 @@ def _params(request: AnswerRequest) -> SearchParams:
         exclude_domains=request.exclude_domains,
         deep=request.deep,
         max_age_s=request.max_age_s,
+        space=request.space,
     )
 
 

@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-BOOST_KINDS = frozenset({"domain", "keyword"})
+BOOST_KINDS = frozenset({"domain", "keyword", "url"})
 # A single rule can move a result by at most this factor; the sum of all
 # domain rules is clamped to the same band so one key cannot invert the
 # ranking wholesale.
@@ -38,9 +38,10 @@ _KEYWORD_STEP = 0.2  # each matching keyword rule adds weight * _KEYWORD_STEP
 
 @dataclass(slots=True, frozen=True)
 class BoostRule:
-    kind: str  # "domain" | "keyword"
-    target: str  # domain suffix ("vnexpress.net") or lowercase keyword/phrase
-    weight: float  # domain: multiplier offset (-0.9..1.0); keyword: additive base
+    kind: str  # "domain" | "keyword" | "url"
+    target: str  # domain suffix ("vnexpress.net"), lowercase keyword/phrase, or canonical URL
+    # domain/url: multiplier offset (-0.9..1.0); keyword: additive base
+    weight: float
 
 
 def _norm_domain(domain: str) -> str:
@@ -66,6 +67,7 @@ def apply_boosts(item: ScoredResult, query: str, rules: list[BoostRule]) -> int:
     applied = 0
     domain_factor = 1.0
     keyword_add = 0.0
+    url_factor = 1.0
     q = query.lower()
     item_domain = _norm_domain(item.domain)
     for rule in rules:
@@ -77,9 +79,22 @@ def apply_boosts(item: ScoredResult, query: str, rules: list[BoostRule]) -> int:
         elif rule.kind == "keyword" and rule.target and rule.target in q:
             keyword_add += rule.weight
             applied += 1
+        elif rule.kind == "url" and rule.target:
+            # docs/20 P1-6: pinned Space sources — exact canonical URL match.
+            from app.retrieval.canonical import canonicalize
+
+            matched = False
+            try:
+                matched = canonicalize(item.url) == rule.target or item.canonical_url == rule.target
+            except Exception:
+                matched = False
+            if matched:
+                url_factor += rule.weight
+                applied += 1
     if applied:
         domain_factor = max(1.0 - _MAX_DOMAIN_FACTOR, min(domain_factor, _MAX_DOMAIN_FACTOR))
-        item.score = max(0.0, item.score * domain_factor + keyword_add * _KEYWORD_STEP)
+        url_factor = max(1.0 - _MAX_DOMAIN_FACTOR, min(url_factor, _MAX_DOMAIN_FACTOR))
+        item.score = max(0.0, item.score * domain_factor * url_factor + keyword_add * _KEYWORD_STEP)
         item.boosts_applied = applied
     return applied
 

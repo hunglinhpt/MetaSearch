@@ -21,6 +21,8 @@ EXPECTED_TABLES = {
     "users",
     "watchlist_items",
     "key_boosts",
+    "memory_items",
+    "spaces",
 }
 
 

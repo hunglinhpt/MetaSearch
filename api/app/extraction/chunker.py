@@ -157,3 +157,67 @@ def _split_sections(markdown: str) -> list[tuple[str, str]]:
 
 def _path(stack: list[tuple[int, str]]) -> str:
     return " > ".join(title for _, title in stack if title)
+
+
+def segment_long_document(
+    markdown: str, *, segment_chars: int = 6_000, overlap_chars: int = 300
+) -> list[str]:
+    """docs/20 P1-3: split a long document into overlapping, sentence-aware
+    segment windows. This is the segment half of late chunking: on long-context
+    embedding models the segment (not the chunk) is what gets embedded, and each
+    chunk inherits its segment's vector — so a chunk's embedding carries the
+    surrounding document context (Jina late-chunking approximation for API
+    backends that cannot embed a whole 100k-token document in one call)."""
+    if len(markdown) <= segment_chars:
+        return [markdown]
+    segments: list[str] = []
+    start = 0
+    n = len(markdown)
+    while start < n:
+        end = min(start + segment_chars, n)
+        if end < n:
+            # Prefer breaking at a paragraph, then a sentence, then whitespace.
+            window = markdown[start:end]
+            cut = window.rfind("\n\n")
+            if cut < segment_chars // 2:
+                cut = window.rfind(". ")
+            if cut < segment_chars // 2:
+                cut = window.rfind(" ")
+            if cut > 0:
+                end = start + cut + 1
+        segments.append(markdown[start:end])
+        if end >= n:
+            break
+        start = max(end - overlap_chars, start + 1)
+    return segments
+
+
+def late_chunk_markdown(
+    markdown: str,
+    *,
+    document_url: str,
+    source_title: str,
+    doc_max_chars: int = 24_000,
+    segment_chars: int = 6_000,
+    overlap_chars: int = 300,
+) -> list[Chunk]:
+    """docs/20 P1-3: chunk a document, segmenting first when it is long so
+    chunk boundaries never straddle a segment window (the unit that will be
+    embedded at persist time). Short documents take the normal path."""
+    if len(markdown) <= doc_max_chars:
+        return chunk_markdown(markdown, document_url=document_url, source_title=source_title)
+    chunks: list[Chunk] = []
+    position = 0
+    for seg_idx, segment in enumerate(
+        segment_long_document(markdown, segment_chars=segment_chars, overlap_chars=overlap_chars)
+    ):
+        for chunk in chunk_markdown(segment, document_url=document_url, source_title=source_title):
+            chunk.position = position + chunk.position
+            # Re-key the id with the segment index: overlapping windows can
+            # otherwise produce identical (position, content) pairs.
+            chunk.id = str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"{document_url}:seg{seg_idx}:{chunk.id}")
+            )
+            chunks.append(chunk)
+        position = chunks[-1].position if chunks else position
+    return chunks

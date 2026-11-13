@@ -34,6 +34,9 @@ def merge(
     rrf_weight: float = 0.3,
     # docs/20 P0-6: per-key personal boost rules, applied after the blend.
     boosts: list[BoostRule] | None = None,
+    # docs/20 P1-8: freshness half-lives in days (None = legacy exp(-age/30)).
+    news_half_life_days: float | None = None,
+    other_half_life_days: float | None = None,
 ) -> list[ScoredResult]:
     """Deduplicate ``raws`` by canonical URL, score groups, sort desc."""
     groups: dict[str, list[RawResult]] = {}
@@ -87,7 +90,14 @@ def merge(
     rw = min(max(rrf_weight, 0.0), 1.0)
     for item in merged:
         base = apply_signals(
-            item, query=query, registry=registry, max_engines=max_engines, now=now, news=news
+            item,
+            query=query,
+            registry=registry,
+            max_engines=max_engines,
+            now=now,
+            news=news,
+            news_half_life_days=news_half_life_days,
+            other_half_life_days=other_half_life_days,
         )
         item.rrf_score = (group_rrf[item.canonical_url] / max_rrf) if max_rrf > 0 else 0.0
         item.score = (1.0 - rw) * base + rw * item.rrf_score

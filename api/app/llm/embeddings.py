@@ -59,3 +59,42 @@ class EmbeddingClient:
                 f"embedding dim {len(vector)} != expected {EMBEDDING_DIM} (check EMBEDDING_MODEL)"
             )
         return [float(x) for x in vector]
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        """docs/20 P1-3: batch embedding — one HTTP call for many segments
+        (late chunking embeds document segments, not individual chunks).
+        Returns one vector per input, in order; raises ``EmbeddingError``."""
+        if not texts:
+            return []
+        url = f"{self._settings.embedding_api_base_url.rstrip('/')}/embeddings"
+        headers = {}
+        if self._settings.embedding_api_key:
+            headers["Authorization"] = f"Bearer {self._settings.embedding_api_key}"
+        try:
+            client = self._client or get_http_client("internal")
+            resp = await client.post(
+                url,
+                json={"model": self._settings.embedding_model, "input": texts},
+                headers=headers,
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        except Exception as exc:
+            raise EmbeddingError(f"embedding request failed: {type(exc).__name__}") from exc
+        try:
+            data = sorted(payload["data"], key=lambda item: item["index"])
+            vectors = [item["embedding"] for item in data]
+        except (KeyError, TypeError) as exc:
+            raise EmbeddingError("unexpected embedding response shape") from exc
+        if len(vectors) != len(texts):
+            raise EmbeddingError(f"embedding count {len(vectors)} != input count {len(texts)}")
+        out: list[list[float]] = []
+        for vector in vectors:
+            if len(vector) != EMBEDDING_DIM:
+                raise EmbeddingError(
+                    f"embedding dim {len(vector)} != expected {EMBEDDING_DIM}"
+                    " (check EMBEDDING_MODEL)"
+                )
+            out.append([float(x) for x in vector])
+        return out

@@ -181,7 +181,21 @@ New endpoints:
 - `POST /v1/podcast/briefing`, `GET /v1/podcast/briefing/status|latest|feed.xml`
   — daily audio briefing (optional VoiceStudio). Cost 5 / 1.
 - `POST /v1/research`, `GET /v1/research/{id}`, `GET /v1/research/{id}/events`
-  (SSE) — Deep Research job lifecycle (FR-9).
+  (SSE) — Deep Research job lifecycle (FR-9). v2.6: vòng lặp IRCoT (reformulate
+  theo evidence) + coverage gate; event `learnings`/`done` có thêm `coverage`.
+- `POST /v1/map` `{url, max_urls?}` — liệt kê URL của một site (sitemap trước,
+  fallback link same-host trong HTML; SSRF/robots/pinning như scrape). Cost 2.
+- `POST /v1/crawl` `{url, depth?, max_pages?, max_chars?}` — BFS crawl same-host
+  qua scraper thật, persist vào index, trả markdown bounded. Cost 5.
+- `POST /v1/hybrid` `{query, k?, urls?, domains?, space?, dense?}` — tìm chunk
+  trong index theo hybrid dense+sparse (BM25 + cosine, fuse bằng RRF). Cost 3.
+- `GET/POST/DELETE /v1/memory`, `DELETE /v1/memory/{id}` — memory theo key
+  (query đã hỏi + feedback 👍/👎 theo URL → boost; DELETE xoá toàn bộ). Cost 1.
+- `GET/POST/PATCH/DELETE /v1/spaces`, `POST /v1/spaces/{slug}/crawl` — Spaces
+  (collection theo chủ đề: domains + pinned URLs); search/answer nhận thêm
+  `space=<slug>`. Cost 1 (crawl 5).
+- `POST /v1/search` và `/v1/answer` nhận thêm `space` (v2.6); router tự động
+  nâng `deep=true` cho câu đa hop/dài khi `ADAPTIVE_ROUTER_ENABLED=true`.
 
 Rate-limit weights (auth on): answer 5, context 3, research 20,
 tts/synthesize 5, podcast/briefing 5, fa/compare 3+symbols, market/ohlcv 2,

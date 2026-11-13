@@ -24,6 +24,7 @@ from app.db.base import (
     EmbeddingType,
     JSONType,
     StringListType,
+    TSVType,
     UUIDPrimaryKeyMixin,
     UUIDType,
 )
@@ -115,6 +116,9 @@ class Chunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int | None] = mapped_column(Integer)
     embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType)
+    # docs/20 P1-4: sparse side of the hybrid index (tsvector on Postgres,
+    # plain text on SQLite — see TSVType). Nullable so old rows stay valid.
+    tsv: Mapped[str | None] = mapped_column(TSVType)
 
     document: Mapped[Document] = relationship(back_populates="chunks")
 
@@ -273,6 +277,51 @@ class KeyBoost(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     weight: Mapped[float] = mapped_column(REAL, nullable=False, server_default="0.5")
 
 
+class MemoryItem(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """One per-key memory entry (docs/20 P1-5 — Mem0-lite, v2.6).
+
+    ``kind`` is "query" (a past query, for future contextualization) or
+    "feedback" (per-URL 👍/👎, converted into rerank boost rules by
+    ``app.retrieval.memory.load_memory_boosts``). Tenancy by ``api_key_id``;
+    the owner can wipe everything with DELETE /v1/memory (privacy).
+    """
+
+    __tablename__ = "memory_items"
+    __table_args__ = (Index("idx_memory_owner", "api_key_id"),)
+
+    api_key_id: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)  # query | feedback
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    url: Mapped[str | None] = mapped_column(Text)
+    weight: Mapped[float] = mapped_column(REAL, nullable=False, server_default="0")
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
+
+
+class Space(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """A named collection (docs/20 P1-6 — Perplexity-Spaces-lite, v2.6).
+
+    A space scopes search to ``domains`` (host suffixes) and boosts
+    ``pinned_urls``; ``restrict``=true drops results outside the scope
+    (include-domain filter semantics). Per-key, capped per owner.
+    """
+
+    __tablename__ = "spaces"
+    __table_args__ = (
+        Index("idx_spaces_owner", "api_key_id"),
+        Index("idx_spaces_owner_slug", "api_key_id", "slug", unique=True),
+    )
+
+    api_key_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    domains: Mapped[list[str] | None] = mapped_column(JSONType)
+    pinned_urls: Mapped[list[str] | None] = mapped_column(JSONType)
+    query_terms: Mapped[list[str] | None] = mapped_column(JSONType)
+    restrict: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_crawl_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 __all__ = [
     "Answer",
     "ApiKey",
@@ -283,10 +332,12 @@ __all__ = [
     "Engine",
     "EngineHealth",
     "KeyBoost",
+    "MemoryItem",
     "Query",
     "SearchResult",
     "SemanticCache",
     "Session",
+    "Space",
     "User",
     "WatchlistItem",
 ]

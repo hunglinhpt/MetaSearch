@@ -31,6 +31,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     settings = get_settings()
     configure_logging()
+    # docs/20 P1-3: give persist the embedder so scraped chunks get vectors
+    # (late chunking for long docs) when the L2 backend is configured.
+    from app.api import deps as _deps
+    from app.orchestration import persist as _persist
+
+    with contextlib.suppress(Exception):
+        _persist.configure_embedder(_deps.get_embedder())
     from app.core.auth import validate_startup_auth
 
     bound_host = settings.api_host

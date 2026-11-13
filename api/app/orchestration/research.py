@@ -43,7 +43,7 @@ from app.orchestration.pipeline import (
 )
 from app.retrieval.canonical import canonicalize
 from app.retrieval.models import ScoredResult
-from app.retrieval.scoring import heuristic_chunk_score
+from app.retrieval.scoring import heuristic_chunk_score, tokenize
 
 logger = get_logger(__name__)
 
@@ -52,6 +52,39 @@ _MAX_SUB_QUERIES = 5
 _EXTRACTOR_MAX_CHARS = 12_000
 _MAX_CHUNKS_PER_DOC_IN_MERGE = 3
 _QUANT_ADAPTERS = frozenset({"viet_stock", "stooq", "yahoo_finance", "sec_edgar", "fengshui"})
+
+
+def _reformulate_query(
+    question: str, gap: str, learnings: list[Learning], *, max_facts: int = 3
+) -> str:
+    """docs/20 P1-1 (IRCoT): reformulate the next hop from the evidence already
+    gathered — the gap plus the established facts, so the search is conditioned
+    on what we know instead of re-asking the same thing (entity-linking hop)."""
+    facts = " ".join(lr.fact for lr in learnings[:max_facts]).strip()
+    if facts:
+        return f"{question} — {gap}. Given what is already established ({facts[:500]}), find:"
+    return f"{question} — {gap}"
+
+
+def _plan_coverage(
+    plan_queries: list[tuple[str, str]], learnings: list[Learning], *, threshold: float = 0.25
+) -> float:
+    """docs/20 P1-1 coverage gate: fraction of planner sub-questions whose key
+    terms are already reflected in the extracted learnings (lexical proxy for
+    "answered"). 1.0 when there is nothing to cover."""
+    if not plan_queries:
+        return 1.0
+    facts_text = " ".join(lr.fact.lower() for lr in learnings)
+    covered = 0
+    for query, purpose in plan_queries:
+        terms = [t for t in tokenize(f"{query} {purpose}") if len(t) > 3]
+        if not terms:
+            covered += 1
+            continue
+        hits = sum(1 for t in terms if t in facts_text)
+        if hits / len(terms) >= threshold:
+            covered += 1
+    return covered / len(plan_queries)
 
 
 @dataclass(slots=True)
@@ -697,6 +730,8 @@ class ResearchPipeline:
 
         pack = ContextPack()
         truncated = False
+        plan_queries = list(sub_queries)  # kept for the P1-1 coverage gate
+        coverage = 0.0
         for iteration in range(depth):
             if (
                 time.perf_counter() - started > deadline
@@ -706,10 +741,21 @@ class ResearchPipeline:
                 break
             yield ("iteration_start", {"iteration": iteration + 1, "max_iterations": depth})
             if iteration > 0 and pack.gaps:
-                # Harness² contrastive gap follow-up: probe explicitly on unanswered points
-                sub_queries = [
-                    (f"{gap} evidence analysis", "gap follow-up") for gap in pack.gaps[:breadth]
-                ]
+                if self.settings.research_ircot_reformulate:
+                    # docs/20 P1-1 (IRCoT): reformulate each gap hop conditioned
+                    # on the learnings extracted so far (entity-linking hop).
+                    sub_queries = [
+                        (
+                            _reformulate_query(question, gap, pack.learnings),
+                            "gap follow-up (IRCoT)",
+                        )
+                        for gap in pack.gaps[:breadth]
+                    ]
+                else:
+                    # Harness² contrastive gap follow-up: probe explicitly on unanswered points
+                    sub_queries = [
+                        (f"{gap} evidence analysis", "gap follow-up") for gap in pack.gaps[:breadth]
+                    ]
 
             queries = [q for q, _purpose in sub_queries] or [question]
             outcomes = await asyncio.gather(
@@ -721,6 +767,7 @@ class ResearchPipeline:
                             k=params.k,
                             categories=categories,
                             engines=None,
+                            record_memory=False,  # synthetic sub-query, not a user query
                         ),
                         on_event=on_event,
                     )
@@ -766,6 +813,8 @@ class ResearchPipeline:
             usage_total.output_tokens += usage.output_tokens
             pack.learnings.extend(learnings)
             pack.gaps = gaps
+            if self.settings.research_coverage_gate_enabled:
+                coverage = _plan_coverage(plan_queries, pack.learnings)
             # Yielded only — same duplicate-prevention as the plan event.
             yield (
                 "learnings",
@@ -773,9 +822,16 @@ class ResearchPipeline:
                     "learnings": [item.fact for item in learnings],
                     "gaps": gaps,
                     "iteration": iteration + 1,
+                    "coverage": round(coverage, 4),
                 },
             )
-            if not gaps:
+            # docs/20 P1-1 coverage gate: stop only when there are no open gaps
+            # AND the planner's sub-questions are covered by the evidence.
+            coverage_ok = (
+                not self.settings.research_coverage_gate_enabled
+                or coverage >= self.settings.research_coverage_threshold
+            )
+            if not gaps and coverage_ok:
                 break
 
         yield ("status", {"stage": "writing_report", "detail": f"{len(pack.chunks)} chunks"})
@@ -824,6 +880,7 @@ class ResearchPipeline:
                 "status": "truncated" if (truncated or report_truncated) else "complete",
                 "truncated": truncated or report_truncated,
                 "iterations": depth if (truncated or report_truncated) else None,
+                "coverage": round(coverage, 4),
                 "model": report_model,
                 "profile": harness.profile,
                 "usage": {

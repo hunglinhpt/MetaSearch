@@ -13,7 +13,18 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-13 — v2.5.0 Retrieval Quality wave docs/21: RRF + BGE reranker + query expansion + claim check + follow-ups + boosts + agent extras + eval v2)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-13 — v2.6.0 Deep Intelligence wave P1 docs/22: IRCoT + coverage gate, adaptive router, late chunking, hybrid chunk search, per-key memory, Spaces, map/crawl, freshness half-life)
+
+- ✅ **v2.6.0 Deep Intelligence wave P1 (docs/20 §4 → docs/22)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/22-deep-intelligence-wave-v2.6.md](docs/22-deep-intelligence-wave-v2.6.md):
+  - P1-1 IRCoT loop trong `research.py`: reformulate gap theo learnings (`_reformulate_query`) + coverage gate (`_plan_coverage`, `RESEARCH_COVERAGE_THRESHOLD=0.6`), `coverage` trong event `learnings`/`done`.
+  - P1-2 adaptive router (`retrieval/router.py`): heuristic classify simple/standard/deep, tự nâng `deep=true` ở `_personalize` (nằm trong cache key).
+  - P1-3 late chunking: `segment_long_document` + `late_chunk_markdown` (dùng ở /v1/crawl, Spaces crawl), `EmbeddingClient.embed_many`, persist gán chunk vector của segment (`persist.configure_embedder` ở lifespan), bounded + fail-open.
+  - P1-4 hybrid chunk index: cột `chunks.tsv` (TSVECTOR + GIN + backfill trên Postgres, alembic 0008), `retrieval/hybrid.py` BM25 + cosine fuse bằng RRF, endpoint `POST /v1/hybrid` (hỗ trợ `space=`).
+  - P1-5 per-key memory (Mem0-lite): bảng `memory_items` (alembic 0008), CRUD `/v1/memory` (+ DELETE xoá toàn bộ — privacy), feedback 👍/👎 gộp thành domain boost (`load_memory_boosts`, vào `boosts_sig`), ghi query qua bounded persist queue (`record_memory=False` cho sub-query research).
+  - P1-6 Spaces: bảng `spaces` (alembic 0008), CRUD `/v1/spaces` + `POST /v1/spaces/{slug}/crawl`, `space=<slug>` trên `/v1/search` + `/v1/answer` (domain scope post-cache, pinned URL thành `BoostRule(kind="url")`).
+  - P1-7 `/v1/map` + `/v1/crawl` (`extraction/sitemap.py` defusedxml + `api/v1/site.py` BFS same-host qua guarded scraper, persist vào index; `crawl_site` không lồng admission).
+  - P1-8 freshness half-life: `freshness(half_life_days=...)`, news giữ đúng legacy (20.794≈30·ln2), non-news 45 ngày; `computed` vẫn luôn 0.
+  - 38 test mới (`test_v26_wave_p1.py`); 3 vòng tự audit 8-lens (docs/22 §8); full pytest xanh, ruff/bandit/mypy sạch; OpenAPI snapshot regen (thêm `space` + 6 endpoint mới).
 
 - ✅ **v2.5.0 Retrieval & Answer Quality (docs/20 P0 → docs/21)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/21-retrieval-quality-v2.5.md](docs/21-retrieval-quality-v2.5.md):
   - P0-1 RRF fusion (`RRF_K=60`, weight từ registry) trong `merger.py`, blend với signals, `rrf_weight` config; cache key `sr:v3:`.

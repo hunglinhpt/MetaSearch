@@ -58,10 +58,12 @@ from app.orchestration import persist
 from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.boosts import load_boosts, rules_signature
 from app.retrieval.canonical import canonicalize
+from app.retrieval.memory import load_memory_boosts, record_query_fire_and_forget
 from app.retrieval.merger import diversity_cap, merge
 from app.retrieval.models import EngineConfig, EngineStatus, RawResult, ScoredResult
 from app.retrieval.query_expansion import expand_query, expansion_signature, parse_variants
 from app.retrieval.reranker import Reranker, RerankerUnavailable, heuristic_order
+from app.retrieval.router import classify_complexity
 from app.retrieval.scoring import heuristic_chunk_score
 from app.retrieval.vn_tickers import is_vn_ticker
 
@@ -325,6 +327,12 @@ class SearchParams:
     boost_rules: tuple[Any, ...] = ()
     # v2.5 P0-7: agent extras requested on /v1/search (contents/highlights/answer).
     include_fields: tuple[str, ...] = ()
+    # docs/20 P1-6: search within a Space (slug, owner-scoped). Domain scope is
+    # applied post-cache via include_domains; pinned URLs via boosts_sig.
+    space: str | None = None
+    # docs/20 P1-5: set False for synthetic sub-queries (research loop) so the
+    # memory log only contains real user queries.
+    record_memory: bool = True
 
 
 @contextlib.contextmanager
@@ -482,10 +490,58 @@ class SearchPipeline:
         to the plain query — personalization never fails a search.
         """
         owner = current_api_key_id.get() or "anonymous"
+        # docs/20 P1-2: adaptive router — heuristic complexity classification
+        # upgrades multi-hop/comparative/long queries to deep fan-out even
+        # when the caller did not set deep=true. `deep` is part of the cache
+        # key, so routed and explicit-deep searches share one entry safely.
+        if (
+            not params.deep
+            and self.settings.adaptive_router_enabled
+            and classify_complexity(
+                normalize_query(params.query),
+                min_words_deep=self.settings.adaptive_router_min_words_deep,
+            )
+            == "deep"
+        ):
+            params = dataclasses.replace(params, deep=True)
         boosts = await load_boosts(owner, max_per_key=self.settings.boosts_max_per_key)
+        # docs/20 P1-5: per-key memory — 👍/👎 feedback becomes domain boosts,
+        # and the query itself is remembered (fire-and-forget, fail-open).
+        mem_boosts = await load_memory_boosts(owner, settings=self.settings)
+        boosts = [*boosts, *mem_boosts]
+        # docs/20 P1-6: Space scope — pinned URLs become url-boosts (folded
+        # into boosts_sig), and a restrict-space's domains become the
+        # post-cache include-domain filter when the caller gave none.
+        if params.space:
+            if not self.settings.spaces_enabled:
+                raise MetaSearchError(
+                    ErrorCode.INVALID_REQUEST, "spaces are disabled", status_code=400
+                )
+            from app.retrieval.spaces import get_space, load_space_boosts, space_domain_scope
+
+            space = await get_space(owner, params.space)
+            if space is None:
+                raise MetaSearchError(
+                    ErrorCode.NOT_FOUND,
+                    f"space not found: {params.space}",
+                    status_code=404,
+                )
+            boosts = [
+                *boosts,
+                *await load_space_boosts(owner, params.space, settings=self.settings),
+            ]
+            domains = space_domain_scope(space)
+            if space.restrict and domains and not params.include_domains:
+                params = dataclasses.replace(params, include_domains=domains)
         params = dataclasses.replace(
             params, boosts_sig=rules_signature(boosts), boost_rules=tuple(boosts)
         )
+        if self.settings.memory_enabled and params.record_memory:
+            record_query_fire_and_forget(
+                owner,
+                normalize_query(params.query),
+                max_per_key=self.settings.memory_max_per_key,
+            )
         if self.gateway is not None and self.settings.query_expansion_enabled:
             variants = await expand_query(
                 self.gateway,
@@ -565,6 +621,9 @@ class SearchPipeline:
             news=params.news,
             rrf_weight=self.settings.rrf_weight,
             boosts=list(params.boost_rules) or None,
+            # docs/20 P1-8: configurable freshness half-lives (stale downrank).
+            news_half_life_days=self.settings.freshness_half_life_days_news,
+            other_half_life_days=self.settings.freshness_half_life_days_other,
         )
         results = diversity_cap(results, max_per_domain=2, limit=params.k)
 

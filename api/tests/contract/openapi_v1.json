@@ -194,6 +194,18 @@
             "title": "Query",
             "type": "string"
           },
+          "space": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space"
+          },
           "stream": {
             "default": false,
             "title": "Stream",
@@ -831,6 +843,18 @@
             "title": "Query",
             "type": "string"
           },
+          "space": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space"
+          },
           "timeout_ms": {
             "anyOf": [
               {
@@ -1061,6 +1085,18 @@
             "title": "Query",
             "type": "string"
           },
+          "space": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space"
+          },
           "timeout_ms": {
             "anyOf": [
               {
@@ -1079,6 +1115,135 @@
           "query"
         ],
         "title": "CouncilRequest",
+        "type": "object"
+      },
+      "CrawlPageItem": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "markdown": {
+            "default": "",
+            "title": "Markdown",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "status"
+        ],
+        "title": "CrawlPageItem",
+        "type": "object"
+      },
+      "CrawlRequest": {
+        "description": "docs/20 P1-7: BFS-crawl a site (same-domain, robots+SSRF respected).",
+        "properties": {
+          "depth": {
+            "default": 1,
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "max_chars": {
+            "default": 100000,
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Max Chars",
+            "type": "integer"
+          },
+          "max_pages": {
+            "default": 20,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Pages",
+            "type": "integer"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 60000.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          },
+          "url": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "CrawlRequest",
+        "type": "object"
+      },
+      "CrawlResponse": {
+        "properties": {
+          "indexed": {
+            "default": false,
+            "title": "Indexed",
+            "type": "boolean"
+          },
+          "latency_ms": {
+            "default": 0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/CrawlPageItem"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          },
+          "visited": {
+            "title": "Visited",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "root",
+          "visited"
+        ],
+        "title": "CrawlResponse",
         "type": "object"
       },
       "DomainAnalyzeRequest": {
@@ -1345,6 +1510,88 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HybridRequest": {
+        "properties": {
+          "dense": {
+            "default": true,
+            "title": "Dense",
+            "type": "boolean"
+          },
+          "domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domains"
+          },
+          "k": {
+            "default": 10,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "space": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 60000.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          },
+          "urls": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Urls"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "HybridRequest",
+        "type": "object"
+      },
       "LLMOverride": {
         "description": "Per-request, runtime, or Council panelist BYO-LLM configuration override.",
         "properties": {
@@ -1509,6 +1756,72 @@
         "title": "LLMTestRequest",
         "type": "object"
       },
+      "MapRequest": {
+        "description": "docs/20 P1-7: discover URLs of a site (sitemap first, HTML links fallback).",
+        "properties": {
+          "max_urls": {
+            "default": 100,
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Max Urls",
+            "type": "integer"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 60000.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          },
+          "url": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "MapRequest",
+        "type": "object"
+      },
+      "MapResponse": {
+        "properties": {
+          "root": {
+            "title": "Root",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Urls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "root",
+          "source"
+        ],
+        "title": "MapResponse",
+        "type": "object"
+      },
       "MarketOhlcvRequest": {
         "description": "POST /v1/market/ohlcv — daily candles for the chart (docs/18 B2).",
         "properties": {
@@ -1600,6 +1913,117 @@
           "days"
         ],
         "title": "MarketOhlcvResponse",
+        "type": "object"
+      },
+      "MemoryCreateRequest": {
+        "description": "docs/20 P1-5: record a memory entry for the current key.\n\nkind=\"query\" remembers a past query; kind=\"feedback\" attaches a 👍/👎\n(weight ±1) to a result URL and turns into a rerank boost.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "query",
+              "feedback"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Text",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "weight": {
+            "default": 0.0,
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "MemoryCreateRequest",
+        "type": "object"
+      },
+      "MemoryListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "storage": {
+            "default": "db",
+            "title": "Storage",
+            "type": "string"
+          }
+        },
+        "title": "MemoryListResponse",
+        "type": "object"
+      },
+      "MemoryOut": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "weight": {
+            "default": 0.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "MemoryOut",
         "type": "object"
       },
       "OhlcvCandle": {
@@ -2052,6 +2476,18 @@
             "title": "Query",
             "type": "string"
           },
+          "space": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space"
+          },
           "timeout_ms": {
             "anyOf": [
               {
@@ -2153,6 +2589,238 @@
           "latency_ms"
         ],
         "title": "SearchResponse",
+        "type": "object"
+      },
+      "SpaceCreateRequest": {
+        "description": "docs/20 P1-6: create a Space (named collection) for the current key.",
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Domains",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "pinned_urls": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Pinned Urls",
+            "type": "array"
+          },
+          "query_terms": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Query Terms",
+            "type": "array"
+          },
+          "restrict": {
+            "default": true,
+            "title": "Restrict",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SpaceCreateRequest",
+        "type": "object"
+      },
+      "SpaceListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SpaceOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "storage": {
+            "default": "db",
+            "title": "Storage",
+            "type": "string"
+          }
+        },
+        "title": "SpaceListResponse",
+        "type": "object"
+      },
+      "SpaceOut": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Domains",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_crawl_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Crawl At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "pinned_urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pinned Urls",
+            "type": "array"
+          },
+          "query_terms": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Query Terms",
+            "type": "array"
+          },
+          "restrict": {
+            "default": true,
+            "title": "Restrict",
+            "type": "boolean"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug"
+        ],
+        "title": "SpaceOut",
+        "type": "object"
+      },
+      "SpaceUpdateRequest": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domains"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "pinned_urls": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned Urls"
+          },
+          "query_terms": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Terms"
+          },
+          "restrict": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restrict"
+          }
+        },
+        "title": "SpaceUpdateRequest",
         "type": "object"
       },
       "TriggerScanRequest": {
@@ -2600,6 +3268,48 @@
         ]
       }
     },
+    "/v1/crawl": {
+      "post": {
+        "operationId": "crawl_endpoint_v1_crawl_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrawlRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Crawl Endpoint",
+        "tags": [
+          "v1",
+          "site"
+        ]
+      }
+    },
     "/v1/digests": {
       "get": {
         "description": "List published blog posts / daily briefings (with graceful memory fallback).",
@@ -3024,6 +3734,50 @@
         ]
       }
     },
+    "/v1/hybrid": {
+      "post": {
+        "operationId": "hybrid_search_v1_hybrid_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HybridRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Hybrid Search V1 Hybrid Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hybrid Search",
+        "tags": [
+          "v1",
+          "hybrid"
+        ]
+      }
+    },
     "/v1/llm/config": {
       "get": {
         "operationId": "get_llm_config_v1_llm_config_get",
@@ -3346,6 +4100,48 @@
         ]
       }
     },
+    "/v1/map": {
+      "post": {
+        "operationId": "map_endpoint_v1_map_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MapRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Map Endpoint",
+        "tags": [
+          "v1",
+          "site"
+        ]
+      }
+    },
     "/v1/market/ohlcv": {
       "post": {
         "operationId": "market_ohlcv_v1_market_ohlcv_post",
@@ -3385,6 +4181,157 @@
         "tags": [
           "v1",
           "market"
+        ]
+      }
+    },
+    "/v1/memory": {
+      "delete": {
+        "operationId": "wipe_memory_v1_memory_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Wipe Memory V1 Memory Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Wipe Memory",
+        "tags": [
+          "v1",
+          "memory"
+        ]
+      },
+      "get": {
+        "operationId": "list_memory_v1_memory_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Memory",
+        "tags": [
+          "v1",
+          "memory"
+        ]
+      },
+      "post": {
+        "operationId": "add_memory_v1_memory_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Memory",
+        "tags": [
+          "v1",
+          "memory"
+        ]
+      }
+    },
+    "/v1/memory/{memory_id}": {
+      "delete": {
+        "operationId": "remove_memory_v1_memory__memory_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "title": "Memory Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove Memory V1 Memory  Memory Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Memory",
+        "tags": [
+          "v1",
+          "memory"
         ]
       }
     },
@@ -3966,6 +4913,261 @@
         "tags": [
           "v1",
           "search"
+        ]
+      }
+    },
+    "/v1/spaces": {
+      "get": {
+        "operationId": "list_spaces_v1_spaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Spaces",
+        "tags": [
+          "v1",
+          "spaces"
+        ]
+      },
+      "post": {
+        "operationId": "create_space_v1_spaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Space",
+        "tags": [
+          "v1",
+          "spaces"
+        ]
+      }
+    },
+    "/v1/spaces/{slug}": {
+      "delete": {
+        "operationId": "delete_space_v1_spaces__slug__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Space V1 Spaces  Slug  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Space",
+        "tags": [
+          "v1",
+          "spaces"
+        ]
+      },
+      "get": {
+        "operationId": "get_space_v1_spaces__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Space",
+        "tags": [
+          "v1",
+          "spaces"
+        ]
+      },
+      "patch": {
+        "operationId": "update_space_v1_spaces__slug__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpaceUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Space",
+        "tags": [
+          "v1",
+          "spaces"
+        ]
+      }
+    },
+    "/v1/spaces/{slug}/crawl": {
+      "post": {
+        "description": "Map each domain root + scrape pinned URLs, persist into the index.",
+        "operationId": "crawl_space_v1_spaces__slug__crawl_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_pages",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "title": "Max Pages",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Crawl Space V1 Spaces  Slug  Crawl Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Crawl Space",
+        "tags": [
+          "v1",
+          "spaces"
         ]
       }
     },

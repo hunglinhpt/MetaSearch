@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.6.0] - 2026-11-13
+
+### Added (docs/20 P1 wave — docs/22)
+- P1-1 IRCoT research loop: reformulate gap hops from gathered evidence + coverage gate over planner sub-questions (`coverage` in `learnings`/`done` SSE events).
+- P1-2 adaptive complexity router: heuristic auto-`deep=true` for multi-hop/comparative/long queries (`ADAPTIVE_ROUTER_ENABLED`).
+- P1-3 late chunking for long docs: segment windows + `EmbeddingClient.embed_many`; at persist time each chunk inherits its segment's embedding (bounded, fail-open).
+- P1-4 hybrid dense+sparse chunk retrieval: `chunks.tsv` (tsvector+GIN on Postgres, alembic 0008 with backfill), BM25+cosine fused by RRF, `POST /v1/hybrid`.
+- P1-5 per-key memory (Mem0-lite): `memory_items` table (alembic 0008) + `/v1/memory` CRUD; 👍/👎 feedback aggregated into per-domain boost rules folded into `boosts_sig`; `DELETE /v1/memory` wipes all (privacy); query recording goes through the bounded persist queue.
+- P1-6 Spaces: `spaces` table + `/v1/spaces` CRUD + `/v1/spaces/{slug}/crawl`; `space=<slug>` on `/v1/search` and `/v1/answer` (post-cache domain scope + pinned-URL boosts, new `BoostRule(kind="url")`).
+- P1-7 agent site endpoints: `POST /v1/map` (sitemap-first via defusedxml, same-host HTML fallback) and `POST /v1/crawl` (same-host BFS through the SSRF/robots/pinning-guarded scraper, persisted into the chunk index).
+- P1-8 configurable freshness half-lives (`FRESHNESS_HALF_LIFE_DAYS_NEWS/OTHER`); news curve unchanged by default, non-news 45d.
+
+### Changed
+- `SearchRequest`/`AnswerRequest` gain `space`; 6 new endpoints in the OpenAPI snapshot (regenerated).
+
 ## [2.5.0] - 2026-11-13
 
 ### Added (docs/20 P0 wave — docs/21)

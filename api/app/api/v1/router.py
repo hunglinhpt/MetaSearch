@@ -13,8 +13,10 @@ from app.api.v1 import (
     answer,
     digests,
     engines,
+    hybrid,
     llm,
     market,
+    memory,
     ops_status,
     podcast,
     prefs,
@@ -22,6 +24,8 @@ from app.api.v1 import (
     research,
     scrape,
     search,
+    site,
+    spaces,
     superagent,
     tts,
     watchlist,
@@ -79,6 +83,10 @@ router.include_router(market.router, dependencies=_auth)
 router.include_router(watchlist.router, dependencies=_auth)
 router.include_router(podcast.router, dependencies=_auth)
 router.include_router(prefs.router, dependencies=_auth)
+router.include_router(memory.router, dependencies=_auth)
+router.include_router(hybrid.router, dependencies=_auth)
+router.include_router(site.router, dependencies=_auth)
+router.include_router(spaces.router, dependencies=_auth)
 router.include_router(
     superagent.router,
     dependencies=_auth,

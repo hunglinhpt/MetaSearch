@@ -235,7 +235,7 @@
 
 - [ ] docs/20 tổng hợp: bài học công trình (late chunking, HyDE, RRF, ColBERT/ColPali, BGE-M3, Self-RAG/Adaptive-RAG, Deep-RAG survey 2026, GraphRAG-Bench, RAGTruth/HHEM, BEIR/MTEB/MIRACL, EACL'26 Vietnamese gap, online eval), open-source (Qdrant/Vespa/Meilisearch/Marqo, RAGFlow/Dify/Onyx, BGE/jina/Voyage/NeMo NIMs, Graphiti/Mem0, Tavily/Exa APIs) và sản phẩm (Perplexity Spaces, Kagi Lenses, Brave Goggles, Exa highlights, OpenAI Deep Research).
 - [x] Wave P0 (v2.5.0 — đã triển khai, xem docs/21): P0-1 RRF fusion ở merger.py · P0-2 bge-reranker-v2-m3 local ONNX · P0-3 query expansion + RRF · P0-4 claim-level NLI citation check · P0-5 follow-up suggestions · P0-6 custom boosts theo key (Goggles-lite) · P0-7 agent API fields (contents/highlights/answer) · P0-8 eval harness v2 (BEIR/MIRACL-vi/RAGAS).
-- [ ] Wave P1 (v2.6): IRCoT research loop + coverage gate · adaptive complexity router · late chunking · BGE-M3 sparse hybrid trong pgvector · memory theo key (Mem0/Graphiti-lite) · Spaces · /v1/map + /v1/crawl · freshness decay.
+- [x] Wave P1 (v2.6.0 — đã triển khai, xem docs/22): P1-1 IRCoT research loop + coverage gate · P1-2 adaptive complexity router · P1-3 late chunking (segment-window + embed_many) · P1-4 hybrid dense+sparse chunk search (tsvector + RRF, POST /v1/hybrid) · P1-5 memory theo key (Mem0-lite, /v1/memory + feedback boosts) · P1-6 Spaces (/v1/spaces + space= trong search/answer) · P1-7 /v1/map + /v1/crawl · P1-8 freshness half-life config.
 - [ ] Wave P2 (v3): ColPali multimodal PDF · LightRAG KG theo space · vi-first BM25 + golden eval VI · online interleaving · voice/personalized podcast · structured JSON output · domain reputation tiers.
 
 ## 4. Rủi ro thực thi

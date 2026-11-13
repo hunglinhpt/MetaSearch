@@ -192,6 +192,9 @@ class SearchRequest(BaseModel):
     extras: list[Literal["contents", "highlights", "answer"]] | None = Field(
         default=None, max_length=3
     )
+    # docs/20 P1-6: search within one of the caller's Spaces (slug). Domain
+    # scope is applied post-cache; pinned URLs become per-key boosts.
+    space: str | None = Field(default=None, max_length=100)
 
 
 class CitationItem(BaseModel):
@@ -265,3 +268,113 @@ class AnswerResponse(BaseModel):
 
 def new_id() -> str:
     return str(uuid.uuid4())
+
+
+# --- v2.6 wave P1 (docs/20 §4, docs/22) -----------------------------------------
+
+
+class MemoryCreateRequest(BaseModel):
+    """docs/20 P1-5: record a memory entry for the current key.
+
+    kind="query" remembers a past query; kind="feedback" attaches a 👍/👎
+    (weight ±1) to a result URL and turns into a rerank boost.
+    """
+
+    kind: Literal["query", "feedback"]
+    text: str = Field(default="", max_length=4000)
+    url: str | None = Field(default=None, max_length=2000)
+    weight: float = Field(default=0.0, ge=-1.0, le=1.0)
+
+
+class MemoryOut(BaseModel):
+    id: str
+    kind: str
+    text: str = ""
+    url: str | None = None
+    weight: float = 0.0
+    created_at: str | None = None
+
+
+class MemoryListResponse(BaseModel):
+    items: list[MemoryOut] = Field(default_factory=list)
+    storage: str = "db"
+
+
+class SpaceCreateRequest(BaseModel):
+    """docs/20 P1-6: create a Space (named collection) for the current key."""
+
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1000)
+    domains: list[str] = Field(default_factory=list, max_length=50)
+    pinned_urls: list[str] = Field(default_factory=list, max_length=100)
+    query_terms: list[str] = Field(default_factory=list, max_length=50)
+    restrict: bool = True
+
+
+class SpaceUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+    domains: list[str] | None = Field(default=None, max_length=50)
+    pinned_urls: list[str] | None = Field(default=None, max_length=100)
+    query_terms: list[str] | None = Field(default=None, max_length=50)
+    restrict: bool | None = None
+
+
+class SpaceOut(BaseModel):
+    id: str
+    name: str
+    slug: str
+    description: str = ""
+    domains: list[str] = Field(default_factory=list)
+    pinned_urls: list[str] = Field(default_factory=list)
+    query_terms: list[str] = Field(default_factory=list)
+    restrict: bool = True
+    last_crawl_at: str | None = None
+    created_at: str | None = None
+
+
+class SpaceListResponse(BaseModel):
+    items: list[SpaceOut] = Field(default_factory=list)
+    storage: str = "db"
+
+
+class MapRequest(BaseModel):
+    """docs/20 P1-7: discover URLs of a site (sitemap first, HTML links fallback)."""
+
+    url: str = Field(min_length=1, max_length=2000)
+    max_urls: int = Field(default=100, ge=1, le=1000)
+    timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
+
+
+class MapResponse(BaseModel):
+    root: str
+    urls: list[str] = Field(default_factory=list)
+    source: str  # "sitemap" | "html" | "sitemap+html"
+    truncated: bool = False
+
+
+class CrawlRequest(BaseModel):
+    """docs/20 P1-7: BFS-crawl a site (same-domain, robots+SSRF respected)."""
+
+    url: str = Field(min_length=1, max_length=2000)
+    depth: int = Field(default=1, ge=1, le=3)
+    max_pages: int = Field(default=20, ge=1, le=100)
+    max_chars: int = Field(default=100_000, ge=1, le=1_000_000)
+    timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
+
+
+class CrawlPageItem(BaseModel):
+    url: str
+    status: str
+    title: str = ""
+    markdown: str = ""
+    truncated: bool = False
+    error: str | None = None
+
+
+class CrawlResponse(BaseModel):
+    root: str
+    visited: int
+    pages: list[CrawlPageItem] = Field(default_factory=list)
+    indexed: bool = False  # pages were persisted to the document/chunk index
+    latency_ms: int = 0
