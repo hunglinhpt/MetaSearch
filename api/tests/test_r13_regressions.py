@@ -11,11 +11,21 @@ Covers (previous audit gaps):
 
 from __future__ import annotations
 
+# The MCP SDK is an optional extra — the release-gate CI job installs a
+# minimal dep set without it, so _mount_mcp skips the mount (404). The
+# transport-alive tests only make sense when the SDK is importable.
+import importlib.util
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+
+needs_mcp_sdk = pytest.mark.skipif(
+    importlib.util.find_spec("mcp") is None,
+    reason="mcp SDK optional extra not installed in this environment",
+)
 
 
 @pytest.fixture()
@@ -46,6 +56,7 @@ class TestMcpHttpMount:
         r = client.post("/mcp", json={"jsonrpc": "2.0", "method": "initialize", "id": 1})
         assert r.status_code == 404  # mount absent -> main-app 404
 
+    @needs_mcp_sdk
     def test_transport_alive_and_guarded(self, mcp_app, monkeypatch):
         """Round 11 P1 + round 13: with the flag on, the mount answers with a
         MCP-PROTOCOL response (406 for missing Accept headers proves the
@@ -62,6 +73,7 @@ class TestMcpHttpMount:
             r = client.post("/mcp", json={"jsonrpc": "2.0", "method": "initialize", "id": 1})
         assert r.status_code in (401, 403), r.text  # guard, not transport crash
 
+    @needs_mcp_sdk
     def test_transport_alive_without_auth(self, mcp_app):
         """AUTH off (default dev): the transport must answer the protocol —
         406 'must accept application/json and text/event-stream' proves the
