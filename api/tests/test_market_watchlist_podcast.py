@@ -441,3 +441,42 @@ def test_podcast_latest_404_when_empty(client, monkeypatch, tmp_path):
     podcast.reset_podcast_state()
     assert client.get("/v1/podcast/briefing/latest").status_code == 404
     assert client.get("/v1/podcast/briefing/feed.xml").status_code == 404
+
+
+def test_fa_compare_csv_export(client, monkeypatch):
+    """Phase 4 P0-1: format=csv returns a UTF-8-BOM CSV table with per-symbol
+    provenance; format guard rejects unknown values."""
+    from datetime import UTC, datetime
+
+    from app.api import deps
+    from app.retrieval.fa_sources.aggregator import AggregatedFinancials, FieldValue
+
+    def _agg_with_pe(symbol: str, pe: float) -> AggregatedFinancials:
+        agg = AggregatedFinancials(symbol=symbol)
+        agg.fields["pe"] = FieldValue(
+            value=pe, source="tcbs", as_of=datetime(2026, 9, 30, tzinfo=UTC), validated=True
+        )
+        agg.missing_fields = [f for f in agg.missing_fields if f != "pe"]
+        agg.sources_used = ["tcbs"]
+        agg.source_urls = [f"https://example.com/{symbol}"]
+        agg.as_of = datetime(2026, 9, 30, tzinfo=UTC)
+        return agg
+
+    class _FakeAgg:
+        async def fetch_financials(self, symbol, *, timeout_s=3.5):
+            if symbol == "VCB":
+                return _agg_with_pe(symbol, 9.5)
+            return AggregatedFinancials(symbol=symbol)
+
+    monkeypatch.setattr(deps, "get_fa_aggregator", lambda: _FakeAgg())
+
+    resp = client.post("/v1/fa/compare", json={"symbols": ["VCB", "FPT"], "format": "csv"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    body = resp.content.decode("utf-8-sig")
+    assert "metric,VCB,FPT" in body
+    assert "pe,9.5," in body  # FPT honestly empty (no grounded data)
+    assert "sources,tcbs," in body
+
+    resp_bad = client.post("/v1/fa/compare", json={"symbols": ["VCB"], "format": "xlsx"})
+    assert resp_bad.status_code == 400

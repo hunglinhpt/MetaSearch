@@ -15,7 +15,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 from app.api import deps
 from app.api.v1.schemas import (
@@ -58,8 +58,38 @@ def _ticker_meta(sym: str) -> tuple[str | None, str | None]:
     return name, exchange
 
 
+def _compare_to_csv(results: list[FaSymbolResult]) -> str:
+    """Phase 4 P0-1: CSV export of the compare table (docs/23 #1).
+
+    UTF-8 BOM so Excel opens Vietnamese names correctly; empty cell for
+    missing fields (no fabrication); a provenance column per symbol."""
+    import csv as _csv
+    import io as _io
+
+    metric_names: list[str] = []
+    for r in results:
+        for k in r.fields:
+            if k not in metric_names:
+                metric_names.append(k)
+
+    buf = _io.StringIO()
+    writer = _csv.writer(buf, lineterminator="\n")
+    writer.writerow(["metric"] + [f"{r.symbol}" for r in results])
+    writer.writerow(["name"] + [r.name or "" for r in results])
+    writer.writerow(["exchange"] + [r.exchange or "" for r in results])
+    for metric in metric_names:
+        row = [metric]
+        for r in results:
+            fv = r.fields.get(metric)
+            row.append("" if fv is None else str(fv.value))
+        writer.writerow(row)
+    writer.writerow(["sources"] + [",".join(r.sources_used) for r in results])
+    writer.writerow(["as_of"] + [r.as_of or "" for r in results])
+    return "﻿" + buf.getvalue()
+
+
 @router.post("/fa/compare", response_model=FaCompareResponse, response_model_exclude_none=True)
-async def fa_compare(request: FaCompareRequest) -> FaCompareResponse:
+async def fa_compare(request: FaCompareRequest) -> FaCompareResponse | Response:
     settings = get_settings()
     cap = settings.fa_compare_max_symbols
     if len(request.symbols) > cap:
@@ -82,6 +112,13 @@ async def fa_compare(request: FaCompareRequest) -> FaCompareResponse:
             symbols.append(sym)
     if not symbols:
         raise MetaSearchError(ErrorCode.INVALID_REQUEST, "no valid symbols", status_code=400)
+
+    if request.format not in ("json", "csv"):
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            f"unsupported format: {request.format!r} (json | csv)",
+            status_code=400,
+        )
 
     budget = create_budget_for_route("fa_compare", timeout_ms=request.timeout_ms)
     aggregator = deps.get_fa_aggregator()
@@ -158,6 +195,12 @@ async def fa_compare(request: FaCompareRequest) -> FaCompareResponse:
                 else:
                     results.append(res)
 
+    if request.format == "csv":
+        return Response(
+            content=_compare_to_csv(results),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=fa-compare.csv"},
+        )
     return FaCompareResponse(
         results=results,
         latency_ms=int((time.perf_counter() - started) * 1000),

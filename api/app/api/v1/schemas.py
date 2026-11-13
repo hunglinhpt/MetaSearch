@@ -33,6 +33,7 @@ class FaCompareRequest(BaseModel):
     # Per-item bound: ensure_symbol rejects >15 chars anyway — failing
     # early at the schema costs one 400 instead of N parse work (audit 9).
     timeout_ms: int | None = Field(default=None, ge=500, le=30000)
+    format: Literal["json", "csv"] = "json"
 
 
 class FaFieldOut(BaseModel):

@@ -1326,6 +1326,15 @@
       "FaCompareRequest": {
         "description": "POST /v1/fa/compare — cross-source fundamentals for 1..N symbols.",
         "properties": {
+          "format": {
+            "default": "json",
+            "enum": [
+              "json",
+              "csv"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
           "symbols": {
             "items": {
               "maxLength": 15,
