@@ -183,7 +183,8 @@ MetaSearch/
 │   ├── 16-web-ui-news-tts.md  ← News tab + Vietnamese TTS, server-side when:Nd mapping (v2.2.0)
 │   ├── 17-voicestudio-integration.md ← optional server-side VoiceStudio TTS engine (docs/17)
 │   ├── 18-feature-roadmap-v2.3.md ← v2.3.0 roadmap: dictation, Deep Research UI, compare + chart, watchlist, podcast (v2.3.0)
-│   └── 19-global-deep-search-v2.4.md ← v2.4.0 Global Deep Search: 7 global engines, EN end-to-end, deep mode (v2.4.0)
+│   ├── 19-global-deep-search-v2.4.md ← v2.4.0 Global Deep Search: 7 global engines, EN end-to-end, deep mode (v2.4.0)
+│   └── 20-research-landscape-and-future-roadmap.md ← research 2026 + proposed roadmap: P0 (v2.5 RRF/BGE reranker/query expansion/citation NLI/eval v2) → P1 (v2.6 IRCoT, adaptive router, late chunking, hybrid, memory, Spaces) → P2 (v3 ColPali, KG, vi-first, online eval) (backlog)
 │   └── adr/                   ← Architecture Decision Records
 ├── api/                       ← FastAPI orchestration + Quantitative Engines
 │   ├── app/
@@ -442,7 +443,8 @@ MetaSearch/
 │   ├── 16-web-ui-news-tts.md  ← tab Tin tức + TTS tiếng Việt, map when:Nd server-side (v2.2.0)
 │   ├── 17-voicestudio-integration.md ← engine đọc VoiceStudio server-side tuỳ chọn (docs/17)
 │   ├── 18-feature-roadmap-v2.3.md ← roadmap v2.3.0: dictation, UI Deep Research, so sánh + biểu đồ, watchlist, podcast (v2.3.0)
-│   └── 19-global-deep-search-v2.4.md ← v2.4.0 Global Deep Search: 7 engine toàn cầu, EN end-to-end, deep mode (v2.4.0)
+│   ├── 19-global-deep-search-v2.4.md ← v2.4.0 Global Deep Search: 7 engine toàn cầu, EN end-to-end, deep mode (v2.4.0)
+│   └── 20-research-landscape-and-future-roadmap.md ← nghiên cứu 2026 + roadmap đề xuất: P0 (v2.5 RRF/BGE reranker/mở rộng query/NLI citation/eval v2) → P1 (v2.6 IRCoT, router, late chunking, hybrid, memory, Spaces) → P2 (v3 ColPali, KG, vi-first, online eval) (backlog)
 │   └── adr/                   ← Architecture Decision Records
 ├── api/                       ← FastAPI orchestration + Quantitative Engines
 │   ├── app/

@@ -14,6 +14,7 @@
 | **7 — Web UI Tin tức + TTS tiếng Việt (v2.2.0)** | ✅ Hoàn tất 2026-11-11 | Tab Tin tức 6 mục (google_news + `when:Nd` thật) + đọc máy vi-VN (Web Speech API), `safeHref` mọi href từ payload; plan ở [16-web-ui-news-tts.md](16-web-ui-news-tts.md) | `npm run typecheck` + `build` PASS; backend suite 100%; audit vòng 5 (QA + AI/TTS) PASS |
 | **9 — v2.4.0 Global Deep Search (docs/19)** | ✅ Hoàn tất 2026-11-12 | 7 engine toàn cầu keyless mới (HN, StackExchange, Bluesky, OpenAlex, Crossref, Europe PMC, GDELT) + searxng bật thêm 16 engine + lang EN end-to-end + `deep` fan-out mọi engine; plan ở [19-global-deep-search-v2.4.md](19-global-deep-search-v2.4.md) | full pytest xanh; 25 test mới; frontend typecheck/build xanh; self-audit 8-lens clean |
 | **8 — v2.3.0 feature roadmap (docs/18)** | ✅ Hoàn tất 2026-11-12 | dictation vi-VN + tab Deep Research (SSE) + `POST /v1/fa/compare` + `POST /v1/market/ohlcv` (biểu đồ nến lightweight-charts@5.3.0) + watchlist/alerts poll-on-demand + podcast bản tin VoiceStudio; plan ở [18-feature-roadmap-v2.3.md](18-feature-roadmap-v2.3.md) | full pytest xanh; ruff/bandit/mypy sạch; frontend 49 vitest + tsc + build xanh; 3 vòng audit 8-lens PASS, hết P0/P1/P2 (docs/18 §8) |
+| **10 — Research landscape & future roadmap (docs/20)** | 📋 Backlog 2026-11-12 (chưa triển khai) | Nghiên cứu công trình search/RAG 2026 + open-source + sản phẩm thương mại; đề xuất P0 (v2.5: RRF fusion, BGE reranker local, query expansion, citation entailment, follow-ups, custom boosts, agent API fields, eval v2) → P1 (v2.6: IRCoT loop, adaptive router, late chunking, hybrid sparse, memory, Spaces, map/crawl, freshness decay) → P2 (v3: ColPali, KG, vi-first NLP, online eval, voice, structured output, source tiers); chi tiết ở [20-research-landscape-and-future-roadmap.md](20-research-landscape-and-future-roadmap.md) | chưa có code; chờ phê duyệt wave P0 |
 
 ## 2. Task breakdown chi tiết
 
@@ -170,7 +171,7 @@
 
 | Hạng mục | Lệnh | Kết quả |
 |---|---|---|
-| Backend tests | `pytest -q` | **830 passed** (integration gated bằng `METASEARCH_INTEGRATION=1`) |
+| Backend tests | `pytest -q` | **881 passed** (integration gated bằng `METASEARCH_INTEGRATION=1`) |
 | Lint & Format | `ruff check` + `ruff format --check` | **All checks passed** |
 | Security scan | `bandit -q -r app -x tests` | **0 issues** (exit 0) |
 | Frontend | `npm run test` + `npm run typecheck` + `npm run build` | **vitest 16/16 PASS**, `tsc` exit 0, Next.js build clean |
@@ -203,7 +204,7 @@
 - [x] TTS vi-VN qua Web Speech API (voice stack của OS, free, không egress backend): đọc câu trả lời + cả bản tin/từng tin; UI công khai đúng giọng đang dùng là local hay online (riêng tư); strip markdown/URL/`[n]`, chunk ≤220 ký tự, một speaker tại một thời điểm, generation guard.
 - [x] `safeHref()` cho mọi href từ payload; toolbar trung thực về cửa sổ thời gian (phát hiện `when:` nhúng trong truy vấn tự do); `age_s` fallback `published_at` cho tin (/v1/search + /v1/context).
 - [x] Process: pre-commit gate kiểm tra `api/uv.lock` khớp version (fail-closed, parser neo đúng section); `clean_workspace` không xoá dữ liệu runtime local (`api/*.db*`, `*.retention`, `api/.env.*`) và skip file bị lock thay vì crash; CI `npm audit` cả dev deps; vitest (16 test) vào frontend matrix 3 OS.
-- [x] Audit đối kháng 2 vòng (mỗi vòng 3 expert: perf / quality / data-sec): vòng 1 phát hiện 2 P2 + các P3 → fix hết; vòng 2 xác nhận 8/8 FIXED, verdict **PASS ×3**, không P1/P2 mới. Backend 830 tests + frontend 21 tests xanh; CI 13/13 jobs success.
+- [x] Audit đối kháng 2 vòng (mỗi vòng 3 expert: perf / quality / data-sec): vòng 1 phát hiện 2 P2 + các P3 → fix hết; vòng 2 xác nhận 8/8 FIXED, verdict **PASS ×3**, không P1/P2 mới. Backend 881 tests + frontend 21 tests xanh; CI 13/13 jobs success.
 
 ### VoiceStudio server-side TTS — ✅ đã release trong v2.2.0 (docs/17)
 
@@ -229,6 +230,13 @@
 - [x] **W5 UI**: language selector + nút 🌐 Deep.
 - [x] **W6 tests**: 25 test `test_global_adapters.py` (parse/filter/lang/freshness/error-kind từng adapter, deep fan-out, inference, searxng map, upgrade-path seed), OpenAPI regen.
 - [x] Gates xanh: full pytest, ruff/format/bandit/mypy, vitest 49, tsc, next build.
+
+### Backlog — nghiên cứu & đề xuất tiếp theo (docs/20 — 2026-11-12) — 📋 CHƯA TRIỂN KHAI
+
+- [ ] docs/20 tổng hợp: bài học công trình (late chunking, HyDE, RRF, ColBERT/ColPali, BGE-M3, Self-RAG/Adaptive-RAG, Deep-RAG survey 2026, GraphRAG-Bench, RAGTruth/HHEM, BEIR/MTEB/MIRACL, EACL'26 Vietnamese gap, online eval), open-source (Qdrant/Vespa/Meilisearch/Marqo, RAGFlow/Dify/Onyx, BGE/jina/Voyage/NeMo NIMs, Graphiti/Mem0, Tavily/Exa APIs) và sản phẩm (Perplexity Spaces, Kagi Lenses, Brave Goggles, Exa highlights, OpenAI Deep Research).
+- [ ] Wave P0 (đề xuất v2.5): P0-1 RRF fusion ở merger.py · P0-2 bge-reranker-v2-m3 local ONNX · P0-3 query expansion + RRF · P0-4 claim-level NLI citation check · P0-5 follow-up suggestions · P0-6 custom boosts theo key (Goggles-lite) · P0-7 agent API fields (contents/highlights/answer) · P0-8 eval harness v2 (BEIR/MIRACL-vi/RAGAS).
+- [ ] Wave P1 (v2.6): IRCoT research loop + coverage gate · adaptive complexity router · late chunking · BGE-M3 sparse hybrid trong pgvector · memory theo key (Mem0/Graphiti-lite) · Spaces · /v1/map + /v1/crawl · freshness decay.
+- [ ] Wave P2 (v3): ColPali multimodal PDF · LightRAG KG theo space · vi-first BM25 + golden eval VI · online interleaving · voice/personalized podcast · structured JSON output · domain reputation tiers.
 
 ## 4. Rủi ro thực thi
 

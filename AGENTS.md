@@ -17,7 +17,7 @@ orchestration không đổi.
 
 - ✅ **v2.4.0 Global Deep Search (docs/19)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/19-global-deep-search-v2.4.md](docs/19-global-deep-search-v2.4.md):
   - 7 adapter keyless mới: `hackernews`, `stackexchange` (site: đổi site), `bluesky`, `openalex`, `crossref`, `europepmc`, `gdelt` (sourcelang + time window); helper chung `_http.fetch_json` map lỗi đúng Outcome cho breaker.
-  - SearXNG bật thêm 16 engine toàn cầu + `default_lang: auto`; adapter map category MetaSearch→SearXNG (tránh 400 do category lạ).
+  - SearXNG bật thêm 15 engine toàn cầu (audit vòng 9 bỏ 4 tên không tồn tại) + `default_lang: auto`; adapter map category MetaSearch→SearXNG (tránh 400 do category lạ).
   - `lang` end-to-end tới google_news (hl/gl/ceid), gdelt (sourcelang), openalex (language filter); UI chọn ngôn ngữ Tự động/VI/EN.
   - `deep: true` trên /v1/search + /v1/answer: fan-out TẤT CẢ engine (bỏ lọc category); cache key đã gồm deep; category inference mở rộng social/academic/global-fin.
   - Upgrade path: DB engine store cũ tự seed engine mới khi thiếu (không đè tweak của operator) — có test. 25 test mới, OpenAPI snapshot regen.
@@ -28,6 +28,11 @@ orchestration không đổi.
   - **C**: watchlist theo key (CRUD, cap 20, alembic 0006) + `/v1/watchlist/alerts` poll-on-demand (bỏ background poller — không đốt budget nền); DB chết → memory fallback có giới hạn + re-probe throttle 30s.
   - **D**: podcast bản tin qua VoiceStudio: `/v1/podcast/briefing|status|latest|feed.xml`, idempotent theo ngày, single-flight, retention 7 ngày ở `api/podcast_data/` (gitignored); 503 `tts_disabled` khi chưa cấu hình.
   - **3 vòng audit đối kháng (8 lens: finance, technical/SA, AI, QA, auditor/security, data-engineer, dream-rsi, perf)** — không còn P0/P1, mọi P2 đã fix (chi tiết docs/18 §8); full pytest xanh, ruff/bandit/mypy sạch, frontend 49 vitest + tsc + next build xanh, OpenAPI snapshot khớp.
+
+- 📋 **Backlog nghiên cứu & roadmap đề xuất (docs/20 — 2026-11-12, chưa triển khai)** — xem [docs/20-research-landscape-and-future-roadmap.md](docs/20-research-landscape-and-future-roadmap.md):
+  - Đề xuất wave P0 (v2.5): RRF fusion ở `merger.py`, reranker local `bge-reranker-v2-m3` (ONNX), query expansion + RRF, kiểm citation từng claim bằng NLI, follow-up suggestions, custom boosts theo key (Goggles-lite), field agent-friendly cho `/v1/search` (contents/highlights/answer), eval harness v2 (BEIR/MIRACL-vi/RAGAS).
+  - Wave P1 (v2.6): vòng lặp IRCoT + coverage gate cho research, adaptive router theo độ phức tạp, late chunking, hybrid sparse (BGE-M3) trong pgvector, memory theo key, Spaces, `/v1/map` + `/v1/crawl`, freshness decay.
+  - Wave P2 (v3): ColPali multimodal PDF, KG LightRAG theo space, vi-first BM25 + golden eval VI, online interleaving, voice/podcast cá nhân hoá, structured JSON output, domain reputation tiers.
 
 - ✅ **Multi-source FA, bỏ điểm hụt đơn nguồn (v2.1.0)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/15-fa-sources-plan.md](docs/15-fa-sources-plan.md):
   - Package `app/retrieval/fa_sources/`: adapter **trực tiếp** SSI (OHLCV), TCBS (ratios), FireAnt (BCTC, JWT `FA_FIREANT_TOKEN`) — không qua vnstock/wrapper; 21 nguồn đã thẩm định trong docs/15.
@@ -127,7 +132,7 @@ orchestration không đổi.
 
 ```
 api/app/
-  api/v1/        search.py answer.py scrape.py engines.py queries.py ops-status
+  api/v1/        search.py answer.py research.py scrape.py engines.py queries.py fa.py market.py watchlist.py podcast.py tts.py digests.py llm.py ops.py
   api/deps.py    DI providers (lru_cache + reset_pipelines) — endpoint resolve qua deps.get_X()
   core/          errors.py (error model chuẩn) · logging · middleware · metrics
   retrieval/     adapters/ (searxng, tavily) · registry.py · engine_store.py ·
@@ -138,7 +143,7 @@ api/app/
   orchestration/ pipeline.py (search + answer, event generator) · persist.py · engine_store.py
 frontend/        app/page.tsx (UI) · lib/api.ts (SSE client + ApiError)
 deploy/          docker-compose.yml · searxng/ · prometheus/ · grafana/ · k6/
-docs/            01-16 thiết kế + adr/ — 12-roadmap-plan.md là source of truth; README.md song ngữ Anh–Vi trong một file (mục #english / #tiếng-việt)
+docs/            01-19 thiết kế + adr/ (16/17 WebUI+TTS/VoiceStudio, 18 roadmap v2.3, 19 global search) — 12-roadmap-plan.md là source of truth; README.md song ngữ Anh–Vi trong một file (mục #english / #tiếng-việt)
 ```
 
 ## 4. Quy ước bắt buộc
