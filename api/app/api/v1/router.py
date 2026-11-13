@@ -17,6 +17,7 @@ from app.api.v1 import (
     market,
     ops_status,
     podcast,
+    prefs,
     queries,
     research,
     scrape,
@@ -77,6 +78,7 @@ router.include_router(tts.router, dependencies=_auth)
 router.include_router(market.router, dependencies=_auth)
 router.include_router(watchlist.router, dependencies=_auth)
 router.include_router(podcast.router, dependencies=_auth)
+router.include_router(prefs.router, dependencies=_auth)
 router.include_router(
     superagent.router,
     dependencies=_auth,

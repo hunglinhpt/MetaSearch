@@ -13,7 +13,18 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-12 — v2.4.0 Global Deep Search docs/19: 7 engine toàn cầu mới, EN end-to-end, deep mode)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-13 — v2.5.0 Retrieval Quality wave docs/21: RRF + BGE reranker + query expansion + claim check + follow-ups + boosts + agent extras + eval v2)
+
+- ✅ **v2.5.0 Retrieval & Answer Quality (docs/20 P0 → docs/21)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/21-retrieval-quality-v2.5.md](docs/21-retrieval-quality-v2.5.md):
+  - P0-1 RRF fusion (`RRF_K=60`, weight từ registry) trong `merger.py`, blend với signals, `rrf_weight` config; cache key `sr:v3:`.
+  - P0-2 `RERANKER=bge` — `BGEReranker` (bge-reranker-v2-m3, int8 preferred, tự tải HF pin revision về `MODEL_CACHE_DIR`), fail-open về heuristic.
+  - P0-3 multi-query expansion (call LLM rẻ, chỉ deep/câu dài, variant chỉ fan-out general engine) + fuse bằng RRF; `expansion_sig` vào cache key.
+  - P0-4 claim-level citation check (`check_claims` + lexical entailment) — báo `unsupported_markers`, không sửa text.
+  - P0-5 follow-up suggestions (SSE event `follow_ups`, vào answer cache + `AnswerResponse.follow_ups`, UI chip "Hỏi tiếp"), skip khi budget <25%.
+  - P0-6 per-key boosts: bảng `key_boosts` (alembic 0007) + CRUD `/v1/prefs/boosts`, áp ở merger sau blend, `boosts_sig` vào cache key, load bounded 0.3s.
+  - P0-7 agent extras trên `/v1/search` (`extras=contents,highlights,answer`), tính sau cache, UI nút 📦 Extras.
+  - P0-8 eval harness v2: `app/eval_metrics.py` + `evals/golden_v2.json` (29 query EN/VI) + `scripts/eval_v2.py` ghi report + delta so với report trước.
+  - 37 test mới (`test_v25_retrieval_quality.py`); 3 vòng tự audit 8-lens (docs/21 §8); full pytest xanh, ruff/bandit/mypy sạch, frontend 49 vitest + tsc + build xanh.
 
 - ✅ **v2.4.0 Global Deep Search (docs/19)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/19-global-deep-search-v2.4.md](docs/19-global-deep-search-v2.4.md):
   - 7 adapter keyless mới: `hackernews`, `stackexchange` (site: đổi site), `bluesky`, `openalex`, `crossref`, `europepmc`, `gdelt` (sourcelang + time window); helper chung `_http.fetch_json` map lỗi đúng Outcome cho breaker.

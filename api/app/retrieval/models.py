@@ -62,6 +62,8 @@ class ScoredResult:
     data_kind: Literal["observed", "derived", "reference", "computed"] | None = None
 
     # scoring signals (0..1 each), kept for observability/debugging
+    rrf_score: float = 0.0  # v2.5 P0-1: reciprocal-rank-fusion signal (0..1)
+    boosts_applied: int = 0  # v2.5 P0-6: how many per-key boost rules touched this item
     keyword_relevance: float = 0.0
     consensus_score: float = 0.0
     engine_weight_score: float = 0.0

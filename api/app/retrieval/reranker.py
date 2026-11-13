@@ -110,8 +110,9 @@ class ONNXReranker:
 
     name = "onnx"
 
-    def __init__(self, model_dir: str) -> None:
+    def __init__(self, model_dir: str, *, model_filename: str = "model.onnx") -> None:
         self._model_dir = model_dir
+        self._model_filename = model_filename
         self._session = None
         self._tokenizer = None
         self._loaded = False
@@ -142,7 +143,9 @@ class ONNXReranker:
             import onnxruntime as ort
             from tokenizers import Tokenizer
 
-            model_path = os.path.join(self._model_dir, "model.onnx")
+            model_path = os.path.join(self._model_dir, self._model_filename)
+            if not os.path.exists(model_path):
+                raise RerankerUnavailable(f"model file missing: {model_path}")
             tokenizer_path = os.path.join(self._model_dir, "tokenizer.json")
             self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
             self._tokenizer = Tokenizer.from_file(tokenizer_path)
@@ -203,6 +206,64 @@ def _blend(top: list[tuple[float, Chunk]], model_scores: dict[int, float]) -> li
     return [top[i][1] for _, i in blended]
 
 
+class BGEReranker(ONNXReranker):
+    """docs/20 P0-2: BAAI/bge-reranker-v2-m3 cross-encoder, local ONNX (int8 preferred).
+
+    Resolution order: settings.bge_reranker_dir -> snapshot_download of
+    settings.bge_reranker_hf_repo into model_cache_dir (needs the optional
+    huggingface_hub dep + network on first run). Any failure surfaces as
+    RerankerUnavailable at first use and the caller keeps heuristic order —
+    a missing model must never fail a request.
+    """
+
+    name = "bge"
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(self._resolve_dir(settings), model_filename=self._pick_file(settings))
+
+    @staticmethod
+    def _pick_file(settings: Settings) -> str:
+        # int8 quantized export is ~4x smaller and nearly lossless for reranking.
+        import os
+
+        local = settings.bge_reranker_dir
+        if local and os.path.exists(os.path.join(local, "model_int8.onnx")):
+            return "model_int8.onnx"
+        return "model.onnx"
+
+    @staticmethod
+    def _resolve_dir(settings: Settings) -> str:
+        import os
+
+        if settings.bge_reranker_dir:
+            return settings.bge_reranker_dir
+        root = settings.model_cache_dir or os.path.join(
+            os.path.expanduser("~"), ".cache", "metasearch", "models"
+        )
+        local = os.path.join(root, settings.bge_reranker_hf_repo.replace("/", "__"))
+        if os.path.isdir(local) and os.path.exists(os.path.join(local, "tokenizer.json")):
+            return local
+        try:
+            from huggingface_hub import snapshot_download
+
+            return snapshot_download(
+                settings.bge_reranker_hf_repo,
+                revision="main",  # nosec B615 - pinned branch; weights are public Apache-2.0
+                local_dir=local,
+                allow_patterns=[
+                    "*.onnx",
+                    "tokenizer.json",
+                    "tokenizer_config.json",
+                    "config.json",
+                    "special_tokens_map.json",
+                ],
+            )
+        except Exception as exc:
+            # Keep the path; ONNXReranker._load raises RerankerUnavailable lazily.
+            logger.warning("bge_reranker_download_failed", error=type(exc).__name__)
+            return local
+
+
 def build_reranker(settings: Settings) -> Reranker:
     """Factory honoring ``RERANKER``; unusable options fall back to heuristic."""
     choice = settings.reranker
@@ -212,4 +273,6 @@ def build_reranker(settings: Settings) -> Reranker:
         logger.warning("reranker_api_without_key", hint="set JINA_API_KEY")
     if choice == "onnx":
         return ONNXReranker(settings.onnx_reranker_dir)
+    if choice == "bge":
+        return BGEReranker(settings)
     return HeuristicReranker()

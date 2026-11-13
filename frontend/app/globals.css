@@ -869,3 +869,49 @@ a {
   flex-direction: column;
   gap: 0.3rem;
 }
+
+/* v2.5 (docs/20): follow-up chips, instant answer, highlights */
+.followups {
+  margin-top: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.followups-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.followup-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  padding: 0.25rem 0.7rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.followup-chip:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.instant-answer h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.instant-answer p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.hit-highlights {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}

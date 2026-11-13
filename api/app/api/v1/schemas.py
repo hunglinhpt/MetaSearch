@@ -133,6 +133,29 @@ class WatchlistAlertsResponse(BaseModel):
     storage: str = "db"
 
 
+# --- v2.5.0 per-key boosts (docs/20 P0-6) ---------------------------------------
+
+
+class BoostCreateRequest(BaseModel):
+    kind: Literal["domain", "keyword"]
+    target: str = Field(min_length=1, max_length=200)
+    # domain: multiplier offset (-1 demote .. +1 boost); keyword: additive base.
+    weight: float = Field(default=0.5, ge=-1.0, le=1.0)
+
+
+class BoostOut(BaseModel):
+    id: str
+    kind: str
+    target: str
+    weight: float
+    created_at: str | None = None
+
+
+class BoostListResponse(BaseModel):
+    items: list[BoostOut] = Field(default_factory=list)
+    storage: str = "db"  # "db" | "memory" (DB down -> neutral empty list)
+
+
 # --- v2.3.0 podcast briefing (docs/18 D) ----------------------------------------
 
 
@@ -162,6 +185,13 @@ class SearchRequest(BaseModel):
     # docs/19 W4: deep=True fans out to ALL enabled engines (category filter is
     # ignored) so the answer is built from the widest possible result set.
     deep: bool = False
+    # docs/20 P0-7: agent-friendly extras computed on the top results —
+    # "contents" (scraped markdown, bounded), "highlights" (extractive top
+    # sentences), "answer" (one short instant answer, response-level).
+    # Named `extras` (not `include`) because ContextRequest overrides `include`.
+    extras: list[Literal["contents", "highlights", "answer"]] | None = Field(
+        default=None, max_length=3
+    )
 
 
 class CitationItem(BaseModel):
@@ -203,6 +233,9 @@ class ScrapeItem(BaseModel):
 class SearchResponse(BaseModel):
     query_id: str
     results: list[dict[str, Any]]
+    # docs/20 P0-7: instant answer over the top results (present only when
+    # requested via include=["answer"] and an LLM is configured).
+    answer: str | None = None
     engines_used: list[str]
     engines_failed: list[str]
     engines_status: list[dict[str, Any]] = Field(default_factory=list)
@@ -216,6 +249,11 @@ class AnswerResponse(BaseModel):
     answer_id: str
     answer_md: str
     citations: list[CitationItem] = Field(default_factory=list)
+    # docs/20 P0-5: suggested follow-up questions (empty when disabled/unavailable).
+    follow_ups: list[str] = Field(default_factory=list)
+    # docs/20 P0-4: citation markers whose sentence is not supported by the
+    # cited chunks (claim-level check). Reported, never hidden.
+    unsupported_markers: list[int] = Field(default_factory=list)
     sources: list[dict[str, Any]] = Field(default_factory=list)
     model: str = ""
     latency_ms: int = 0

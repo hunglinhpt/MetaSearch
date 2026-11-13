@@ -43,6 +43,7 @@ async def search(request: SearchRequest) -> SearchResponse:
                     include_domains=request.include_domains,
                     exclude_domains=request.exclude_domains,
                     deep=request.deep,
+                    include_fields=tuple(request.extras or ()),
                 )
             )
             # WP-15: empty results with healthy engines = 200 complete:true;
@@ -65,8 +66,25 @@ async def search(request: SearchRequest) -> SearchResponse:
                     details={"engines_status": {s.engine: s.status for s in outcome.statuses}},
                 )
 
+            # v2.5 P0-7: agent extras are computed on top of the (possibly cached)
+            # base results — they are deliberately NOT cached with them.
+            extras: dict[str, dict] = {}
+            instant_answer: str | None = None
+            if request.extras and outcome.results:
+                from app.api.v1.search_extras import build_extras as _be
+
+                extras, instant_answer = await _be(
+                    outcome.results,
+                    request.query,
+                    list(request.extras or ()),
+                    settings=deps.get_settings(),
+                    scraper=deps.get_scraper(),
+                    gateway=deps.get_gateway(),
+                )
+
             return SearchResponse(
                 query_id=str(outcome.query_id),
+                answer=instant_answer,
                 results=[
                     {
                         "rank": i,
@@ -86,6 +104,8 @@ async def search(request: SearchRequest) -> SearchResponse:
                         "as_of": r.as_of.isoformat() if r.as_of else None,
                         # as_of is the data timestamp; news items only carry published_at.
                         "age_s": _age_s(r.as_of or r.published_at),
+                        # v2.5 P0-7: per-result agent extras (absent unless requested).
+                        **(extras.get(r.url) or {}),
                     }
                     for i, r in enumerate(outcome.results, start=1)
                 ],

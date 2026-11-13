@@ -219,15 +219,49 @@ class Settings(BaseSettings):
     fa_fireant_token: str = ""
 
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------
-    reranker: Literal["heuristic", "onnx", "api"] = "heuristic"
+    # docs/20 P0-2: "bge" = BAAI/bge-reranker-v2-m3 cross-encoder, local ONNX
+    # (int8 preferred), downloaded on first use when no local dir is given.
+    reranker: Literal["heuristic", "onnx", "bge", "api"] = "heuristic"
     reranker_api_base_url: str = "https://api.jina.ai"
     # Directory holding model.onnx + tokenizer.json for RERANKER=onnx.
     onnx_reranker_dir: str = ""
+
+    # Local dir for RERANKER=bge (model.onnx / model_int8.onnx + tokenizer.json).
+    # Empty = snapshot_download from HF into model_cache_dir (lazy, optional dep).
+    bge_reranker_dir: str = ""
+    bge_reranker_hf_repo: str = "BAAI/bge-reranker-v2-m3"
+    # Root for lazily downloaded models (empty = ~/.cache/metasearch/models).
+    model_cache_dir: str = ""
     embedding_l2: Literal["off", "e5-small-int8", "bge-m3-api"] = "off"
     # OpenAI-compatible /embeddings endpoint (OpenAI, vLLM, TEI, Ollama).
     embedding_api_base_url: str = "https://api.openai.com/v1"
     embedding_api_key: str = ""
     embedding_model: str = "bge-m3"
+
+    # --- v2.5 retrieval quality (docs/20 P0) --------------------------------
+    # P0-1: weight of the RRF fusion signal in the merged score (0 = off).
+    rrf_weight: float = 0.3
+    # P0-3: multi-query expansion for deep/long queries (cheap LLM call,
+    # fused via RRF). Variants only fan out to general engines to bound cost.
+    query_expansion_enabled: bool = True
+    query_expansion_max_variants: int = 2
+    query_expansion_min_words: int = 6
+    # P0-4: claim-level citation check (sentence entailment vs cited chunks).
+    # Lexical overlap by default; a local ONNX NLI model is used when enabled
+    # and loadable, otherwise we degrade to lexical — never fail the answer.
+    claim_check_enabled: bool = True
+    claim_entailment_threshold: float = 0.34
+    citation_nli_enabled: bool = False
+    citation_nli_dir: str = ""
+    # P0-5: follow-up question suggestions after an answer.
+    followups_enabled: bool = True
+    followups_max: int = 3
+    # P0-6: per-key custom rerank boosts (CRUD /v1/prefs/boosts).
+    boosts_max_per_key: int = 50
+    # P0-7: agent-friendly extras on /v1/search (contents/highlights/answer).
+    search_extras_max_urls: int = 5
+    search_extras_max_chars: int = 4000
+    search_highlights_max: int = 2
 
     # --- Phase 2: cache + engine management -------------------------------
     cache_enabled: bool = True
@@ -349,6 +383,9 @@ class Settings(BaseSettings):
             "crawl4ai_url": self.crawl4ai_url,
             "reranker": self.reranker,
             "embedding_l2": self.embedding_l2,
+            "rrf_weight": self.rrf_weight,
+            "query_expansion": self.query_expansion_enabled,
+            "claim_check": self.claim_check_enabled,
         }
 
 

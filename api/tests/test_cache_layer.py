@@ -92,8 +92,9 @@ def test_search_key_includes_news() -> None:
     key_std = search_cache_key("thời sự", params_std, news=False)
     key_news = search_cache_key("thời sự", params_news, news=True)
 
-    assert key_std.startswith("sr:v2:")
-    assert key_news.startswith("sr:v2:")
+    # v2.5 bumped the search key version (boosts/expansion sigs added)
+    assert key_std.startswith("sr:v3:")
+    assert key_news.startswith("sr:v3:")
     assert key_std != key_news
 
 
@@ -161,9 +162,9 @@ async def test_financial_ttl() -> None:
             self.answers = []
 
         async def set_json(self, key, value, *, ttl_s):
-            if key.startswith("sr:v2:"):
+            if key.startswith("sr:v3:"):
                 stored_search_ttls.append(ttl_s)
-            elif key.startswith("an:v2:"):
+            elif key.startswith("an:v3:"):
                 self.answers.append(value)
 
     mock_cache = MockCache()

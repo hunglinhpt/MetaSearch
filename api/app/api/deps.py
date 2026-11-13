@@ -108,6 +108,7 @@ def get_search_pipeline() -> SearchPipeline:
         cache=get_cache(),
         health_registry=get_health_registry(),
         health_writer=get_health_writer(),
+        gateway=get_gateway(),  # v2.5 P0-3: query expansion
     )
 
 

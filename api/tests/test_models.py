@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "sessions",
     "users",
     "watchlist_items",
+    "key_boosts",
 }
 
 

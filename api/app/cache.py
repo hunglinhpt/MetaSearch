@@ -265,8 +265,12 @@ def search_cache_key(query: str, params: Any, *, news: bool = False) -> str:
         engines_part,
         news,
         getattr(params, "deep", False),
+        # v2.5: per-key boosts + expansion variants change the result set,
+        # so their signatures must be part of the key (no cross-key leakage).
+        getattr(params, "boosts_sig", ""),
+        getattr(params, "expansion_sig", ""),
     )
-    return f"sr:v2:{h}"
+    return f"sr:v3:{h}"
 
 
 def answer_cache_key(
@@ -281,8 +285,12 @@ def answer_cache_key(
     news: bool = False,
     domain: str | None = None,
     deep: bool = False,
+    personalization: str = "",
 ) -> str:
-    """Answer key covers the search params that shape the context (docs/03 §7)."""
+    """Answer key covers the search params that shape the context (docs/03 §7).
+
+    v2.5: ``personalization`` folds the per-key boosts signature in, so a boosted
+    key never replays another key's cached answer."""
     engines_part = sorted(engines) if engines else []
     h = sha1_key(
         query,
@@ -295,8 +303,9 @@ def answer_cache_key(
         news,
         domain,
         deep,
+        personalization,
     )
-    return f"an:v2:{h}"
+    return f"an:v3:{h}"
 
 
 def page_cache_key(url: str) -> str:

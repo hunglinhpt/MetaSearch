@@ -762,7 +762,9 @@ async def test_short_budget_callers_keep_llm_breaker_closed(monkeypatch):
     states = {k: b.state for k, b in llm_breakers._breakers.items()}
     assert all(s == "closed" for s in states.values()), states
     assert r.status_code == 200, r.text
-    assert calls["n"] == 7
+    # 6 cut callers (no follow-ups — the answer never completed) + 1 normal caller
+    # whose completed answer also gets one follow-up suggestion call (v2.5 P0-5).
+    assert calls["n"] == 8
 
 
 @pytest.mark.asyncio

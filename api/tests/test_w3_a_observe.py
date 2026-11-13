@@ -163,8 +163,9 @@ async def test_llm_requests_and_ttft_recorded():
     ttft = _value("metasearch_llm_ttft_seconds_count", provider="custom")
     async with _client() as c:
         await c.post("/v1/answer", json={"query": f"postgres llm {uuid.uuid4().hex}"})
-    assert _value("metasearch_llm_requests_total", provider="custom", outcome="ok") == ok + 1
-    assert _value("metasearch_llm_ttft_seconds_count", provider="custom") == ttft + 1
+    # v2.5 P0-5: a completed answer also makes one follow-up suggestion call.
+    assert _value("metasearch_llm_requests_total", provider="custom", outcome="ok") == ok + 2
+    assert _value("metasearch_llm_ttft_seconds_count", provider="custom") == ttft + 2
 
 
 async def test_llm_failure_counted_with_its_outcome():

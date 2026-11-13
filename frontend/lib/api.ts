@@ -27,6 +27,9 @@ export type SearchHit = {
   data_kind?: "observed" | "derived" | "reference" | "computed" | null;
   as_of?: string | null;
   age_s?: number | null;
+  // v2.5 P0-7 agent extras (only when requested via SearchOptions.extras)
+  contents?: string;
+  highlights?: string[];
 };
 export type SearchResponse = {
   query_id: string;
@@ -39,6 +42,8 @@ export type SearchResponse = {
   // an empty list is then "not known", not "nothing exists".
   complete?: boolean;
   age_s?: number | null;
+  // v2.5 P0-7: instant answer over the top results (extras=["answer"])
+  answer?: string | null;
 };
 export type EngineDone = { engine: string; results: number; ms: number };
 export type AnswerMeta = {
@@ -47,6 +52,8 @@ export type AnswerMeta = {
   status: string;
   model: string;
   cached?: boolean;
+  // v2.5 P0-5: suggested follow-up questions (SSE `follow_ups` event / done payload)
+  follow_ups?: string[];
 };
 
 export type LLMOverridePayload = {
@@ -202,6 +209,7 @@ export type AnswerHandlers = {
   onToken?: (text: string) => void;
   onCitations?: (citations: Citation[]) => void;
   onCouncil?: (verdict: CouncilVerdict) => void;
+  onFollowUps?: (items: string[]) => void;
   onDone?: (meta: AnswerMeta) => void;
   onError?: (code: string, message: string) => void;
 };
@@ -220,6 +228,8 @@ export type SearchOptions = {
   lang?: string;
   // docs/19 W4: deep=true fans out to ALL enabled engines (category filter off).
   deep?: boolean;
+  // v2.5 P0-7: agent extras on the top results (contents/highlights/answer).
+  extras?: ("contents" | "highlights" | "answer")[];
 };
 
 /** Only http(s) links become hrefs — defense against a misbehaving engine. */
@@ -243,6 +253,7 @@ export async function search(
       news: opts.news ?? undefined,
       lang: opts.lang ?? undefined,
       deep: opts.deep ?? undefined,
+      extras: opts.extras ?? undefined,
     }),
     signal: opts.signal,
   });
@@ -490,6 +501,9 @@ export async function streamAnswer(
         break;
       case "council":
         handlers.onCouncil?.(d as unknown as CouncilVerdict);
+        break;
+      case "follow_ups":
+        handlers.onFollowUps?.((d.follow_ups as string[]) ?? []);
         break;
       case "done":
         handlers.onDone?.(d as unknown as AnswerMeta);

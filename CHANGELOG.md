@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.5.0] - 2026-11-13
+
+### Added (docs/20 P0 wave — docs/21)
+- P0-1 RRF fusion in `merger.py` (k=60, engine weights, blended with signals via `RRF_WEIGHT`); search cache key bumped to `sr:v3:`.
+- P0-2 `RERANKER=bge`: local ONNX `BAAI/bge-reranker-v2-m3` (int8 preferred, lazy HF download pinned to `revision="main"` into `MODEL_CACHE_DIR`), graceful fallback to heuristic.
+- P0-3 multi-query expansion (cheap LLM call, deep/long queries only; variants fan out to general engines only) fused via RRF.
+- P0-4 claim-level citation check (`unsupported_markers` in the citations event + `AnswerResponse`), reported never rewritten.
+- P0-5 follow-up question suggestions (SSE `follow_ups` event, cached with the answer, `AnswerResponse.follow_ups`, UI chips).
+- P0-6 per-key custom rerank boosts: `key_boosts` table (alembic 0007) + CRUD `/v1/prefs/boosts` (Goggles-lite), applied post-merge, key-scoped via `boosts_sig` in the cache key.
+- P0-7 agent-friendly extras on `POST /v1/search`: `extras=["contents","highlights","answer"]` on top results (computed post-cache).
+- P0-8 eval harness v2: `app/eval_metrics.py` (hit@k/recall@k/MRR/nDCG/context precision+recall/claim support), `evals/golden_v2.json` (29 EN+VI queries), `scripts/eval_v2.py` with timestamped reports + delta vs previous.
+
+### Changed
+- Search cache key `sr:v2:` -> `sr:v3:` (adds boosts/expansion signatures; old entries simply expire).
+- `SearchRequest` gains `extras` (named `extras` because `ContextRequest` overrides `include`).
+
+### Fixed
+- Worker retention cadence now uses a real marker file (`.retention_worker_last_run`) — the pending draft would have run the full purge every 120s tick.
+- MCP HTTP mount: session manager entered in the main lifespan (legacy startup handlers are ignored with an asynccontextmanager lifespan), `streamable_http_path="/"`, DNS-rebinding check off behind api-key auth, graceful on older SDKs.
+
+
 Tất cả thay đổi đáng chú ý của MetaSearch được ghi ở đây.
 Format theo [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 version tuân theo [SemVer](https://semver.org/).

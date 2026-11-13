@@ -255,6 +255,24 @@ class WatchlistItem(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class KeyBoost(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """One per-key rerank preference (docs/20 P0-6 — Goggles-lite).
+
+    ``kind`` is "domain" (boost/demote a host suffix) or "keyword" (boost a
+    phrase in the query). Applied in merger.merge AFTER scoring, only for the
+    owning key, and folded into the search cache key so boosted results never
+    leak into another key's cache entry.
+    """
+
+    __tablename__ = "key_boosts"
+    __table_args__ = (Index("idx_key_boosts_owner", "api_key_id"),)
+
+    api_key_id: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)  # domain | keyword
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    weight: Mapped[float] = mapped_column(REAL, nullable=False, server_default="0.5")
+
+
 __all__ = [
     "Answer",
     "ApiKey",
@@ -264,6 +282,7 @@ __all__ = [
     "Document",
     "Engine",
     "EngineHealth",
+    "KeyBoost",
     "Query",
     "SearchResult",
     "SemanticCache",

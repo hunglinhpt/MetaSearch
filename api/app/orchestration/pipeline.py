@@ -36,6 +36,7 @@ from app.cache import (
     serialize_results,
 )
 from app.config import Settings
+from app.core.auth import current_api_key_id
 from app.core.budget import get_current_budget
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
@@ -47,7 +48,7 @@ from app.db.models import Answer, SemanticCache
 from app.db.session import get_sessionmaker
 from app.extraction.chunker import Chunk, chunk_markdown
 from app.extraction.scraper import PageContent, PageFailure, Scraper
-from app.llm.citations import validate_citations
+from app.llm.citations import ClaimCheck, check_claims, validate_citations
 from app.llm.embeddings import EmbeddingClient, EmbeddingError
 from app.llm.gateway import LLMError, LLMGateway, Usage, record_usage
 from app.llm.prompts import SYSTEM_PROMPT, build_context, build_messages, render_context
@@ -55,9 +56,11 @@ from app.llm.providers import LLMOverride
 from app.llm.tokens import make_counter
 from app.orchestration import persist
 from app.retrieval.adapters.base import SearchAdapter
+from app.retrieval.boosts import load_boosts, rules_signature
 from app.retrieval.canonical import canonicalize
 from app.retrieval.merger import diversity_cap, merge
 from app.retrieval.models import EngineConfig, EngineStatus, RawResult, ScoredResult
+from app.retrieval.query_expansion import expand_query, expansion_signature, parse_variants
 from app.retrieval.reranker import Reranker, RerankerUnavailable, heuristic_order
 from app.retrieval.scoring import heuristic_chunk_score
 from app.retrieval.vn_tickers import is_vn_ticker
@@ -313,6 +316,15 @@ class SearchParams:
     # docs/19 W4: deep=True → fan out to ALL enabled engines, ignoring the
     # category filter, so "deepest possible" search is one flag away.
     deep: bool = False
+    # v2.5 (docs/20): personalization/fusion signatures folded into the cache
+    # key so boosted or expanded searches never share another caller's entry.
+    boosts_sig: str = ""
+    expansion_sig: str = ""
+    expansion_variants: tuple[str, ...] = ()
+    # materialized BoostRule objects (not serialized; sig above covers the cache key)
+    boost_rules: tuple[Any, ...] = ()
+    # v2.5 P0-7: agent extras requested on /v1/search (contents/highlights/answer).
+    include_fields: tuple[str, ...] = ()
 
 
 @contextlib.contextmanager
@@ -444,10 +456,12 @@ class SearchPipeline:
         cache: CacheClient | None = None,
         health_registry: Any | None = None,
         health_writer: Any | None = None,
+        gateway: Any | None = None,  # v2.5 P0-3: query expansion (optional)
     ) -> None:
         self.settings = settings
         self.registry = registry
         self.cache = cache
+        self.gateway = gateway
         from app.retrieval.health import EngineBreakerRegistry
 
         self.health_registry = health_registry or EngineBreakerRegistry(
@@ -460,7 +474,36 @@ class SearchPipeline:
         with _stage("search"):
             return await self._run_filtered(params, on_event)
 
+    async def _personalize(self, params: SearchParams) -> SearchParams:
+        """v2.5: attach per-key boosts + multi-query expansion sigs to params.
+
+        Both are folded into the cache key, so a boosted or expanded search
+        never reuses another caller's cached results. Any failure degrades
+        to the plain query — personalization never fails a search.
+        """
+        owner = current_api_key_id.get() or "anonymous"
+        boosts = await load_boosts(owner, max_per_key=self.settings.boosts_max_per_key)
+        params = dataclasses.replace(
+            params, boosts_sig=rules_signature(boosts), boost_rules=tuple(boosts)
+        )
+        if self.gateway is not None and self.settings.query_expansion_enabled:
+            variants = await expand_query(
+                self.gateway,
+                normalize_query(params.query),
+                lang=params.lang,
+                settings=self.settings,
+                force=params.deep,
+            )
+            if variants:
+                params = dataclasses.replace(
+                    params,
+                    expansion_sig=expansion_signature(normalize_query(params.query), variants),
+                    expansion_variants=tuple(variants),
+                )
+        return params
+
     async def _run_filtered(self, params: SearchParams, on_event: OnEvent = None) -> SearchOutcome:
+        params = await self._personalize(params)
         if on_event is None:
             normalized = normalize_query(params.query)
             cache_key = search_cache_key(normalized, params, news=params.news)
@@ -498,8 +541,31 @@ class SearchPipeline:
         CACHE_EVENTS.labels(kind="search", outcome="miss").inc()
 
         raws, statuses = await self._fanout(query, params, on_event)
+        # v2.5 P0-3: multi-query — each variant fans out to GENERAL engines only
+        # (bounded cost) and RRF in merge() fuses all raw occurrences.
+        for variant in params.expansion_variants:
+            vraws, _vstatuses = await self._fanout(
+                variant,
+                dataclasses.replace(
+                    params,
+                    categories=["general"],
+                    deep=False,
+                    engines=None,
+                    expansion_variants=(),
+                ),
+                None,
+                general_only=True,
+            )
+            raws.extend(vraws)
         configs = await self.registry.configs()
-        results = merge(raws, query=query, registry=configs, news=params.news)
+        results = merge(
+            raws,
+            query=query,
+            registry=configs,
+            news=params.news,
+            rrf_weight=self.settings.rrf_weight,
+            boosts=list(params.boost_rules) or None,
+        )
         results = diversity_cap(results, max_per_domain=2, limit=params.k)
 
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -569,9 +635,12 @@ class SearchPipeline:
         )
 
     async def _fanout(
-        self, query: str, params: SearchParams, on_event: OnEvent
+        self, query: str, params: SearchParams, on_event: OnEvent, *, general_only: bool = False
     ) -> tuple[list[RawResult], list[EngineStatus]]:
         candidates = await self.registry.enabled()
+        if general_only:
+            # v2.5 P0-3: expansion variants only hit general engines.
+            candidates = [(cfg, ad) for cfg, ad in candidates if cfg.category == "general"]
         if params.engines:
             # Explicit engine list wins over category defaults.
             wanted = set(params.engines)
@@ -1124,13 +1193,24 @@ class AnswerPipeline:
             for i in range(0, len(verdict_text), _CHUNK):
                 yield ("token", {"t": verdict_text[i : i + _CHUNK]})
             citations_payload = list(verdict.get("citations") or [])
+            claims = (
+                check_claims(
+                    verdict_text, included, threshold=self.settings.claim_entailment_threshold
+                )
+                if self.settings.claim_check_enabled
+                else ClaimCheck(unsupported_markers=[], flagged_sentences=[])
+            )
             yield (
                 "citations",
                 {
                     "citations": citations_payload,
                     "invalid_markers": list(verdict.get("invalid_markers") or []),
+                    "unsupported_markers": claims.unsupported_markers,
                 },
             )
+            follow_ups = await self._followups(gateway, normalize_query(params.query), verdict_text)
+            if follow_ups:
+                yield ("follow_ups", {"follow_ups": follow_ups})
             council_meta = {
                 "domain": verdict.get("domain"),
                 "domain_name": verdict.get("domain_name"),
@@ -1174,6 +1254,7 @@ class AnswerPipeline:
                     "model": str(verdict.get("chairman_model") or model),
                     "cached": False,
                     "council": council_meta,
+                    "follow_ups": follow_ups,
                 },
             )
             return
@@ -1214,11 +1295,26 @@ class AnswerPipeline:
             {"n": c.n, "url": c.url, "title": c.title, "chunk_id": c.chunk_id}
             for c in check.citations
         ]
+        # v2.5 P0-4: claim-level support check — reported, never stripped silently.
+        claims = (
+            check_claims(check.text, included, threshold=self.settings.claim_entailment_threshold)
+            if self.settings.claim_check_enabled
+            else ClaimCheck(unsupported_markers=[], flagged_sentences=[])
+        )
 
         yield (
             "citations",
-            {"citations": citations_payload, "invalid_markers": check.invalid_markers},
+            {
+                "citations": citations_payload,
+                "invalid_markers": check.invalid_markers,
+                "unsupported_markers": claims.unsupported_markers,
+            },
         )
+
+        # v2.5 P0-5: follow-up suggestions (cheap call, failures -> no event).
+        follow_ups = await self._followups(gateway, normalize_query(params.query), check.text)
+        if follow_ups:
+            yield ("follow_ups", {"follow_ups": follow_ups})
 
         # REL-04: Cache write and DB finalize MUST be executed/scheduled before done event
         # so if the client disconnects immediately on done, cache and storage are never lost!
@@ -1232,7 +1328,13 @@ class AnswerPipeline:
         ):
             try:
                 await self._cache_store(
-                    params, model, answer_id, check.text, citations_payload, sources
+                    params,
+                    model,
+                    answer_id,
+                    check.text,
+                    citations_payload,
+                    sources,
+                    follow_ups=follow_ups,
                 )
             except Exception as exc:
                 logger.warning("answer_cache_store_failed", error=type(exc).__name__)
@@ -1266,8 +1368,44 @@ class AnswerPipeline:
                 "status": answer_status,
                 "model": model,
                 "cached": False,
+                "follow_ups": follow_ups,
             },
         )
+
+    async def _followups(self, gateway: LLMGateway, query: str, answer_text: str) -> list[str]:
+        """v2.5 P0-5: suggest up to followups_max follow-up questions (Perplexity-style).
+
+        One cheap completion; any failure or missing LLM -> [] — follow-ups are
+        a convenience and must never fail or slow the answer path meaningfully.
+        """
+        if not self.settings.followups_enabled or getattr(gateway, "provider", "none") == "none":
+            return []
+        # Perf guard: never spend the tail of a tight request budget on follow-ups.
+        _b = get_current_budget()
+        if _b is not None and _b.remaining() < 0.25 * _b.total_timeout_s:
+            return []
+        tail = answer_text[-1500:]
+        try:
+            text, _usage = await gateway.complete(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Given a search query and its answer, suggest up to "
+                            f"{self.settings.followups_max} follow-up questions the user would "
+                            "naturally ask next. Same language as the query. One per line, "
+                            "no numbering, no quotes, no commentary."
+                        ),
+                    },
+                    {"role": "user", "content": f"Query: {query}\n\nAnswer:\n{tail}"},
+                ],
+                max_tokens=200,
+                task="followups",
+            )
+        except Exception as exc:
+            logger.info("followups_failed", error=type(exc).__name__)
+            return []
+        return parse_variants(text, "", max_variants=self.settings.followups_max)
 
     async def prepare_context(
         self,
@@ -1458,6 +1596,11 @@ class AnswerPipeline:
         if _has_domain_filter(params):
             return None  # the answer cache is keyed without domain filters
         query = normalize_query(params.query)
+        # v2.5: answer cache is per-key personalized (boosts change the context).
+        owner = current_api_key_id.get() or "anonymous"
+        pers = rules_signature(
+            await load_boosts(owner, max_per_key=self.settings.boosts_max_per_key)
+        )
         if self.cache is not None:
             payload = await self.cache.get_json(
                 answer_cache_key(
@@ -1470,6 +1613,7 @@ class AnswerPipeline:
                     engines=params.engines,
                     news=params.news,
                     deep=params.deep,
+                    personalization=pers,
                 )
             )
             if payload and payload.get("answer_md"):
@@ -1503,6 +1647,8 @@ class AnswerPipeline:
                 "citations",
                 {"citations": payload.get("citations") or [], "invalid_markers": []},
             )
+            if payload.get("follow_ups"):
+                yield ("follow_ups", {"follow_ups": payload["follow_ups"]})
             if payload.get("council"):
                 yield ("council", payload["council"])
             yield (
@@ -1528,6 +1674,7 @@ class AnswerPipeline:
         answer_md: str,
         citations: list[dict],
         sources: list[dict],
+        follow_ups: list[str] | None = None,
     ) -> None:
         if self.cache is None or not answer_md or _has_domain_filter(params):
             return
@@ -1541,6 +1688,10 @@ class AnswerPipeline:
         # The max_age_s valve (round 10): when the caller bounds acceptable
         # staleness, cache with that TTL so the answer can actually be reused
         # inside its freshness window instead of recomputing every request.
+        owner = current_api_key_id.get() or "anonymous"
+        pers = rules_signature(
+            await load_boosts(owner, max_per_key=self.settings.boosts_max_per_key)
+        )
         await self.cache.set_json(
             answer_cache_key(
                 normalize_query(params.query),
@@ -1552,6 +1703,7 @@ class AnswerPipeline:
                 engines=params.engines,
                 news=params.news,
                 deep=params.deep,
+                personalization=pers,
             ),
             {
                 "answer_id": str(answer_id),
@@ -1562,6 +1714,7 @@ class AnswerPipeline:
                 "model": model,
                 "status": "complete",
                 "complete": True,
+                "follow_ups": follow_ups or [],
             },
             ttl_s=(
                 min(self.settings.cache_answer_ttl_s, max_age_s)

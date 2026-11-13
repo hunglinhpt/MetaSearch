@@ -134,6 +134,8 @@ async def _json(
     meta: dict = {}
     council_data: dict[str, Any] | None = None
     error: dict | None = None
+    follow_ups: list[str] = []  # v2.5 P0-5
+    unsupported_markers: list[int] = []  # v2.5 P0-4
 
     async for event, data in deps.get_answer_pipeline().run(params, **run_kwargs):
         if event == "token":
@@ -145,6 +147,9 @@ async def _json(
                 )
                 for c in data["citations"]
             ]
+            unsupported_markers = [int(n) for n in data.get("unsupported_markers") or []]
+        elif event == "follow_ups":
+            follow_ups = [str(f) for f in data.get("follow_ups") or []]
         elif event == "sources":
             sources = data["sources"]
         elif event == "council":
@@ -182,6 +187,8 @@ async def _json(
         answer_id=meta["answer_id"],
         answer_md="".join(answer_md_parts),
         citations=citations,
+        follow_ups=list(meta.get("follow_ups") or follow_ups),
+        unsupported_markers=unsupported_markers,
         sources=sources,
         model=meta.get("model", ""),
         latency_ms=meta.get("latency_ms", 0),

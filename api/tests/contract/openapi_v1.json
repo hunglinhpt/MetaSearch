@@ -76,6 +76,26 @@
             ],
             "title": "Exclude Domains"
           },
+          "extras": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "contents",
+                    "highlights",
+                    "answer"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extras"
+          },
           "freshness_days": {
             "anyOf": [
               {
@@ -238,6 +258,13 @@
             ],
             "title": "Council"
           },
+          "follow_ups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Follow Ups",
+            "type": "array"
+          },
           "latency_ms": {
             "default": 0,
             "title": "Latency Ms",
@@ -260,6 +287,13 @@
             "default": "complete",
             "title": "Status",
             "type": "string"
+          },
+          "unsupported_markers": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Unsupported Markers",
+            "type": "array"
           }
         },
         "required": [
@@ -448,6 +482,94 @@
         "title": "BlogPostSummary",
         "type": "object"
       },
+      "BoostCreateRequest": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "domain",
+              "keyword"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          },
+          "weight": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kind",
+          "target"
+        ],
+        "title": "BoostCreateRequest",
+        "type": "object"
+      },
+      "BoostListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BoostOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "storage": {
+            "default": "db",
+            "title": "Storage",
+            "type": "string"
+          }
+        },
+        "title": "BoostListResponse",
+        "type": "object"
+      },
+      "BoostOut": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "target",
+          "weight"
+        ],
+        "title": "BoostOut",
+        "type": "object"
+      },
       "CitationItem": {
         "properties": {
           "chunk_id": {
@@ -610,6 +732,26 @@
               }
             ],
             "title": "Exclude Domains"
+          },
+          "extras": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "contents",
+                    "highlights",
+                    "answer"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extras"
           },
           "freshness_days": {
             "anyOf": [
@@ -835,6 +977,26 @@
               }
             ],
             "title": "Exclude Domains"
+          },
+          "extras": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "contents",
+                    "highlights",
+                    "answer"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extras"
           },
           "freshness_days": {
             "anyOf": [
@@ -1807,6 +1969,26 @@
             ],
             "title": "Exclude Domains"
           },
+          "extras": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "contents",
+                    "highlights",
+                    "answer"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extras"
+          },
           "freshness_days": {
             "anyOf": [
               {
@@ -1902,6 +2084,17 @@
               }
             ],
             "title": "Age S"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
           },
           "cached": {
             "default": false,
@@ -3346,6 +3539,113 @@
         "tags": [
           "v1",
           "podcast"
+        ]
+      }
+    },
+    "/v1/prefs/boosts": {
+      "get": {
+        "operationId": "list_boosts_v1_prefs_boosts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoostListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Boosts",
+        "tags": [
+          "v1",
+          "prefs"
+        ]
+      },
+      "post": {
+        "operationId": "add_boost_v1_prefs_boosts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoostCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoostOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Boost",
+        "tags": [
+          "v1",
+          "prefs"
+        ]
+      }
+    },
+    "/v1/prefs/boosts/{rule_id}": {
+      "delete": {
+        "operationId": "remove_boost_v1_prefs_boosts__rule_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove Boost V1 Prefs Boosts  Rule Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Boost",
+        "tags": [
+          "v1",
+          "prefs"
         ]
       }
     },

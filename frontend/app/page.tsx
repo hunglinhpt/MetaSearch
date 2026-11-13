@@ -92,6 +92,10 @@ export default function HomePage() {
   // and deep mode (fan out to ALL engines, ignoring the category filter).
   const [searchLang, setSearchLang] = useState<string>("auto");
   const [deepSearch, setDeepSearch] = useState<boolean>(false);
+  // v2.5: agent extras on /v1/search + follow-up chips after answers
+  const [extrasOn, setExtrasOn] = useState<boolean>(false);
+  const [followUps, setFollowUps] = useState<string[]>([]);
+  const [instantAnswer, setInstantAnswer] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
   const [engines, setEngines] = useState<EngineDone[]>([]);
@@ -514,6 +518,8 @@ export default function HomePage() {
     setMeta(null);
     setError("");
     setHits([]);
+    setFollowUps([]);
+    setInstantAnswer(null);
     setSearchInfo("");
     // A cleared answer must not keep being read aloud.
     answerTtsRef.current?.cancel();
@@ -567,8 +573,11 @@ export default function HomePage() {
           deep: deepSearch && selectedEngines.length === 0,
           // deep mode widens the merged result set too (schema cap k=50)
           k: deepSearch ? 30 : undefined,
+          // v2.5 P0-7: agent extras (contents/highlights/answer) on top results
+          extras: extrasOn ? ["contents", "highlights", "answer"] : undefined,
         });
         setHits(resp.results);
+        setInstantAnswer(resp.answer ?? null);
         const incomplete = resp.complete === false;
         const emptyNote =
           resp.results.length === 0
@@ -592,7 +601,11 @@ export default function HomePage() {
             onToken: (text) => setAnswerMd((prev) => prev + text),
             onCitations: (items) => setCitations(items),
             onCouncil: (verdict) => setCouncilVerdict(verdict),
-            onDone: (m) => setMeta(m),
+            onFollowUps: (items) => setFollowUps(items),
+            onDone: (m) => {
+              setMeta(m);
+              if (m.follow_ups?.length) setFollowUps(m.follow_ups);
+            },
             onError: (code, message) => setError(`[${code}] ${message}`),
           },
           controller.signal,
@@ -839,6 +852,15 @@ export default function HomePage() {
                 >
                   🌐 Deep{selectedEngines.length > 0 ? " (không áp dụng)" : ""}
                 </button>
+                <button
+                  type="button"
+                  className={`chip chip-toggle ${extrasOn ? "on" : ""}`}
+                  onClick={() => setExtrasOn((v) => !v)}
+                  disabled={busy}
+                  title="v2.5 (docs/20 P0-7): trên /v1/search thêm contents/highlights/answer cho agent ở các kết quả top — chỉ áp dụng ở tab Raw"
+                >
+                  📦 Extras{extrasOn ? " ✓" : ""}
+                </button>
               </div>
 
               <div className="category-bar">
@@ -931,6 +953,25 @@ export default function HomePage() {
                     </span>
                   </header>
                   <AnswerMarkdown text={answerMd} citationByUrl={citationByUrl} />
+                  {followUps.length > 0 && (
+                    <div className="followups">
+                      <span className="followups-label">Hỏi tiếp:</span>
+                      {followUps.map((f) => (
+                        <button
+                          key={f}
+                          type="button"
+                          className="followup-chip"
+                          onClick={() => {
+                            setQuery(f);
+                            setTimeout(() => run(), 0);
+                          }}
+                          title="Tìm câu hỏi tiếp theo này"
+                        >
+                          {f}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {councilVerdict && (
                     <div
                       style={{
@@ -995,6 +1036,12 @@ export default function HomePage() {
 
               {mode === "raw" && hits.length > 0 && (
                 <div className="hits">
+                  {instantAnswer && (
+                    <article className="card instant-answer">
+                      <h3>Trả lời nhanh</h3>
+                      <p>{instantAnswer}</p>
+                    </article>
+                  )}
                   {hits.map((h) => (
                     <article className="card hit" key={h.url}>
                       <a className="hit-title" href={safeHref(h.url)} target="_blank" rel="noreferrer">
@@ -1002,6 +1049,13 @@ export default function HomePage() {
                       </a>
                       <div className="hit-url">{h.url}</div>
                       {h.snippet && <p className="hit-snippet">{h.snippet}</p>}
+                      {h.highlights && h.highlights.length > 0 && (
+                        <ul className="hit-highlights">
+                          {h.highlights.map((hl) => (
+                            <li key={hl}>{hl}</li>
+                          ))}
+                        </ul>
+                      )}
                       <div className="hit-meta">
                         score {h.score.toFixed(3)} · consensus {h.consensus} ·{" "}
                         {(h.engines ?? h.found_by).join(", ")}

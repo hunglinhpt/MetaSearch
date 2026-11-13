@@ -9,6 +9,7 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 from app.core.logging import get_logger
+from app.retrieval.boosts import BoostRule, apply_boosts
 from app.retrieval.canonical import canonicalize
 from app.retrieval.models import EngineConfig, RawResult, ScoredResult
 from app.retrieval.scoring import apply_signals
@@ -18,6 +19,9 @@ logger = get_logger(__name__)
 
 _DEEP_VERTICAL_ADAPTERS = frozenset({"viet_stock", "stooq", "fengshui", "sec_edgar"})
 
+# docs/20 P0-1: Reciprocal Rank Fusion constant (standard RRF k=60).
+RRF_K = 60
+
 
 def merge(
     raws: list[RawResult],
@@ -26,6 +30,10 @@ def merge(
     registry: dict[str, EngineConfig],
     now: datetime | None = None,
     news: bool = False,
+    # docs/20 P0-1: weight of the RRF signal in the final blend (0 = off).
+    rrf_weight: float = 0.3,
+    # docs/20 P0-6: per-key personal boost rules, applied after the blend.
+    boosts: list[BoostRule] | None = None,
 ) -> list[ScoredResult]:
     """Deduplicate ``raws`` by canonical URL, score groups, sort desc."""
     groups: dict[str, list[RawResult]] = {}
@@ -38,9 +46,19 @@ def merge(
         groups.setdefault(canon, []).append(raw)
 
     merged: list[ScoredResult] = []
+    group_rrf: dict[str, float] = {}
     for canonical_url, group in groups.items():
         # Deterministic primary even when ranks tie (fan-out arrival order varies).
         group.sort(key=lambda r: (r.rank, r.url))
+        # RRF (docs/20 P0-1): sum over EVERY raw occurrence (multi-query fan-out
+        # included) of adapter_weight / (k + rank). Engine weight comes from the
+        # registry so an operator-tuned engine counts more in the fusion too.
+        rrf = 0.0
+        for raw in group:
+            cfg = registry.get(raw.adapter)
+            w = cfg.weight if cfg is not None else 1.0
+            rrf += w / (RRF_K + raw.rank + 1)
+        group_rrf[canonical_url] = rrf
         primary = group[0]
         adapters = sorted({r.adapter for r in group})
         engines = sorted({e for r in group for e in r.source_engines}) or list(adapters)
@@ -65,10 +83,16 @@ def merge(
         )
 
     max_engines = max((item.consensus for item in merged), default=1)
+    max_rrf = max(group_rrf.values(), default=0.0)
+    rw = min(max(rrf_weight, 0.0), 1.0)
     for item in merged:
-        item.score = apply_signals(
+        base = apply_signals(
             item, query=query, registry=registry, max_engines=max_engines, now=now, news=news
         )
+        item.rrf_score = (group_rrf[item.canonical_url] / max_rrf) if max_rrf > 0 else 0.0
+        item.score = (1.0 - rw) * base + rw * item.rrf_score
+        if boosts:
+            apply_boosts(item, query, boosts)
 
     merged.sort(key=lambda r: (-r.score, r.best_rank, r.canonical_url))
     return _drop_near_duplicates(merged)
