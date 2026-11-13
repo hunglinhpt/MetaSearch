@@ -60,7 +60,7 @@ def _reformulate_query(
     """docs/20 P1-1 (IRCoT): reformulate the next hop from the evidence already
     gathered — the gap plus the established facts, so the search is conditioned
     on what we know instead of re-asking the same thing (entity-linking hop)."""
-    facts = " ".join(lr.fact for lr in learnings[:max_facts]).strip()
+    facts = " ".join(lr.fact for lr in learnings[-max_facts:]).strip()
     if facts:
         return f"{question} — {gap}. Given what is already established ({facts[:500]}), find:"
     return f"{question} — {gap}"
@@ -79,7 +79,9 @@ def _plan_coverage(
     for query, purpose in plan_queries:
         terms = [t for t in tokenize(f"{query} {purpose}") if len(t) > 3]
         if not terms:
-            covered += 1
+            # Pass 1 P2: acronym-only sub-queries ("P/E P/B ROE EPS") have no
+            # checkable terms — skipping them as "covered" could report 1.0
+            # coverage on ZERO evidence. The threshold math below decides.
             continue
         hits = sum(1 for t in terms if t in facts_text)
         if hits / len(terms) >= threshold:
@@ -768,6 +770,14 @@ class ResearchPipeline:
                             categories=categories,
                             engines=None,
                             record_memory=False,  # synthetic sub-query, not a user query
+                            # Pass 1 P1: IRCoT reformulations are always long ->
+                            # the adaptive router would escalate EVERY sub-query
+                            # to deep (all-engine fan-out + quorum bypass + LLM
+                            # expansion), amplifying a depth-3 x breadth-4 run
+                            # into ~12 deep searches. Sub-queries stay shallow
+                            # and un-expanded; the planner already targets them.
+                            skip_router=True,
+                            expansion=False,
                         ),
                         on_event=on_event,
                     )
@@ -833,7 +843,34 @@ class ResearchPipeline:
             )
             if not gaps and coverage_ok:
                 break
+            if not gaps and not coverage_ok:
+                # Pass 1 P2: no new gaps but the coverage gate is unmet — the
+                # identical plan re-run would find nothing new (duplicated
+                # facts add no terms). Re-queue the UNCOVERED sub-queries so
+                # the next iteration actually probes the missing evidence.
+                threshold = self.settings.research_coverage_threshold
+                plan_q = [
+                    q
+                    for q in plan_queries
+                    if _plan_coverage([q], pack.learnings, threshold=threshold) < threshold
+                ]
+                if plan_q:
+                    sub_queries = plan_q
+                # else: nothing left to probe — accept and let the report note it
 
+        print("DEBUG pack.chunks:", len(pack.chunks), "urls:", len(getattr(pack, "urls", []) or []))
+        if not pack.chunks:
+            # Pass 1 P2: every search failed on the first iteration — sending
+            # "(empty) sources" to the report LLM would produce an
+            # ungrounded, hallucination-prone report. Fail typed instead.
+            yield (
+                "error",
+                {
+                    "code": "no_results",
+                    "message": "Nghiên cứu thất bại: không thu thập được nguồn nào",
+                },
+            )
+            return
         yield ("status", {"stage": "writing_report", "detail": f"{len(pack.chunks)} chunks"})
         report_id = params.research_id or uuid.uuid4()
         answer_parts: list[str] = []
@@ -987,7 +1024,11 @@ class ResearchPipeline:
                 for item in parsed.get("learnings", [])
                 if item.get("fact") and int(item.get("citation_id") or 0) in valid_ids
             ]
-            gaps = [str(g) for g in parsed.get("gaps", []) if g][:8]
+            gaps = [
+                str(g)
+                for g in parsed.get("gaps", [])
+                if g and str(g).strip()  # whitespace-only gaps produce junk reformulations
+            ][:8]
             return learnings, gaps, usage
         except (LLMError, ValueError, KeyError, TypeError) as exc:
             logger.warning("research_extract_fallback", error=type(exc).__name__)

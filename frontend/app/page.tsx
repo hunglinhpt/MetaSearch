@@ -547,8 +547,9 @@ export default function HomePage() {
     }
   };
 
-  const run = useCallback(async () => {
-    const q = query.trim();
+  const run = useCallback(
+    async (override?: string) => {
+    const q = (override ?? query).trim();
     if (!q || busy) return;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -630,6 +631,7 @@ export default function HomePage() {
     busy,
     councilEndpointsText,
     councilMode,
+    extrasOn,
     mode,
     query,
     reset,
@@ -855,6 +857,7 @@ export default function HomePage() {
                 <button
                   type="button"
                   className={`chip chip-toggle ${extrasOn ? "on" : ""}`}
+                  aria-pressed={extrasOn}
                   onClick={() => setExtrasOn((v) => !v)}
                   disabled={busy}
                   title="v2.5 (docs/20 P0-7): trên /v1/search thêm contents/highlights/answer cho agent ở các kết quả top — chỉ áp dụng ở tab Raw"
@@ -963,7 +966,10 @@ export default function HomePage() {
                           className="followup-chip"
                           onClick={() => {
                             setQuery(f);
-                            setTimeout(() => run(), 0);
+                            // Audit Pass 1 P1: the memoized `run` captured the
+                            // PRE-chip query — setQuery does not retroactively
+                            // change that closure. Pass the chip text directly.
+                            void run(f);
                           }}
                           title="Tìm câu hỏi tiếp theo này"
                         >

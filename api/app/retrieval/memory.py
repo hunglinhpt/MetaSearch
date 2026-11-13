@@ -77,7 +77,26 @@ async def record_memory(
                     )
                 ).scalar_one()
                 if count >= max_per_key:
-                    return False
+                    if kind == "query":
+                        # Pass 1 P2: search volume must not starve the 👍/👎
+                        # feedback feature — evict the OLDEST query rows to
+                        # make room (ring buffer for the query kind only).
+                        oldest_q = (
+                            await session.execute(
+                                select(MemoryItem.id)
+                                .where(
+                                    MemoryItem.api_key_id == owner,
+                                    MemoryItem.kind == "query",
+                                )
+                                .order_by(MemoryItem.created_at.asc())
+                                .limit(1)
+                            )
+                        ).scalar_one_or_none()
+                        if oldest_q is None:
+                            return False  # cap full of feedback — stay honest
+                        await session.execute(delete(MemoryItem).where(MemoryItem.id == oldest_q))
+                    else:
+                        return False
                 session.add(
                     MemoryItem(
                         id=uuid.uuid4(),

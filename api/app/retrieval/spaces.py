@@ -72,8 +72,12 @@ async def get_space(owner: str, slug: str) -> Space | None:
 
         space = await asyncio.wait_for(_read(), timeout=0.3)
     except Exception as exc:
+        # Audit Pass 1 P3: a transient DB failure is NOT "no space" — it must
+        # not be negative-cached 30s (that 404s an existing space during a
+        # blip, colliding with the fail-closed scope semantics). Return None
+        # uncached; a healthy lookup still caches both ways.
         logger.warning("space_load_failed", owner=owner, slug=slug, error=type(exc).__name__)
-        space = None
+        return None
     _space_cache[key] = (now, space)
     if len(_space_cache) > 256:
         oldest = min(_space_cache, key=lambda k: _space_cache[k][0])

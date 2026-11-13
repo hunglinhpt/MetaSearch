@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.logging import get_logger
 from app.retrieval.canonical import canonicalize
@@ -77,15 +77,22 @@ def bm25_scores(query: str, docs: list[str], *, k1: float = 1.5, b: float = 0.75
 
 def rrf_fuse(dense: list[float], sparse: list[float], *, k: int = RRF_K) -> list[float]:
     """Reciprocal-rank fusion of two score lists (higher = better, both lists
-    same length). A missing/None dense side contributes no term."""
+    same length). A missing/None dense side contributes no term. Audit Pass 1
+    P2#4: an all-zero side contributes NO term either — an empty/stopword-only
+    query must not fabricate nonzero sparse ranks, and 0.0-cosine rows (no
+    embedding) must not receive dense credit."""
     n = len(sparse)
-    dense_ranks = _ranks(dense) if dense and any(v > 0 for v in dense) else [n] * n
-    sparse_ranks = _ranks(sparse)
+    dense_live = bool(dense) and any(v > 0 for v in dense)
+    sparse_live = bool(sparse) and any(v > 0 for v in sparse)
+    dense_ranks = _ranks(dense) if dense_live else [n] * n
+    sparse_ranks = _ranks(sparse) if sparse_live else [n] * n
     out = []
     for i in range(n):
-        score = 1.0 / (k + sparse_ranks[i] + 1)
-        if dense and any(v > 0 for v in dense):
-            score += 1.0 / (k + dense_ranks[i] + 1)
+        score = 0.0
+        if sparse_live:
+            score += 1.0 / (k + sparse_ranks[i] + 1)
+            if dense_live and dense[i] > 0:
+                score += 1.0 / (k + dense_ranks[i] + 1)
         out.append(score)
     return out
 
@@ -130,6 +137,22 @@ async def hybrid_chunk_search(
         .order_by(ChunkRow.created_at.desc())
         .limit(max(candidate_limit, k))
     )
+    # Audit Pass 1 P2#3: the domain filter MUST run in SQL before the limit —
+    # a Python-side-only filter on the newest-1000 window silently misses every
+    # target-domain chunk outside it (wrong "no results" for Spaces).
+    if domains:
+        wanted_domains = []
+        for d in domains:
+            d = (d or "").strip().lower().rstrip(".")
+            if d.startswith("www."):
+                d = d[4:]
+            if d:
+                wanted_domains.append(d)
+        if wanted_domains:
+            like = [f"%.{d}" for d in wanted_domains]
+            eq = list(wanted_domains)
+            cond = or_(Document.domain.in_(eq), *[Document.domain.like(p) for p in like])
+            stmt = stmt.where(cond)
     if urls:
         canon_urls = []
         for u in urls:

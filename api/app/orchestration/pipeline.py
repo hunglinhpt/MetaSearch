@@ -83,6 +83,11 @@ def _has_vn_ticker(query: str) -> bool:
     return any(is_vn_ticker(word) for word in re.findall(r"\b[A-Za-z0-9]{3}\b", query))
 
 
+# Pass 1 P2: process-local memo of LLM query-expansion variants (10-min TTL).
+# Bounded by expiry + a soft cap of 256 keys (amortized cleanup).
+_EXPANSION_MEMO: dict[str, tuple[float, list[str]]] = {}
+
+
 def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
     """Automatically infer vertical categories from unambiguous domain signals in ``query``."""
     inferred: set[str] = set()
@@ -315,6 +320,11 @@ class SearchParams:
     # Caller-bounded acceptable staleness (seconds) — opens the DAT-10
     # financial-cache valve with ttl = min(answer_ttl, max_age_s).
     max_age_s: int | None = None
+    # Audit Pass 1 P1: research sub-queries must not pay the adaptive-router
+    # deep escalation (IRCoT reformulations are always long -> "deep") nor the
+    # per-sub-query LLM expansion — both amplify cost ~10x per research run.
+    skip_router: bool = False
+    expansion: bool = True
     # docs/19 W4: deep=True → fan out to ALL enabled engines, ignoring the
     # category filter, so "deepest possible" search is one flag away.
     deep: bool = False
@@ -496,6 +506,7 @@ class SearchPipeline:
         # key, so routed and explicit-deep searches share one entry safely.
         if (
             not params.deep
+            and not params.skip_router  # Pass 1 P1: research sub-queries stay shallow
             and self.settings.adaptive_router_enabled
             and classify_complexity(
                 normalize_query(params.query),
@@ -542,14 +553,32 @@ class SearchPipeline:
                 normalize_query(params.query),
                 max_per_key=self.settings.memory_max_per_key,
             )
-        if self.gateway is not None and self.settings.query_expansion_enabled:
-            variants = await expand_query(
-                self.gateway,
-                normalize_query(params.query),
-                lang=params.lang,
-                settings=self.settings,
-                force=params.deep,
-            )
+        if (
+            self.gateway is not None
+            and self.settings.query_expansion_enabled
+            and params.expansion  # Pass 1 P1: research sub-queries skip LLM expansion
+        ):
+            # Pass 1 P2: memoize (query, lang, deep) -> variants for 10
+            # minutes — a cached-hit re-run of the same long query must not
+            # pay another LLM round-trip to re-derive the same expansion sig.
+            memo_key = f"{normalize_query(params.query)}|{params.lang or ''}|{params.deep}"
+            memo = _EXPANSION_MEMO.get(memo_key)
+            if memo is not None and memo[0] > time.time():
+                variants = memo[1]
+            else:
+                variants = await expand_query(
+                    self.gateway,
+                    normalize_query(params.query),
+                    lang=params.lang,
+                    settings=self.settings,
+                    force=params.deep,
+                )
+                _EXPANSION_MEMO[memo_key] = (time.time() + 600, variants)
+                if len(_EXPANSION_MEMO) > 256:
+                    # drop expired entries (amortized; small map by design)
+                    now_t = time.time()
+                    for k in [k for k, v in _EXPANSION_MEMO.items() if v[0] <= now_t]:
+                        _EXPANSION_MEMO.pop(k, None)
             if variants:
                 params = dataclasses.replace(
                     params,
@@ -995,6 +1024,13 @@ def _build_answer_flight_key(
         "exclude_domains": sorted(params.exclude_domains or []),
         "model": model,
         "domain": domain or "auto",
+        # Audit Pass 1 P1: per-key personalization + space scope were absent —
+        # two concurrent callers (different keys/spaces/boosts) shared one
+        # flight and each received the other's personalized answer.
+        "space": getattr(params, "space", None),
+        "boosts_sig": getattr(params, "boosts_sig", ""),
+        "expansion_sig": getattr(params, "expansion_sig", ""),
+        "owner": current_api_key_id.get() or "anonymous",
         "council_mode": council_mode,
         "council_endpoints": [
             ep.model_dump() if hasattr(ep, "model_dump") else str(ep)
@@ -1684,6 +1720,11 @@ class AnswerPipeline:
         # v2.4 round 9 — the row does not carry deep/lang/k).
         if params.deep:
             return None
+        # Pass 1 P1: space-restricted answers resolve their scope INSIDE
+        # _personalize (post-cache) — replaying a cached one would serve
+        # out-of-scope content and skip the space 404 validation.
+        if getattr(params, "space", None):
+            return None
         # Audit round 10 P1: financial/news answers live under DAT-10 and the
         # 15-min news TTL — a cosine-similar week-old row must never replay
         # for them (the semantic row carries no freshness metadata).
@@ -1736,6 +1777,11 @@ class AnswerPipeline:
         follow_ups: list[str] | None = None,
     ) -> None:
         if self.cache is None or not answer_md or _has_domain_filter(params):
+            return
+        # Pass 1 P1: a space-restricted answer resolves its scope post-cache —
+        # storing it under a shared key would replay out-of-scope content for
+        # plain queries (read side already skips; the store must too).
+        if getattr(params, "space", None):
             return
         categories = set(params.categories or [])
         if categories == {"general"} or params.news:

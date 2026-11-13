@@ -167,14 +167,14 @@
   - Bổ sung hệ thống CSS đầy đủ trong `frontend/app/globals.css`, thanh chọn chuyên ngành `CATEGORY_CHIPS`, render bảng biểu Markdown `<table>` và tiêu đề `<h2>`-`<h4>`.
   - Nâng cấp `eval_run.py` (`--judge-faithfulness`, `--concurrency`) và mở rộng `golden.json` lên 40 golden queries.
 
-**Trạng thái verify mới nhất (v2.2.0; số tại v1.0.0 là 333 passed):**
+**Trạng thái verify mới nhất (v2.6.0; số tại v1.0.0 là 333 passed):**
 
 | Hạng mục | Lệnh | Kết quả |
 |---|---|---|
 | Backend tests | `pytest -q` | **881 passed** (integration gated bằng `METASEARCH_INTEGRATION=1`) |
 | Lint & Format | `ruff check` + `ruff format --check` | **All checks passed** |
 | Security scan | `bandit -q -r app -x tests` | **0 issues** (exit 0) |
-| Frontend | `npm run test` + `npm run typecheck` + `npm run build` | **vitest 16/16 PASS**, `tsc` exit 0, Next.js build clean |
+| Frontend | `npm run test` + `npm run typecheck` + `npm run build` | **vitest 49/49 PASS**, `tsc` exit 0, Next.js build clean |
 | Dependency audit | `npm audit --audit-level=high` (cả dev deps) | **0 vulnerabilities** |
 | CI | GitHub Actions matrix 3 OS | **13/13 jobs success** (backend ×3, frontend ×3, pipeline gate ×3, gitleaks, promtool, docker smoke, windows scripts) |
 

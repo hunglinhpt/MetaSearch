@@ -5135,6 +5135,7 @@
             "required": false,
             "schema": {
               "default": 20,
+              "minimum": 1,
               "title": "Max Pages",
               "type": "integer"
             }

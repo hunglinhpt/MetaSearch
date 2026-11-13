@@ -8,6 +8,7 @@ SEC-07: source delimiters + injection pattern logging.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 import httpx
@@ -343,23 +344,39 @@ class TestReportTokens:
                 )
 
         from app.config import get_settings
-        from app.orchestration.engine_store import InMemoryEngineStore
-        from app.orchestration.pipeline import SearchPipeline
         from app.orchestration.research import ResearchPipeline
-        from app.retrieval.registry import EngineRegistry
 
         settings = get_settings()
-        registry = EngineRegistry(
-            InMemoryEngineStore({}),
-            {},
-        )
-        search = SearchPipeline(settings, registry)
 
-        class NoopScraper:
+        # Audit Pass 1: the zero-chunks guard fails the run typed NO_RESULTS
+        # before the report — mirror the working v2.6 scaffolding (ScoredResult
+        # + snippet-fallback chunks; the executor dedupes by canonical_url).
+        from app.orchestration.pipeline import SearchOutcome
+        from app.retrieval.models import ScoredResult
+
+        class _FakeSearch:
+            async def run(self, params, on_event=None):
+                r = ScoredResult(
+                    url="https://ex.com/1",
+                    canonical_url="https://ex.com/1",
+                    title="quasar report",
+                    snippet="quasar nebula harbor",
+                    domain="g.com",
+                    adapters=["g1"],
+                    engines=["g1"],
+                    consensus=1,
+                    best_rank=0,
+                    score=0.5,
+                )
+                return SearchOutcome(query_id=uuid.uuid4(), results=[r], statuses=[], latency_ms=1)
+
+        search = _FakeSearch()
+
+        class _NoopScraper:
             async def scrape_many(self, urls, **kw):
                 return []
 
-        pipeline = ResearchPipeline(settings, search, NoopScraper(), CaptureGateway())
+        pipeline = ResearchPipeline(settings, search, _NoopScraper(), CaptureGateway())
         events = []
         from app.orchestration.research import ResearchParams
 
@@ -367,6 +384,15 @@ class TestReportTokens:
             events.append(event)
             if event[0] in ("error", "done"):
                 break
+        if "max_tokens" not in captured:
+            import pytest as _pytest
+
+            _pytest.fail(
+                "report stream never called; events: "
+                + str([e[0] for e in events])
+                + " bodies: "
+                + str([str(e[1])[:120] for e in events if e[0] == "error"])
+            )
         assert captured["max_tokens"] == settings.research_report_max_tokens
 
 

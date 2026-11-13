@@ -538,7 +538,13 @@ def _build_financials_from_aggregated(
     # /1000-scaled feed is confirmed and x1000-corrected; an unverified
     # fallback feed would skew implied EPS by the same factor — the gate errs
     # toward dropping, never fabricating).
-    if eps is not None and pe is not None and pe > 0 and latest_close > 0:
+    if (
+        eps is not None
+        and eps > 0  # Pass 1 P1: eps==0 makes min(...)=0 -> ZeroDivisionError
+        and pe is not None
+        and pe > 0
+        and latest_close > 0
+    ):
         implied_eps = latest_close / pe
         if implied_eps > 0:
             eps_ratio = max(eps, implied_eps) / min(eps, implied_eps)

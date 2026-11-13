@@ -237,7 +237,7 @@ class SearchResponse(BaseModel):
     query_id: str
     results: list[dict[str, Any]]
     # docs/20 P0-7: instant answer over the top results (present only when
-    # requested via include=["answer"] and an LLM is configured).
+    # requested via extras=["answer"] and an LLM is configured).
     answer: str | None = None
     engines_used: list[str]
     engines_failed: list[str]

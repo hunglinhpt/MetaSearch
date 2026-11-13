@@ -1,6 +1,6 @@
 """Agent-friendly extras for POST /v1/search (docs/20 P0-7, v2.5.0).
 
-``include=["contents","highlights","answer"]`` adds, on the TOP results only:
+``extras=["contents","highlights","answer"]`` adds, on the TOP results only:
 - ``contents``: scraped markdown of the page (bounded chars), via the existing
   scraper (SSRF/robots/caps all apply unchanged);
 - ``highlights``: top extractive sentences per result (keyword overlap with the

@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from sqlalchemy import Table, delete, select
 
 from app.api import deps
@@ -204,7 +204,7 @@ async def delete_space(slug: str) -> dict[str, Any]:
 
 
 @router.post("/spaces/{slug}/crawl")
-async def crawl_space(slug: str, max_pages: int = 20) -> dict[str, Any]:
+async def crawl_space(slug: str, max_pages: int = Query(default=20, ge=1)) -> dict[str, Any]:
     """Map each domain root + scrape pinned URLs, persist into the index."""
     settings = get_settings()
     if not settings.spaces_enabled:
