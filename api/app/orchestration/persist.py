@@ -189,6 +189,7 @@ async def _persist_search_all(
     lang: str | None,
     params: dict[str, Any],
     results: list[ScoredResult],
+    owner: str | None = None,
 ) -> None:
     """Persist Query + SearchResults atomically in one session to avoid FK races."""
     async with get_sessionmaker()() as session:
@@ -397,9 +398,13 @@ def persist_search(
     params: dict[str, Any],
     results: list[ScoredResult],
 ) -> None:
+    # Audit Pass 2 P1: snapshot the owner HERE (producer context) — the persist
+    # queue consumer runs in the startup context where current_api_key_id is
+    # None, silently nulling attribution for every keyed request.
+    owner = current_api_key_id.get()
     _spawn_task(
         "search",
-        _persist_search_all(query_id, raw_text, normalized_text, lang, params, results),
+        _persist_search_all(query_id, raw_text, normalized_text, lang, params, results, owner),
     )
 
 
@@ -455,6 +460,7 @@ async def _persist_report(
     latency_ms: int,
     citations: list[tuple[int, str, str, str | None]],
     truncated: bool,
+    owner: str | None = None,
 ) -> None:
     """Persist the research report as an Answer(kind="research") row."""
     answer_id = uuid.uuid4()
@@ -468,7 +474,7 @@ async def _persist_report(
                 normalized_text=question,
                 lang=lang,
                 params={"kind": "research", "truncated": truncated},
-                api_key_id=current_api_key_id.get(),
+                api_key_id=owner if owner is not None else current_api_key_id.get(),
             )
             .on_conflict_do_nothing(index_elements=["id"])
         )
@@ -477,7 +483,7 @@ async def _persist_report(
         session.add(
             Answer(
                 id=answer_id,
-                api_key_id=current_api_key_id.get(),
+                api_key_id=owner if owner is not None else current_api_key_id.get(),
                 query_id=research_id,
                 kind="research",
                 content_md=content_md,
@@ -524,6 +530,7 @@ def persist_report(
     truncated: bool,
 ) -> None:
     """Fire-and-forget report persistence (called from the research task)."""
+    owner = current_api_key_id.get()  # producer-context snapshot (Pass 2 P1)
     _spawn_task(
         "report",
         _persist_report(
@@ -538,6 +545,7 @@ def persist_report(
             latency_ms,
             citations,
             truncated,
+            owner,
         ),
     )
 

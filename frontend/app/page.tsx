@@ -625,7 +625,9 @@ export default function HomePage() {
       if (err instanceof Error && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      // Pass 2 P3: only the CURRENT run may clear busy — a superseded run's
+      // finally must not flip the spinner off while run N+1 is streaming.
+      if (abortRef.current === controller) setBusy(false);
     }
   }, [
     busy,
@@ -964,6 +966,7 @@ export default function HomePage() {
                           key={f}
                           type="button"
                           className="followup-chip"
+                          disabled={busy}
                           onClick={() => {
                             setQuery(f);
                             // Audit Pass 1 P1: the memoized `run` captured the

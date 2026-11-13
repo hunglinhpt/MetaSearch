@@ -56,6 +56,12 @@ class PersistQueue:
             close = getattr(arg, "close", None)
             if callable(close) and asyncio.iscoroutine(arg):
                 close()
+        # Pass 2 P3: kwargs-held coroutines leak the same way — scan them too
+        # (latent only: all current enqueue sites pass positionally).
+        for kwarg in (item.kwargs or {}).values():
+            close = getattr(kwarg, "close", None)
+            if callable(close) and asyncio.iscoroutine(kwarg):
+                close()
 
     def enqueue(self, item: PersistItem) -> None:
         try:

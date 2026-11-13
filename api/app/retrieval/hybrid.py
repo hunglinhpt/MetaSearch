@@ -89,10 +89,10 @@ def rrf_fuse(dense: list[float], sparse: list[float], *, k: int = RRF_K) -> list
     out = []
     for i in range(n):
         score = 0.0
-        if sparse_live:
+        if sparse_live:  # each side contributes INDEPENDENTLY (Pass 2 P2#4)
             score += 1.0 / (k + sparse_ranks[i] + 1)
-            if dense_live and dense[i] > 0:
-                score += 1.0 / (k + dense_ranks[i] + 1)
+        if dense_live and dense[i] > 0:
+            score += 1.0 / (k + dense_ranks[i] + 1)
         out.append(score)
     return out
 

@@ -566,6 +566,12 @@ class SearchPipeline:
             if memo is not None and memo[0] > time.time():
                 variants = memo[1]
             else:
+                # Pass 2 P2#5: enforce the soft cap — evict the earliest-
+                # expiring entries (query diversity within the TTL previously
+                # grew the map unboundedly).
+                while len(_EXPANSION_MEMO) >= 256:
+                    oldest_key = min(_EXPANSION_MEMO, key=lambda mk: _EXPANSION_MEMO[mk][0])
+                    _EXPANSION_MEMO.pop(oldest_key, None)
                 variants = await expand_query(
                     self.gateway,
                     normalize_query(params.query),

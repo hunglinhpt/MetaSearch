@@ -848,28 +848,38 @@ class ResearchPipeline:
                 # identical plan re-run would find nothing new (duplicated
                 # facts add no terms). Re-queue the UNCOVERED sub-queries so
                 # the next iteration actually probes the missing evidence.
-                threshold = self.settings.research_coverage_threshold
-                plan_q = [
-                    q
-                    for q in plan_queries
-                    if _plan_coverage([q], pack.learnings, threshold=threshold) < threshold
-                ]
+                # Per-query lexical overlap uses the _plan_coverage default
+                # (0.25); the aggregate gate threshold (0.6) is a DIFFERENT
+                # metric — passing it here re-queued nearly every query
+                # (audit Pass 2 P2).
+                plan_q = [q for q in plan_queries if _plan_coverage([q], pack.learnings) < 0.25]
                 if plan_q:
                     sub_queries = plan_q
                 # else: nothing left to probe — accept and let the report note it
 
-        print("DEBUG pack.chunks:", len(pack.chunks), "urls:", len(getattr(pack, "urls", []) or []))
         if not pack.chunks:
-            # Pass 1 P2: every search failed on the first iteration — sending
-            # "(empty) sources" to the report LLM would produce an
-            # ungrounded, hallucination-prone report. Fail typed instead.
-            yield (
-                "error",
-                {
-                    "code": "no_results",
-                    "message": "Nghiên cứu thất bại: không thu thập được nguồn nào",
-                },
-            )
+            # Pass 1 P2: zero grounded chunks — an ungrounded report would be
+            # hallucination-prone. Fail TYPED: no_results when the searches
+            # genuinely found nothing; budget_truncated when the loop stopped
+            # before any search could run (Pass 2 P2#9).
+            if truncated:
+                yield (
+                    "error",
+                    {
+                        "code": "invalid_request",
+                        "message": (
+                            "Nghiên cứu dừng do hết ngân sách/thời gian trước khi thu thập nguồn"
+                        ),
+                    },
+                )
+            else:
+                yield (
+                    "error",
+                    {
+                        "code": "no_results",
+                        "message": "Nghiên cứu thất bại: không thu thập được nguồn nào",
+                    },
+                )
             return
         yield ("status", {"stage": "writing_report", "detail": f"{len(pack.chunks)} chunks"})
         report_id = params.research_id or uuid.uuid4()

@@ -538,6 +538,12 @@ def _build_financials_from_aggregated(
     # /1000-scaled feed is confirmed and x1000-corrected; an unverified
     # fallback feed would skew implied EPS by the same factor — the gate errs
     # toward dropping, never fabricating).
+    if eps is not None and eps == 0.0:
+        # Pass 2 P3: EPS 0.0 next to P/E > 0 is arithmetically impossible —
+        # the feed's placeholder. Losses are NEGATIVE eps (kept); 0 is dropped
+        # as a non-grounded figure (AGENTS.md: thiếu thì null).
+        logger.warning("fa_suspect_unit: %s eps_vnd=0.0 dropped (impossible with pe>0)", sym)
+        eps = None
     if (
         eps is not None
         and eps > 0  # Pass 1 P1: eps==0 makes min(...)=0 -> ZeroDivisionError
