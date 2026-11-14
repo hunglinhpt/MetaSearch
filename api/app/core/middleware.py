@@ -33,6 +33,11 @@ def _route_class_of(path: str) -> str:
     return "/" + parts[0]
 
 
+# Phase 4 P1: inbound JSON body cap (docs/23 P1 #5). Only applies to
+# JSON-body routes — SSE/file/stream surfaces set their own caps.
+MAX_BODY_BYTES = 1024 * 1024
+
+
 class RequestContextMiddleware:
     """Assign a request id, expose it to logs, echo it in response, and record HTTP metrics."""
 
@@ -43,6 +48,25 @@ class RequestContextMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        # Audit Phase 4 P1: reject oversized JSON bodies BEFORE buffering — a
+        # 100MB body was fully read then rejected field-by-field by pydantic.
+        # GET/HEAD have no body; non-JSON content types are not our surface.
+        if str(scope.get("method") or "").upper() in ("POST", "PUT", "PATCH"):
+            headers = dict(scope.get("headers") or [])
+            length = headers.get(b"content-length")
+            from app.config import get_settings
+
+            cap = int(getattr(get_settings(), "max_body_bytes", MAX_BODY_BYTES))
+            if length and length.isdigit() and int(length) > cap:
+                from starlette.responses import JSONResponse
+
+                resp = JSONResponse(
+                    {"error": {"code": "invalid_request", "message": "request body too large"}},
+                    status_code=413,
+                )
+                await resp(scope, receive, send)
+                return
 
         started = time.perf_counter()
         method = str(scope.get("method") or "GET").upper()

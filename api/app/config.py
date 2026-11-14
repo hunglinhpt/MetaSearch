@@ -407,6 +407,9 @@ class Settings(BaseSettings):
     # Mount the MCP streamable-HTTP server at /mcp on this API process
     # (stdio mode runs separately via `python -m app.mcp`).
     mcp_enabled: bool = False
+    # Audit Phase 4 P1: inbound JSON body cap — reject oversized bodies
+    # BEFORE full parse (pydantic field caps apply only after buffering).
+    max_body_bytes: int = Field(default=1024 * 1024, ge=1024)
     # v3.1 Lite Web UI: serve the static export (frontend/out, built with
     # `npm run build:export`) from THIS process on the same port, so Lite is
     # one process + one port (http://127.0.0.1:8000/) with no separate :3000.
