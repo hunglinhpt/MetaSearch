@@ -305,7 +305,9 @@ class Settings(BaseSettings):
     # P2-4: online interleaving — hash-bucketed A/B on retrieval params
     # (treatment = different RRF_WEIGHT), explicit 👍/👎 stats per variant.
     interleave_enabled: bool = True
-    interleave_ratio: float = 0.5  # fraction of traffic on treatment "b"
+    # Pass 1 P3#5: ge/le bounds — pydantic accepts nan, which made
+    # assign_variant raise on int(ratio*100) and 500 EVERY search.
+    interleave_ratio: float = Field(default=0.5, ge=0.0, le=1.0, allow_inf_nan=False)
     interleave_treatment_rrf_weight: float = 0.5
     interleave_salt: str = "v3"
     # P2-1: PDF page-level retrieval (pypdf) + optional vision embedding API
@@ -405,6 +407,13 @@ class Settings(BaseSettings):
     # Mount the MCP streamable-HTTP server at /mcp on this API process
     # (stdio mode runs separately via `python -m app.mcp`).
     mcp_enabled: bool = False
+    # v3.1 Lite Web UI: serve the static export (frontend/out, built with
+    # `npm run build:export`) from THIS process on the same port, so Lite is
+    # one process + one port (http://127.0.0.1:8000/) with no separate :3000.
+    # Full Docker profile keeps the UI as its own container; the API image has
+    # no frontend/out, so the mount is skipped automatically there.
+    serve_ui: bool = True
+    ui_static_dir: str = ""  # empty = auto-detect <repo>/frontend/out
     # Audit round 11: allow RFC1918/private-network scrapers (Prometheus in the
     # compose network) to read /metrics when auth is on. Off by default.
     metrics_allow_private: bool = False

@@ -104,6 +104,9 @@ không ngụy tạo dữ liệu (structured output báo lỗi vào `structured_e
   + dedupe trong một build (có test rebuild idempotent); lưu ý `UniqueConstraint` nhận cột ở positional,
   `name=` là keyword (lỗi ConstraintColumnNotFoundError đã bắt được bằng test); `interleave_stats` load toàn bộ
   bảng → bounded 5000 row; vision embed thêm guard dim == EMBEDDING_DIM và chỉ nhận http(s) base URL.
-- **Đề xuất còn lại (P3, không chặn release):** graph/build đang chạy sync trong request (tối đa 20 LLM call)
-  → nên chuyển sang background job kiểu podcast; stopword fold có thể nuốt một số token đa nghĩa tiếng Việt
-  (vd "cổ"→"co"); voice search end-to-end và RAGAS-lite judge đã có trong backlog docs/23.
+- **Hai mục P3 đã xử lý ở v3.1.0:** (1) `POST /v1/spaces/{slug}/graph/build` chuyển sang background job
+  single-flight (202 + `GET /v1/spaces/{slug}/graph/status`, admit tier `kg`, counts đọc từ bảng nên
+  survives restart) — không còn chạy sync 20 LLM call trong request; (2) stopword check chuyển sang
+  so trên token GỐC trước khi fold (xem `tokenize`), nên "cổ"→"co" không còn bị "có" nuốt — các từ extra
+  va chạm với danh từ có nghĩa (sao/ngôi sao, do/đô, day/dây, ma, bac, nam) đã được loại khỏi danh sách.
+- **Còn lại (P3, không chặn release):** voice search end-to-end và RAGAS-lite judge đã có trong backlog docs/23.

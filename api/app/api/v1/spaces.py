@@ -6,6 +6,9 @@ GET    /v1/spaces/{slug}           -> one space
 PATCH  /v1/spaces/{slug}           -> update fields
 DELETE /v1/spaces/{slug}           -> delete (404 unless owner)
 POST   /v1/spaces/{slug}/crawl     -> map domain roots + scrape pinned URLs into the index
+POST   /v1/spaces/{slug}/graph/build   -> 202 enqueue background KG build (v3.1, single-flight)
+GET    /v1/spaces/{slug}/graph/status  -> build job status / counts from kg tables
+POST   /v1/spaces/{slug}/graph/query   -> entity-centric (local) graph query
 
 Search inside a space: pass ``space=<slug>`` to /v1/search or /v1/answer.
 Tenancy by ``current_api_key_id``; DB down -> list empty storage="memory",
@@ -14,7 +17,9 @@ writes refused 503 (same contract as /v1/prefs/boosts).
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -32,6 +37,7 @@ from app.api.v1.schemas import (
     SpaceUpdateRequest,
 )
 from app.config import get_settings
+from app.core.admission import admit
 from app.core.auth import current_api_key_id
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
@@ -200,6 +206,12 @@ async def delete_space(slug: str) -> dict[str, Any]:
         row = await _get_owned(session, slug)
         if row is None:
             raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
+        # Pass 1 P2#6: SQLite never enforced the kg_* FK CASCADE (no
+        # PRAGMA foreign_keys) — delete children explicitly on BOTH dialects.
+        from app.db.models import KgEdge, KgNode
+
+        await session.execute(delete(KgEdge).where(KgEdge.space_id == row.id))
+        await session.execute(delete(KgNode).where(KgNode.space_id == row.id))
         await session.execute(delete(Space).where(Space.id == row.id))
         await session.commit()
     invalidate(_owner())
@@ -281,10 +293,103 @@ async def crawl_space(slug: str, max_pages: int = Query(default=20, ge=1)) -> di
     return {"space": slug, "targets": len(uniq), "pages": results, "capped": cap}
 
 
-@router.post("/spaces/{slug}/graph/build", response_model=GraphBuildResponse)
+# --- v3.1: background knowledge-graph builds (docs/24 §8 P3) -------------------
+# The build runs up to KG_MAX_DOCS_PER_BUILD LLM calls — far too slow for a
+# request/response cycle. POST /graph/build now enqueues a single-flight
+# background job (same pattern as podcast) and returns 202; GET /graph/status
+# reports the job, or "ready" with counts derived from the kg tables (so the
+# answer survives a restart).
+
+_graph_jobs: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_GRAPH_JOBS_MAX = 64
+_graph_tasks: set[asyncio.Task[None]] = set()
+
+
+def reset_graph_state() -> None:
+    """Test isolation: drop the graph job registry."""
+    _graph_jobs.clear()
+
+
+def _graph_key(owner: str, slug: str) -> str:
+    return f"{owner}:{slug}"
+
+
+def _graph_response(owner: str, slug: str) -> GraphBuildResponse:
+    job = _graph_jobs.get(_graph_key(owner, slug))
+    if job is not None:
+        return GraphBuildResponse(
+            space=slug,
+            status=str(job.get("status", "none")),
+            docs=int(job.get("docs") or 0),
+            nodes=int(job.get("nodes") or 0),
+            edges=int(job.get("edges") or 0),
+            error=job.get("error"),
+            created_at=job.get("created_at"),
+        )
+    return GraphBuildResponse(space=slug, status="none")
+
+
+async def _run_graph_build(owner: str, slug: str) -> None:
+    """Background job: extract entities/relations from the space's crawled docs
+    (bounded LLM calls) into kg_nodes/kg_edges, then record the counts."""
+    key = _graph_key(owner, slug)
+    settings = get_settings()
+    try:
+        async with deps.get_session_factory()() as session:
+            row = await _get_owned(session, slug)
+            if row is None:
+                raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
+            from app.retrieval.graph import build_space_graph
+
+            gateway = deps.get_gateway()
+            model = getattr(gateway, "default_quick_model", settings.llm_quick_model)
+            stats = await build_space_graph(
+                session,
+                row,
+                gateway,
+                settings=settings,
+                max_docs=settings.kg_max_docs_per_build,
+                max_nodes=settings.kg_max_nodes_per_build,
+                model=model,
+            )
+        invalidate(owner)
+        _graph_jobs.setdefault(key, {"status": "pending"}).update(status="ready", **stats)
+        logger.info("kg_build_ready", owner=owner, space=slug, **stats)
+    except asyncio.CancelledError:
+        job = _graph_jobs.setdefault(key, {"status": "running"})
+        if job.get("status") in ("pending", "running"):
+            job.update(status="cancelled", error="kg_build_cancelled")
+        raise
+    except Exception as exc:
+        logger.warning(
+            "kg_build_failed", space=slug, error=type(exc).__name__, detail=str(exc)[:300]
+        )
+        job = _graph_jobs.setdefault(key, {"status": "running"})
+        job.update(status="error", error="kg_build_failed")
+
+
+async def _graph_db_counts(session: Any, space_id: Any) -> tuple[int, int]:
+    from sqlalchemy import func
+
+    from app.db.models import KgEdge, KgNode
+
+    n = (
+        await session.execute(
+            select(func.count()).select_from(KgNode).where(KgNode.space_id == space_id)
+        )
+    ).scalar() or 0
+    e = (
+        await session.execute(
+            select(func.count()).select_from(KgEdge).where(KgEdge.space_id == space_id)
+        )
+    ).scalar() or 0
+    return int(n), int(e)
+
+
+@router.post("/spaces/{slug}/graph/build", response_model=GraphBuildResponse, status_code=202)
 async def build_graph(slug: str) -> GraphBuildResponse:
-    """docs/20 P2-2: extract entities/relations from the space's crawled docs
-    (bounded LLM calls) into kg_nodes/kg_edges."""
+    """docs/20 P2-2 + v3.1: enqueue a background knowledge-graph build for the
+    space (single-flight per owner+space); poll GET /graph/status."""
     settings = get_settings()
     if not settings.kg_enabled:
         raise MetaSearchError(
@@ -292,25 +397,58 @@ async def build_graph(slug: str) -> GraphBuildResponse:
         )
     if not await _ensure_table():
         raise MetaSearchError(ErrorCode.INTERNAL, "spaces storage unavailable", status_code=503)
+    owner = _owner()
     async with deps.get_session_factory()() as session:
         row = await _get_owned(session, slug)
         if row is None:
             raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
-        from app.retrieval.graph import build_space_graph
+    key = _graph_key(owner, slug)
+    async with admit("kg"):
+        if _graph_jobs.get(key, {}).get("status") in ("pending", "running"):
+            return _graph_response(owner, slug)
+        # Single-flight: mark running SYNCHRONOUSLY before scheduling.
+        _graph_jobs[key] = {
+            "status": "running",
+            "created_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "docs": 0,
+            "nodes": 0,
+            "edges": 0,
+        }
+        _graph_jobs.move_to_end(key)
+        while len(_graph_jobs) > _GRAPH_JOBS_MAX:
+            _graph_jobs.popitem(last=False)
+        task = asyncio.create_task(_run_graph_build(owner, slug))
+        _graph_tasks.add(task)
+        task.add_done_callback(_graph_tasks.discard)
+    return _graph_response(owner, slug)
 
-        gateway = deps.get_gateway()
-        model = getattr(gateway, "default_quick_model", settings.llm_quick_model)
-        stats = await build_space_graph(
-            session,
-            row,
-            gateway,
-            settings=settings,
-            max_docs=settings.kg_max_docs_per_build,
-            max_nodes=settings.kg_max_nodes_per_build,
-            model=model,
+
+@router.get("/spaces/{slug}/graph/status", response_model=GraphBuildResponse)
+async def graph_status(slug: str) -> GraphBuildResponse:
+    """Job status for the space's graph build; when no job is known but kg rows
+    exist, report "ready" with counts read from the tables (restart-safe)."""
+    settings = get_settings()
+    if not settings.kg_enabled:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST, "knowledge graph is disabled", status_code=400
         )
-    invalidate(_owner())
-    return GraphBuildResponse(space=slug, **stats)
+    if not await _ensure_table():
+        raise MetaSearchError(ErrorCode.INTERNAL, "spaces storage unavailable", status_code=503)
+    owner = _owner()
+    job = _graph_jobs.get(_graph_key(owner, slug))
+    if job is not None and job.get("status") in ("pending", "running"):
+        return _graph_response(owner, slug)
+    async with deps.get_session_factory()() as session:
+        row = await _get_owned(session, slug)
+        if row is None:
+            raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
+        n_nodes, n_edges = await _graph_db_counts(session, row.id)
+    if job is not None:
+        return _graph_response(owner, slug)
+    if n_nodes or n_edges:
+        return GraphBuildResponse(space=slug, status="ready", nodes=n_nodes, edges=n_edges)
+    return GraphBuildResponse(space=slug, status="none")
 
 
 @router.post("/spaces/{slug}/graph/query", response_model=GraphQueryResponse)

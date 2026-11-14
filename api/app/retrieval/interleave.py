@@ -59,7 +59,12 @@ async def interleave_stats(session: Any) -> dict[str, Any]:
     )
     stats: dict[str, dict[str, float]] = {}
     for row in rows:
-        payload = row.payload or {}
+        # Pass 2 P3#4: a non-dict payload row (legacy/seeded JSON) previously
+        # raised AttributeError inside the aggregation — silently emptying
+        # ALL stats via the endpoint catch.
+        if not isinstance(row.payload, dict):
+            continue
+        payload = row.payload
         variant = str(payload.get("variant") or "unknown")
         bucket = stats.setdefault(variant, {"up": 0.0, "down": 0.0, "total": 0.0})
         bucket["total"] += 1

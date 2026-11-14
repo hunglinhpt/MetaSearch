@@ -7,6 +7,7 @@ import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -255,7 +256,75 @@ def create_app() -> FastAPI:
     app.include_router(v1_router)
     if settings.mcp_enabled:
         _mount_mcp(app)
+    _mount_ui(app, settings)
     return app
+
+
+# Path prefixes that must NEVER be answered by the SPA fallback — their 404/405
+# semantics are part of the API contract (and /mcp relies on Starlette's
+# redirect_slashes to reach its mount, which a catch-all mount would break).
+_UI_EXCLUDED_PREFIXES = (
+    "/v1",
+    "/ops",
+    "/mcp",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/readyz",
+    "/metrics",
+    "/.well-known",
+)
+
+
+class _UiSpaMiddleware:
+    """v3.1 Lite Web UI: serve frontend/out (static export) for GET/HEAD requests
+    that NO registered route matches. Implemented as middleware (not a Mount at
+    "/") so routing semantics are untouched: API 404/405 stay as they were, and
+    /mcp still gets its redirect_slashes behavior. Static files need no auth —
+    the browser must load the page before it can present an API key; every /v1
+    call stays behind the normal auth dependency.
+    """
+
+    def __init__(self, app: Any, ui_dir: Path) -> None:
+        self.app = app
+        self.ui_dir = ui_dir
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and scope["method"] in ("GET", "HEAD"):
+            path = scope.get("path", "")
+            if not path.startswith(_UI_EXCLUDED_PREFIXES):
+                from starlette.routing import Match
+
+                for route in scope["app"].routes:
+                    match, _child = route.matches(scope)
+                    if match == Match.FULL:
+                        break
+                else:
+                    # No route owns this path -> it is UI territory.
+                    from fastapi.staticfiles import StaticFiles
+
+                    await StaticFiles(directory=str(self.ui_dir), html=True)(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
+
+
+def _mount_ui(app: FastAPI, settings: Any) -> None:
+    """v3.1 Lite Web UI: serve frontend/out (static export) when present.
+
+    Missing dir (Docker API image, or UI not built yet) -> skipped, API-only mode.
+    """
+    if not settings.serve_ui:
+        return
+    if settings.ui_static_dir:
+        ui_dir = Path(settings.ui_static_dir)
+    else:
+        # api/app/main.py -> repo root is parents[2]
+        ui_dir = Path(__file__).resolve().parents[2] / "frontend" / "out"
+    if not (ui_dir / "index.html").is_file():
+        logger.info("ui_static_not_found", path=str(ui_dir), note="API-only mode")
+        return
+    app.add_middleware(_UiSpaMiddleware, ui_dir=ui_dir)
+    logger.info("ui_static_mounted", path=str(ui_dir))
 
 
 def _mcp_auth_guard(inner):

@@ -29,7 +29,9 @@ if ($Remove) {
 
 $envArg = ""
 if ($EnvFile) { $envArg = " -EnvFile `"$EnvFile`"" }
-$base = "-NoProfile -ExecutionPolicy Bypass -File `"$Manager`""
+# -WindowStyle Hidden: the watchdog fires every 5 min and on every wake -
+# without this each firing pops a console window into the interactive session.
+$base = "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$Manager`""
 
 $settings = New-ScheduledTaskSettingsSet -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) `
     -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `

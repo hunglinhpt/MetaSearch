@@ -15,7 +15,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -51,9 +51,19 @@ def parse_graph_json(text: str, *, max_nodes: int = 200) -> dict[str, list[dict]
         obj = json.loads(match.group(0))
     except json.JSONDecodeError:
         return {"nodes": [], "edges": []}
+    raw_nodes = obj.get("nodes")
+    raw_edges = obj.get("edges")
+    # Pass 1 P2#5: type-confused LLM JSON ({"nodes": "abc"} / null / dict) must
+    # return empty — the function's contract is "never raises".
+    if not isinstance(raw_nodes, list):
+        raw_nodes = []
+    if not isinstance(raw_edges, list):
+        raw_edges = []
     nodes: list[dict] = []
     seen: set[str] = set()
-    for n in obj.get("nodes", [])[:max_nodes]:
+    for n in raw_nodes[:max_nodes]:
+        if not isinstance(n, dict):
+            continue
         label = fold_diacritics(str(n.get("label") or "").strip().lower())[:120]
         if not label or label in seen:
             continue
@@ -66,7 +76,9 @@ def parse_graph_json(text: str, *, max_nodes: int = 200) -> dict[str, list[dict]
             }
         )
     edges: list[dict] = []
-    for e in obj.get("edges", [])[: max_nodes * 2]:
+    for e in raw_edges[: max_nodes * 2]:
+        if not isinstance(e, dict):
+            continue
         s = fold_diacritics(str(e.get("source") or "").strip().lower())[:120]
         t = fold_diacritics(str(e.get("target") or "").strip().lower())[:120]
         r = (
@@ -112,24 +124,28 @@ async def build_space_graph(
     domains = [d.lower().removeprefix("www.") for d in (space.domains or [])]
     docs: list[Document] = []
     if domains:
+        # Pass 1 P2#4: match the space-search scope semantics (exact host OR
+        # any subdomain) — exact-match only left the KG partial relative to
+        # the space's own search scope.
+        like = [f"%.{d}" for d in domains]
+        stmt = select(Document).where(
+            or_(Document.domain.in_(domains), *[Document.domain.like(p) for p in like])
+        )
         rows = (
-            (
-                await session.execute(
-                    select(Document)
-                    .where(Document.domain.in_(domains))
-                    .order_by(Document.fetched_at.desc())
-                    .limit(max_docs)
-                )
-            )
+            (await session.execute(stmt.order_by(Document.fetched_at.desc()).limit(max_docs)))
             .scalars()
             .all()
         )
         docs = list(rows)
 
-    ins = _insert(session)
-    n_nodes = n_edges = n_docs = 0
+    # Pass 1 P1: run ALL LLM extraction FIRST with zero DB writes open — the
+    # old loop held a write transaction (SQLite write lock / PG idle-in-txn)
+    # across up to 20 sequential LLM calls. Then one short bulk transaction.
+    n_docs = 0
     seen_nodes: set[str] = set()
     seen_edges: set[tuple[str, str, str]] = set()
+    node_rows: list[dict[str, Any]] = []
+    edge_rows: list[dict[str, Any]] = []
     for doc in docs:
         if not doc.content_md:
             continue
@@ -138,37 +154,51 @@ async def build_space_graph(
         for node in graph["nodes"]:
             if node["label"] in seen_nodes:
                 continue  # dedupe within one build (unique constraint dedupes across builds)
+            # Pass 1 P2#2: enforce the BUILD-WIDE budget (the per-doc cap let
+            # one build write 20x200 nodes).
+            if len(seen_nodes) >= max_nodes:
+                break
             seen_nodes.add(node["label"])
-            await session.execute(
-                ins(KgNode)
-                .values(
-                    space_id=space.id,
-                    owner=space.api_key_id,
-                    label=node["label"],
-                    type=node["type"] or None,
-                    description=node["description"] or None,
-                )
-                .on_conflict_do_nothing(index_elements=["space_id", "label"])
+            node_rows.append(
+                {
+                    "space_id": space.id,
+                    "owner": space.api_key_id,
+                    "label": node["label"],
+                    "type": node["type"] or None,
+                    "description": node["description"] or None,
+                }
             )
-            n_nodes += 1
         for edge in graph["edges"]:
             key = (edge["source"], edge["target"], edge["relation"])
             if key in seen_edges:
                 continue
+            if edge["source"] not in seen_nodes or edge["target"] not in seen_nodes:
+                continue  # edge references a node dropped by the budget cap
             seen_edges.add(key)
-            await session.execute(
-                ins(KgEdge)
-                .values(
-                    space_id=space.id,
-                    source=edge["source"],
-                    target=edge["target"],
-                    relation=edge["relation"],
-                )
-                .on_conflict_do_nothing(index_elements=["space_id", "source", "target", "relation"])
+            edge_rows.append(
+                {
+                    "space_id": space.id,
+                    "source": edge["source"],
+                    "target": edge["target"],
+                    "relation": edge["relation"],
+                }
             )
-            n_edges += 1
+        if len(seen_nodes) >= max_nodes:
+            break
+
+    ins = _insert(session)
+    for row in node_rows:
+        await session.execute(
+            ins(KgNode).values(**row).on_conflict_do_nothing(index_elements=["space_id", "label"])
+        )
+    for row in edge_rows:
+        await session.execute(
+            ins(KgEdge)
+            .values(**row)
+            .on_conflict_do_nothing(index_elements=["space_id", "source", "target", "relation"])
+        )
     await session.commit()
-    return {"docs": n_docs, "nodes": n_nodes, "edges": n_edges}
+    return {"docs": n_docs, "nodes": len(node_rows), "edges": len(edge_rows)}
 
 
 async def query_graph(
@@ -179,8 +209,19 @@ async def query_graph(
     from app.db.models import KgEdge, KgNode
 
     q_terms = [t for t in tokenize(query) if len(t) > 2]
+    # Pass 1 P2#3: bound the load in SQL (ORDER BY recency + LIMIT) instead of
+    # loading the space's ENTIRE graph into Python on every query.
     rows = (
-        (await session.execute(select(KgNode).where(KgNode.space_id == space.id))).scalars().all()
+        (
+            await session.execute(
+                select(KgNode)
+                .where(KgNode.space_id == space.id)
+                .order_by(KgNode.created_at.desc())
+                .limit(500)
+            )
+        )
+        .scalars()
+        .all()
     )
     matched: list[KgNode] = []
     for node in rows:
@@ -194,7 +235,16 @@ async def query_graph(
         matched = list(rows[:5])
     labels = {n.label for n in matched}
     edge_rows = (
-        (await session.execute(select(KgEdge).where(KgEdge.space_id == space.id))).scalars().all()
+        (
+            await session.execute(
+                select(KgEdge)
+                .where(KgEdge.space_id == space.id)
+                .order_by(KgEdge.created_at.desc())
+                .limit(500)
+            )
+        )
+        .scalars()
+        .all()
     )
     edges = [e for e in edge_rows if (e.source in labels or e.target in labels)][:limit_edges]
     # Include neighbor nodes of matched edges.

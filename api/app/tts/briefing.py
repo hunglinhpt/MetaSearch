@@ -33,9 +33,9 @@ BRIEFING_PRESETS: tuple[tuple[str, str, int], ...] = (
 _BRIEFING_FILE_RE = re.compile(r"^briefing-\d{4}-\d{2}-\d{2}\.mp3$")
 # Orphaned temp files from a crash mid-write — retention removes these too
 # (daily + personal prefixes).
-_BRIEFING_TMP_RE = re.compile(r"^(?:briefing|personal-[0-9a-f]{8})-\d{4}-\d{2}-\d{2}\.mp3\.tmp$")
+_BRIEFING_TMP_RE = re.compile(r"^(?:briefing|personal-[0-9a-f]{16})-\d{4}-\d{2}-\d{2}\.mp3\.tmp$")
 # docs/20 P2-5: personalized podcast files (personal-<ownerhash8>-<date>.mp3).
-_PERSONAL_FILE_RE = re.compile(r"^personal-[0-9a-f]{8}-\d{4}-\d{2}-\d{2}\.mp3$")
+_PERSONAL_FILE_RE = re.compile(r"^personal-[0-9a-f]{16}-\d{4}-\d{2}-\d{2}\.mp3$")
 
 
 @dataclass(slots=True)
@@ -144,7 +144,7 @@ def cleanup_retention(
         elif _PERSONAL_FILE_RE.match(p.name):
             # personal-<8 hex>-<day>.mp3: the date starts after "personal-" +
             # 8 hex chars + "-" (index("-", 8) would wrongly match the first "-").
-            prefix_len = len("personal-") + 8 + 1
+            prefix_len = len("personal-") + 16 + 1
         else:
             continue
         try:

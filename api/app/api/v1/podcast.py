@@ -386,7 +386,10 @@ def _personal_owner() -> str:
 
 
 def _personal_prefix(owner: str) -> str:
-    return f"personal-{hashlib.sha256(owner.encode('utf-8')).hexdigest()[:8]}"
+    # Pass 1 P2#2: 32 bits collide at ~77k owners (birthday bound) and the
+    # prefix is the ONLY tenant isolation for personal audio — widen to 128
+    # bits so cross-owner reads/single-flight hijack are infeasible.
+    return f"personal-{hashlib.sha256(owner.encode('utf-8')).hexdigest()[:16]}"
 
 
 def _personal_key(owner: str, day: date) -> str:

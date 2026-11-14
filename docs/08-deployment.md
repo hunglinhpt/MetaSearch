@@ -14,8 +14,27 @@ cd api
 python -m venv .venv && .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 copy ..\deploy\.env.lite.example .env        # điền OPENAI_API_KEY nếu muốn answer
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
-# Swagger: http://localhost:8000/docs — Web UI: cd frontend && npm run dev
+# Swagger: http://localhost:8000/docs
 ```
+
+### Web UI trong bản Lite (từ v3.1.0)
+
+Lite không chỉ là API: build static export một lần, API tự phục vụ UI trên **cùng một
+cổng** (không tiến trình thứ hai, không cửa sổ terminal thứ hai):
+
+```powershell
+cd frontend && npm ci && npm run build:export   # sinh ra frontend/out (đã gitignore)
+# quay lại api, chạy như trên -> Web UI: http://127.0.0.1:8000/  (cùng origin với /v1)
+```
+
+- API mount `frontend/out` tại `/` (sau mọi route `/v1`, `/ops`, `/readyz`, `/docs`) khi
+  `SERVE_UI=true` và thư mục tồn tại; nếu thiếu thì chế độ API-only như cũ. Static không
+  cần auth (trang phải load trước khi nhập API key), mọi `/v1` vẫn sau auth.
+- UI build với `NEXT_PUBLIC_API_BASE_URL=""` nên gọi `/v1/...` same-origin; bản Docker
+  (standalone trên :3000) không đổi.
+- `metasearch-lite.ps1 start` tự build UI một lần nếu `frontend/out` còn thiếu (khi có
+  npm), log ở `api\.lite.ui-build.log`.
+- `metasearch-lite.ps1 open -Port 8000` mở UI trong trình duyệt.
 
 ### Chất lượng đảm bảo thế nào
 
@@ -47,6 +66,11 @@ Script trong `scripts/windows/`, chạy được trên PowerShell 5.1:
 
 - Log ở `api\.lite.log`, `api\.lite.err.log`, xoay khi quá 10 MB; nhật ký của script ở `api\.lite.manager.log`.
 - `check` khởi động lại dịch vụ khi `/readyz` không trả 200 trong 30 giây.
+- **Không popup terminal nữa (từ v3.1.0):** scheduled task chạy `powershell -WindowStyle
+  Hidden` nên watchdog (mỗi 5 phút + khi máy thức dậy) không mở cửa sổ console; thêm một
+  mutex theo port (`Local\MetaSearchLiteManager-<port>`) trong `metasearch-lite.ps1` để
+  các lần chạy chồng nhau (tick 5 phút trùng sự kiện wake) tự bỏ qua thay vì chạy đè —
+  đã có một phiên đang chạy thì không mở/nhân thêm phiên khác.
 - An toàn tiến trình: `metasearch-lite.ps1` và `measure-lite.ps1` luôn kiểm tra dòng lệnh tiến trình qua Win32_Process (`uvicorn ... app.main:app` và `--port`) trước khi dừng hoặc đo đạc, loại bỏ hoàn toàn rủi ro PID file cũ sau khi crash/reboot trỏ nhầm và kill tiến trình Python khác.
 - Đo trên máy chạy thật (`04-quality-checklist` C11-C13): `measure-lite.ps1 idle`, `restart`, và `wake` sau mỗi lần máy thức. Kết quả nối vào `api\.lite.measure.log`.
 

@@ -179,7 +179,30 @@ class ResponseFormat(BaseModel):
     """
 
     type: Literal["json_schema"] = "json_schema"
+    # Pass 1 P2#8: cap the SERIALIZED schema (a multi-MB schema is parsed +
+    # validated inline on the loop before any LLM call).
     json_schema: dict[str, Any] = Field(min_length=1)
+
+    @field_validator("json_schema")
+    @classmethod
+    def _validate_schema_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        import json as _json
+
+        raw = _json.dumps(value, ensure_ascii=False)
+        if len(raw) > 32_000:
+            raise ValueError(f"json_schema too large: {len(raw)} chars (cap 32000)")
+        depth = 0
+        max_depth = 0
+        for ch in raw:
+            if ch in "{[":
+                depth += 1
+                max_depth = max(max_depth, depth)
+            elif ch in "}]":
+                depth -= 1
+        if max_depth > 32:
+            raise ValueError(f"json_schema nesting too deep: {max_depth} (cap 32)")
+        return value
+
     # Optional human-readable name (Exa-style); echoed back in the response.
     name: str = Field(default="result", max_length=100)
 
@@ -314,7 +337,24 @@ class MemoryCreateRequest(BaseModel):
     weight: float = Field(default=0.0, ge=-1.0, le=1.0)
     # docs/20 P2-4: feedback may carry {"variant": "a"|"b", "query_id": ...}
     # so /v1/ops/interleave can aggregate per-variant 👍/👎.
+    # Pass 1 P2#3: payload is bounded (≤1KB serialized) and `variant` is
+    # constrained to "a"|"b" — unbounded payloads were echoed back as
+    # arbitrary aggregation keys in /v1/ops/interleave.
     payload: dict[str, Any] | None = None
+
+    @field_validator("payload")
+    @classmethod
+    def _validate_payload(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        import json as _json
+
+        if value is None:
+            return None
+        variant = value.get("variant")
+        if variant is not None and variant not in ("a", "b"):
+            raise ValueError("payload.variant must be 'a' or 'b'")
+        if len(_json.dumps(value, ensure_ascii=False)) > 1024:
+            raise ValueError("payload too large (cap 1KB serialized)")
+        return value
 
 
 class MemoryOut(BaseModel):
@@ -444,12 +484,21 @@ class CrawlResponse(BaseModel):
 
 
 class GraphBuildResponse(BaseModel):
-    """docs/20 P2-2: result of building a Space's knowledge graph."""
+    """docs/20 P2-2: knowledge-graph build job for a Space.
+
+    POST /graph/build enqueues the build and returns 202 with
+    ``status="running"`` (counts 0); poll GET /graph/status — when the job
+    finishes it reports ``status="ready"`` with the real counts (also derived
+    from the kg tables, so it survives a restart).
+    """
 
     space: str
-    docs: int
-    nodes: int
-    edges: int
+    status: str = "ready"  # running | ready | error | none
+    docs: int = 0
+    nodes: int = 0
+    edges: int = 0
+    error: str | None = None
+    created_at: str | None = None
 
 
 class GraphQueryRequest(BaseModel):

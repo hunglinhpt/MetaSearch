@@ -1537,30 +1537,57 @@
         "type": "object"
       },
       "GraphBuildResponse": {
-        "description": "docs/20 P2-2: result of building a Space's knowledge graph.",
+        "description": "docs/20 P2-2: knowledge-graph build job for a Space.\n\nPOST /graph/build enqueues the build and returns 202 with\n``status=\"running\"`` (counts 0); poll GET /graph/status — when the job\nfinishes it reports ``status=\"ready\"`` with the real counts (also derived\nfrom the kg tables, so it survives a restart).",
         "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
           "docs": {
+            "default": 0,
             "title": "Docs",
             "type": "integer"
           },
           "edges": {
+            "default": 0,
             "title": "Edges",
             "type": "integer"
           },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
           "nodes": {
+            "default": 0,
             "title": "Nodes",
             "type": "integer"
           },
           "space": {
             "title": "Space",
             "type": "string"
+          },
+          "status": {
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
           }
         },
         "required": [
-          "space",
-          "docs",
-          "nodes",
-          "edges"
+          "space"
         ],
         "title": "GraphBuildResponse",
         "type": "object"
@@ -5483,7 +5510,7 @@
     },
     "/v1/spaces/{slug}/graph/build": {
       "post": {
-        "description": "docs/20 P2-2: extract entities/relations from the space's crawled docs\n(bounded LLM calls) into kg_nodes/kg_edges.",
+        "description": "docs/20 P2-2 + v3.1: enqueue a background knowledge-graph build for the\nspace (single-flight per owner+space); poll GET /graph/status.",
         "operationId": "build_graph_v1_spaces__slug__graph_build_post",
         "parameters": [
           {
@@ -5497,7 +5524,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5573,6 +5600,50 @@
           }
         },
         "summary": "Query Graph Endpoint",
+        "tags": [
+          "v1",
+          "spaces"
+        ]
+      }
+    },
+    "/v1/spaces/{slug}/graph/status": {
+      "get": {
+        "description": "Job status for the space's graph build; when no job is known but kg rows\nexist, report \"ready\" with counts read from the tables (restart-safe).",
+        "operationId": "graph_status_v1_spaces__slug__graph_status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphBuildResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Graph Status",
         "tags": [
           "v1",
           "spaces"

@@ -34,6 +34,25 @@ def validate_instance(instance: Any, schema: dict[str, Any]) -> list[str]:
         return [f"{list(exc.absolute_path)}: {exc.message}"]
     except jsonschema.SchemaError as exc:
         return [f"schema: {exc.message}"]
+    # Audit Pass 1 P1 (round 14): caller-supplied schemas can raise
+    # _WrappedReferencingError (unresolvable $ref) or RecursionError
+    # (recursive schema + deep LLM JSON) — both escaped the two catches
+    # above and 500'd the whole search, breaking the documented fail-open.
+    except Exception as exc:
+        return [f"validator: {type(exc).__name__}: {exc}"][:1]
+
+
+def check_schema(schema: dict[str, Any]) -> str | None:
+    """Cheap static check at request entry (Pass 1 P3#9): reject malformed
+    schemas BEFORE burning the paid LLM call. Returns an error message or
+    None when the schema is usable."""
+    try:
+        import jsonschema as _js
+
+        _js.validators.validator_for(schema).check_schema(schema)
+        return None
+    except Exception as exc:
+        return f"schema: {type(exc).__name__}: {exc}"[:200]
 
 
 def _schema_prompt(query: str, schema: dict[str, Any], context: str) -> list[dict[str, str]]:

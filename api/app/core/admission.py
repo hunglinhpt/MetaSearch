@@ -36,6 +36,8 @@ _TIER_CONFIG: dict[str, tuple[int, float]] = {
     "tts": (8, 1.0),
     "market": (16, 1.0),
     "watchlist": (4, 1.0),
+    # v3.1: background knowledge-graph builds (docs/24 §8 P3 — off the request path).
+    "kg": (4, 1.0),
 }
 
 _semaphores: dict[str, asyncio.Semaphore] = {}

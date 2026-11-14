@@ -1,5 +1,33 @@
 # Changelog
 
+## [3.1.0] - 2026-11-14
+
+### Added — Lite Web UI + job runner không popup (docs/08 §Lite)
+
+- Bản Lite giờ có cả Web UI, không chỉ API: `cd frontend && npm ci && npm run build:export`
+  (`METASEARCH_UI_EXPORT=1` → `output: "export"` trong next.config, `NEXT_PUBLIC_API_BASE_URL=""`
+  để gọi same-origin) sinh `frontend/out`; API mount tại `/` khi `SERVE_UI=true` và dir tồn tại
+  (`UI_STATIC_DIR` để override, mặc định auto-detect `<repo>/frontend/out`). Mount sau mọi route
+  `/v1|/ops|/readyz|/docs`, static không cần auth, API vẫn sau auth. Bản Docker (standalone :3000)
+  không đổi vì image API không có `frontend/out`. Test: `tests/test_v31_lite_ui.py`.
+- `scripts/windows/install-task.ps1`: watchdog chạy `powershell -WindowStyle Hidden` — không còn
+  popup cửa sổ console mỗi 5 phút / mỗi lần máy thức dậy.
+- `scripts/windows/metasearch-lite.ps1`: mutex theo port (`Local\MetaSearchLiteManager-<port>`)
+  — đã có một phiên manager đang chạy thì phiên khác tự bỏ qua (không nhân bản chạy/terminal);
+  `start` tự build UI một lần nếu `frontend/out` thiếu (log `.lite.ui-build.log`); thêm lệnh
+  `open` (mở `http://127.0.0.1:<port>/` trong trình duyệt). Cả 2 script vẫn ASCII-only, parse OK
+  trên PowerShell 5.1.
+
+### Changed — 2 mục P3 của docs/24 §8
+
+- `POST /v1/spaces/{slug}/graph/build` nay trả **202** và chạy nền single-flight theo owner+space
+  (admit tier `kg` mới, tối đa 4 build đồng thời); thêm `GET /v1/spaces/{slug}/graph/status`
+  (counts đọc từ `kg_nodes`/`kg_edges` nên survives restart). Không còn chạy sync tối đa 20 LLM
+  call trong một request.
+- vi-first tokenize: stopword check chuyển sang so trên **token gốc trước khi fold** — folding cả
+  stopword list làm "cổ"→"co" chạm "có"→"co" và nuốt từ có nghĩa ("cổ phiếu", "thị trường"); các từ
+  extra va chạm với danh từ (sao/ngôi sao, do/đô, day/dây, ma, bac, nam) đã loại khỏi danh sách.
+
 ## [3.0.0] - 2026-11-14
 
 ### Added (docs/20 P2 wave — docs/24)

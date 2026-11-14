@@ -6,13 +6,19 @@
 #   metasearch-lite.ps1 status  [-Port 8000]                   process and /readyz
 #   metasearch-lite.ps1 check   [-Port 8000] [-EnvFile path]   self-check: restart when /readyz
 #                                                              does not answer in time
+#   metasearch-lite.ps1 open    [-Port 8000]                   open the Web UI in the browser
 #
 # Settings come from api\.env (copy deploy\.env.lite.example), or from -EnvFile.
 # The server binds 127.0.0.1 only, with auth on. It refuses to start on a port that another
 # process already holds, so it can never take over someone else's service.
+#
+# v3.1: the Web UI (frontend\out, built once with `npm run build:export`) is served by the
+# API itself on the same port - no second process, no second terminal. The scheduled
+# watchdog runs this script hidden and a per-port mutex makes overlapping invocations
+# (5-min tick + wake event) skip instead of piling up new console windows.
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("start", "stop", "restart", "status", "check")]
+    [ValidateSet("start", "stop", "restart", "status", "check", "open")]
     [string]$Action = "status",
     [int]$Port = 8000,
     [string]$EnvFile = "",
@@ -27,6 +33,15 @@ $Python = Join-Path $ApiDir ".venv\Scripts\python.exe"
 $PidFile = Join-Path $env:TEMP "metasearch-lite-$Port.pid"
 $LogFile = Join-Path $ApiDir ".lite.log"
 $ErrFile = Join-Path $ApiDir ".lite.err.log"
+
+# v3.1 single-run guard: a named per-port mutex. The watchdog fires every 5 min AND on
+# wake; if another manager invocation is already active, this one exits quietly instead
+# of stacking another run (and another console window) on top.
+$ManagerMutex = New-Object System.Threading.Mutex($false, "Local\MetaSearchLiteManager-$Port")
+if (-not $ManagerMutex.WaitOne(0)) {
+    Write-Host "another metasearch-lite manager run is active on port $Port; skipping this invocation"
+    exit 0
+}
 
 function Write-Log([string]$Message) {
     $line = "{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
@@ -99,6 +114,30 @@ function Import-EnvFile([string]$Path) {
     $env:METASEARCH_ENV_FILE = (Resolve-Path $Path).Path
 }
 
+function Ensure-LiteUi {
+    # v3.1: build the Web UI static export ONCE (frontend\out is gitignored). The API
+    # serves it on the same port, so Lite needs no separate UI process/terminal.
+    $uiIndex = Join-Path $Root "frontend\out\index.html"
+    if (Test-Path $uiIndex) { return }
+    $npm = Get-Command npm -ErrorAction SilentlyContinue
+    if (-not $npm) {
+        Write-Log "Web UI not built (frontend\out missing) and npm not found; build once: cd frontend; npm ci; npm run build:export"
+        return
+    }
+    $uiLog = Join-Path $ApiDir ".lite.ui-build.log"
+    Write-Log "building Web UI once into frontend\out (log: $uiLog) ..."
+    $frontendDir = Join-Path $Root "frontend"
+    if (-not (Test-Path (Join-Path $frontendDir "node_modules"))) {
+        & npm --prefix $frontendDir ci *> $uiLog
+    }
+    & npm --prefix $frontendDir run build:export *> $uiLog
+    if (Test-Path $uiIndex) {
+        Write-Log "Web UI ready -> http://127.0.0.1:$Port/"
+    } else {
+        Write-Log "Web UI build failed (see $uiLog); API-only mode still works on port $Port"
+    }
+}
+
 function Start-Lite {
     $existing = Get-LiteProcess
     if ($existing) { Write-Log "already running (PID $($existing.Id))"; return }
@@ -112,6 +151,7 @@ function Start-Lite {
     }
     Import-EnvFile $EnvFile
     Invoke-LogRotation
+    Ensure-LiteUi
     $env:API_HOST = "127.0.0.1"
     $env:AUTH_ENABLED = "true"
     $proc = Start-Process -FilePath $Python `
@@ -150,7 +190,8 @@ switch ($Action) {
         else { Write-Host "running (PID $($proc.Id)), /readyz not ready"; exit 4 }
     }
     "check" {
-        # Run by the scheduled watchdog, also right after the machine wakes up.
+        # Run by the scheduled watchdog (hidden window), also right after the machine
+        # wakes up. The per-port mutex above already dropped overlapping invocations.
         Invoke-LogRotation
         $proc = Get-LiteProcess
         if (-not $proc) { Write-Log "check: not running, starting"; Start-Lite; return }
@@ -160,5 +201,11 @@ switch ($Action) {
             Start-Sleep -Seconds 2
             Start-Lite
         }
+    }
+    "open" {
+        # Open the Web UI (served by the API on the same port) in the default browser.
+        if (-not (Get-LiteProcess)) { Write-Host "not running"; exit 3 }
+        Start-Process "http://127.0.0.1:$Port/"
+        Write-Host "opened http://127.0.0.1:$Port/"
     }
 }

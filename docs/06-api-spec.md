@@ -187,7 +187,11 @@ New endpoints:
 - v3.0: `POST /v1/spaces/{slug}/graph/build`, `POST /v1/spaces/{slug}/graph/query`
   — knowledge graph theo Space (kg_nodes/kg_edges, trích bằng LLM rẻ, query
   entity-centric 1-hop, `answer=true` để tổng hợp trả lời; cần `KG_ENABLED=true`).
-  Cost 5.
+  Cost 5. v3.1: `build` trả 202 và chạy nền (single-flight theo owner+space),
+  thêm `GET /v1/spaces/{slug}/graph/status` (counts đọc từ bảng, survives restart).
+- v3.1 Lite: API tự phục vụ Web UI static (`frontend/out`, build bằng
+  `npm run build:export`) tại `/` trên cùng cổng khi `SERVE_UI=true` — Lite là một
+  tiến trình duy nhất, UI ở `http://127.0.0.1:8000/`.
 - v3.0: `GET /v1/ops/interleave` — thống kê A/B interleaving theo variant (chỉ đếm
   feedback 👍/👎 explicit có `payload.variant`). Cost 1.
 - v3.0: `POST /v1/search` nhận thêm `response_format={type:"json_schema", json_schema, name}`

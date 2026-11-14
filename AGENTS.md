@@ -13,7 +13,13 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-14 — v3.0.0 Wave P2 docs/24: PDF page retrieval, per-Space KG, vi-first BM25 + VI golden eval, online interleaving, personalized podcast, structured JSON output, domain tiers)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-14 — v3.1.0 Lite Web UI + no-popup job runner + 2 fix P3; trước đó v3.0.0 Wave P2 docs/24)
+
+- ✅ **v3.1.0 Lite Web UI + job runner không popup (docs/08 §Lite, docs/24 §8)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md):
+  - Web UI static export (`npm run build:export` → `frontend/out`, gitignored) được API mount tại `/` trên cùng cổng khi `SERVE_UI=true` (`UI_STATIC_DIR` override, auto-detect `frontend/out`); UI build với `NEXT_PUBLIC_API_BASE_URL=""` (same-origin); static không cần auth, `/v1` vẫn sau auth; bản Docker không đổi (image không có `frontend/out` → tự bỏ qua). Test `tests/test_v31_lite_ui.py`.
+  - `install-task.ps1` chạy watchdog với `-WindowStyle Hidden` (không popup console mỗi 5 phút/lần wake); `metasearch-lite.ps1` có mutex theo port (`Local\MetaSearchLiteManager-<port>`) — đã có phiên đang chạy thì bỏ qua, không nhân bản; `start` tự build UI một lần nếu thiếu; thêm action `open`. Script vẫn ASCII-only, parse OK trên PowerShell 5.1.
+  - P3 từ docs/24 §8: `POST /v1/spaces/{slug}/graph/build` nay trả 202 chạy nền single-flight (admit tier `kg` mới) + `GET /v1/spaces/{slug}/graph/status` đọc counts từ bảng (survives restart); tokenize kiểm stopword trên token GỐC trước khi fold nên "cổ"/"thị" không bị "có" nuốt, các từ extra va chạm danh từ (sao/do/day/ma/bac/nam) đã loại.
+  - OpenAPI snapshot regen (graph/build 202 + `/graph/status` + field mới của GraphBuildResponse).
 
 - ✅ **v3.0.0 Wave P2 (docs/20 §4 → docs/24)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/24-wave-p2-v3.0.md](docs/24-wave-p2-v3.0.md):
   - P2-1 PDF page-level retrieval: `extraction/pdf.py` (pypdf pinned, `## p.N`, bounded, fail-open) hook vào scraper sau check challenge page; vision-embed API tuỳ chọn (`VISION_EMBED_API_BASE_URL`, guard `EMBEDDING_DIM`, chỉ http(s)) ghi cùng cột `chunks.embedding`; persist vẫn embed khi L2 off nhưng vision API có cấu hình.

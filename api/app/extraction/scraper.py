@@ -350,6 +350,15 @@ class Scraper:
                             pdf_pages_to_markdown, body, max_pages=self._settings.pdf_max_pages
                         )
                         if pdf_md:
+                            # Pass 2 P2#3: a >2MB PDF body was truncated by the
+                            # fetch cap BEFORE parsing — trailing pages were
+                            # never read. Mark the markdown honestly so the
+                            # citation coverage is visible to the consumer.
+                            if len(body) >= self._settings.max_extract_bytes:
+                                pdf_md += (
+                                    "\n\n[truncated: body exceeded the fetch cap"
+                                    " — trailing pages missing]"
+                                )
                             title = f"PDF {urlsplit(url).path.rsplit('/', 1)[-1] or url}"
                             return PageContent(
                                 url=url,

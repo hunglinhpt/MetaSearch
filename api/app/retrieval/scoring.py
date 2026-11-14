@@ -65,6 +65,19 @@ _STOPWORDS = frozenset(
         "vào",
         "của",
         "và",
+        # Pass 1 P2#1: folded forms of base VI stopwords — the stopword match
+        # runs on the ORIGINAL token, so unaccented queries ("va", "khong")
+        # kept these as scored terms and deflated their scores vs accented
+        # twins. Only collision-free forms are added; meaningful unaccented
+        # nouns (co/la/cua/mot/do/nam/sao/da...) stay deliberately excluded.
+        "va",
+        "khong",
+        "duoc",
+        "nhung",
+        "tren",
+        "duoi",
+        "cac",
+        "neu",
         "hoặc",
         "là",
         "cái",
@@ -132,50 +145,66 @@ def fold_diacritics(text: str) -> str:
     return stripped.replace("đ", "d").replace("Đ", "D")
 
 
-# Extended Vietnamese stopwords (P2-3): single-word function words (in folded
-# form) that carry no BM25 signal; multi-word phrases never match a token.
+# Extended Vietnamese stopwords (P2-3): single-word function words, listed in
+# BOTH accented and unaccented form, matched against the ORIGINAL token (see
+# tokenize). Entries that collide with meaningful unaccented nouns are
+# deliberately left out ("sao"=ngôi sao, "do"=đô, "day"=dây, "ma"=ma/mã,
+# "bac"=bắc, "nam"=năm) — folding the stopword list would make "cổ"->"co" hit
+# the folded "có"->"co" and swallow the meaningful word (docs/24 §8 P3 fix).
 _EXTRA_VI_STOPWORDS = frozenset(
     [
         "ai",
-        "sao",
         "nay",
-        "do",
         "kia",
-        "day",
-        "rat",
-        "nhieu",
-        "it",
-        "hon",
-        "nhat",
-        "cung",
-        "da",
-        "dang",
-        "se",
-        "van",
         "theo",
+        "rất",
+        "rat",
+        "nhiều",
+        "nhieu",
+        "ít",
+        "it",
+        "hơn",
+        "hon",
+        "nhất",
+        "nhat",
+        "cùng",
+        "cung",
+        "đã",
+        "da",
+        "đang",
+        "dang",
+        "sẽ",
+        "se",
+        "vẫn",
+        "van",
+        "như",
         "nhu",
+        "giống",
         "giong",
+        "khác",
         "khac",
-        "ma",
-        "bac",
-        "nam",
     ]
 )
 
 
-_STOPWORDS_ALL = frozenset({fold_diacritics(w) for w in _STOPWORDS} | _EXTRA_VI_STOPWORDS)
+# Matched on the ORIGINAL (pre-fold) token — never on the folded form.
+_STOPWORDS_ALL = frozenset(_STOPWORDS | _EXTRA_VI_STOPWORDS)
 
 
 def tokenize(text: str, *, fold: bool = True) -> list[str]:
     """Lowercase NFC tokens, stopwords removed.
 
     docs/20 P2-3: Vietnamese diacritics are folded by default (``fold=True``)
-    so accented and unaccented queries match the same documents.
+    so accented and unaccented queries match the same documents. The stopword
+    check runs on the ORIGINAL token BEFORE folding: folding the stopword list
+    instead would collide ("cổ" and "có" both fold to "co") and silently drop
+    meaningful words like "cổ phiếu" or "thị trường" (docs/24 §8 P3 fix).
     """
     normalized = unicodedata.normalize("NFC", text).lower()
+    tokens = [t for t in _TOKEN_RE.findall(normalized) if len(t) > 1 and t not in _STOPWORDS_ALL]
     if fold:
-        normalized = fold_diacritics(normalized)
-    return [t for t in _TOKEN_RE.findall(normalized) if len(t) > 1 and t not in _STOPWORDS_ALL]
+        return [fold_diacritics(t) for t in tokens]
+    return tokens
 
 
 def keyword_relevance(query_terms: list[str], title: str, snippet: str) -> float:

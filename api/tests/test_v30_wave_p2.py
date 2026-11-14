@@ -158,6 +158,16 @@ class TestViFirst:
         assert a == b
         assert "bao" in a and "tai" in a and "chinh" in a
 
+    def test_fold_does_not_swallow_meaningful_words(self):
+        # docs/24 §8 P3 fix: stopwords match on the ORIGINAL token, so folding
+        # the stopword list must not make "cổ" hit "có" (both fold to "co").
+        toks = tokenize("cổ phiếu và thị trường")
+        assert "co" in toks and "thi" in toks and "truong" in toks
+        assert "va" not in toks  # "và" is a real stopword on the original form
+        assert tokenize("co phieu") == ["co", "phieu"]  # unaccented still matches
+        assert tokenize("có và đang") == []  # real stopwords still dropped
+        assert "nam" in tokenize("năm tài chính 2026")  # "năm" is meaningful in finance
+
     def test_tokenize_fold_disabled(self):
         toks = tokenize("Đà Nẵng", fold=False)
         assert "đà" in toks or "Đà".lower() in toks
@@ -469,6 +479,74 @@ class TestGraph:
             assert len(e_rows2) == 1
 
     @pytest.mark.asyncio
+    async def test_graph_build_background_job(self, v30_db, monkeypatch):
+        """v3.1: POST /graph/build is 202 + single-flight background job; the
+        status endpoint reports ready with counts once the job lands."""
+        import asyncio
+
+        from app.api import deps
+        from app.api.v1 import spaces as sp
+        from app.main import create_app
+
+        sp.reset_graph_state()
+        gw = _FakeGateway(
+            reply=json.dumps(
+                {
+                    "nodes": [
+                        {"label": "FPT", "type": "company", "description": "tech"},
+                        {"label": "VNG", "type": "company", "description": "internet"},
+                    ],
+                    "edges": [{"source": "FPT", "target": "VNG", "relation": "peer"}],
+                }
+            )
+        )
+        monkeypatch.setattr(deps, "get_gateway", lambda: gw)
+        app = create_app()
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post(
+                "/v1/spaces",
+                json={"name": "tech", "domains": ["example.com"]},
+                headers=_h(v30_db),
+            )
+            assert r.status_code == 201, r.text
+            slug = r.json()["slug"]
+            async with deps.get_session_factory()() as session:
+                session.add(
+                    Document(
+                        canonical_url="https://example.com/a",
+                        url_hash="h1",
+                        domain="example.com",
+                        content_md="# FPT and VNG",
+                        fetched_at=datetime.now(UTC),
+                    )
+                )
+                await session.commit()
+            r = await c.post(f"/v1/spaces/{slug}/graph/build", headers=_h(v30_db))
+            assert r.status_code == 202, r.text
+            assert r.json()["status"] == "running"
+            # Single-flight: a second POST while running returns running, no new job.
+            r = await c.post(f"/v1/spaces/{slug}/graph/build", headers=_h(v30_db))
+            assert r.status_code == 202 and r.json()["status"] == "running"
+            for _ in range(100):
+                job = next(iter(sp._graph_jobs.values()), None)
+                if job and job.get("status") in ("ready", "error"):
+                    break
+                await asyncio.sleep(0.05)
+            job = next(iter(sp._graph_jobs.values()), None)
+            assert job and job["status"] == "ready", job
+            assert job["nodes"] == 2 and job["edges"] == 1
+            r = await c.get(f"/v1/spaces/{slug}/graph/status", headers=_h(v30_db))
+            assert r.status_code == 200
+            body = r.json()
+            assert body["status"] == "ready" and body["nodes"] == 2 and body["edges"] == 1
+            # Unknown space still 404 on both endpoints.
+            r = await c.post("/v1/spaces/nope/graph/build", headers=_h(v30_db))
+            assert r.status_code == 404
+            r = await c.get("/v1/spaces/nope/graph/status", headers=_h(v30_db))
+            assert r.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_vision_embed_dim_guard(self, monkeypatch):
         from app.retrieval import vision
 
@@ -506,7 +584,7 @@ class TestPersonalPodcast:
 
         p1 = pc._personal_prefix("key-abc")
         assert p1 == pc._personal_prefix("key-abc")
-        assert p1.startswith("personal-") and len(p1) == len("personal-") + 8
+        assert p1.startswith("personal-") and len(p1) == len("personal-") + 16
         assert "key-abc" not in p1  # raw key never leaks into file names
         assert pc._personal_prefix("key-abc") != pc._personal_prefix("key-abd")
 
@@ -520,11 +598,14 @@ class TestPersonalPodcast:
         assert personal.endswith(":2026-11-14")
 
     def test_personal_file_regex(self):
-        assert _PERSONAL_FILE_RE.match("personal-0123abcd-2026-11-14.mp3")
+        # Pass 1 P2#2: hash widened 8 -> 16 hex chars.
+        assert _PERSONAL_FILE_RE.match("personal-0123abcd0123abcd-2026-11-14.mp3")
+        assert _PERSONAL_FILE_RE.match("personal-abcdef0123456789-2026-11-14.mp3")
         assert not _PERSONAL_FILE_RE.match("briefing-2026-11-14.mp3")
         assert not _PERSONAL_FILE_RE.match("personal-xyz-2026-11-14.mp3")
-        assert not _PERSONAL_FILE_RE.match("personal-0123abcd-2026-11-14.mp3.tmp")
-        assert not _PERSONAL_FILE_RE.match("personal-0123abcd-14-11-2026.mp3")
+        assert not _PERSONAL_FILE_RE.match("personal-0123abcd-2026-11-14.mp3")  # 8-hex legacy
+        assert not _PERSONAL_FILE_RE.match("personal-0123abcd0123abcd-2026-11-14.mp3.tmp")
+        assert not _PERSONAL_FILE_RE.match("personal-0123abcd0123abcd-14-11-2026.mp3")
 
     def test_personal_presets_fallback_and_mapping(self, monkeypatch):
         from app.api.v1 import podcast as pc
@@ -540,7 +621,7 @@ class TestPersonalPodcast:
     def test_write_and_latest_and_retention_personal(self, tmp_path):
         day = date(2026, 11, 14)
         old = date(2026, 10, 1)
-        prefix = "personal-0123abcd"
+        prefix = "personal-0123abcd0123abcd"  # 16-hex (Pass 1 P2#2 widened hash)
         write_briefing(tmp_path, day, b"audio-new", prefix)
         write_briefing(tmp_path, old, b"audio-old", prefix)
         write_briefing(tmp_path, day, b"daily-new")  # daily file untouched by prefix lookup
