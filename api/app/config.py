@@ -189,6 +189,8 @@ class Settings(BaseSettings):
     # concurrency underneath it) — a full watchlist can never hold an
     # admission slot for minutes.
     watchlist_alerts_total_timeout_s: float = Field(default=30.0, gt=0, le=300)
+    # Search timeout (default 5.0s, can be overridden per request)
+    search_timeout_s: float = Field(default=5.0, gt=0, le=60)
     watchlist_alerts_concurrency: int = Field(default=4, ge=1, le=10)
     # Podcast briefing (docs/18 D): script + audio file caps, retention.
     # Anchored to the api/ directory (not CWD) so audio never lands outside the

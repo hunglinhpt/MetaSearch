@@ -85,8 +85,8 @@ def create_budget_for_route(
         search_cap = min(3.5, total_s * 0.7)
         scrape_cap = min(6.0, total_s * 0.8)
     elif route == "search":
-        total_s = 5.0
-        search_cap = 3.5
+        total_s = settings.search_timeout_s if settings and hasattr(settings, "search_timeout_s") else 5.0
+        search_cap = min(3.5, total_s * 0.7)
         scrape_cap = 0.0
     elif route == "context":
         total_s = 12.0
