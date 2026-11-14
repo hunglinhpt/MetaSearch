@@ -89,6 +89,7 @@ async def add_memory(request: MemoryCreateRequest) -> MemoryOut:
         text=request.text,
         url=request.url,
         weight=weight,
+        payload=request.payload,
         max_per_key=settings.memory_max_per_key,
     )
     if not ok:

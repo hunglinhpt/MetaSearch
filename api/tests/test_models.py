@@ -23,6 +23,8 @@ EXPECTED_TABLES = {
     "key_boosts",
     "memory_items",
     "spaces",
+    "kg_nodes",
+    "kg_edges",
 }
 
 

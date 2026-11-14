@@ -49,11 +49,22 @@ async def _doc_chunk_embeddings(
     segment that contains it — the chunk vector therefore carries document
     context. Short documents: embed the chunks directly. Any failure returns
     {} (fail-open: the row is still stored, just without a vector)."""
-    if _embedder is None or not getattr(_embedder, "enabled", False) or not doc_chunks:
-        return {}
     from app.config import get_settings
 
     settings = get_settings()
+    embedder = (
+        _embedder if (_embedder is not None and getattr(_embedder, "enabled", False)) else None
+    )
+    # docs/20 P2-1: without the L2 embedder, a configured vision/multimodal API
+    # (jina-v4 / NeMo NIM) can still produce chunk vectors for PDF pages.
+    use_vision = embedder is None
+    if use_vision:
+        from app.retrieval.vision import vision_embed_available
+
+        if not vision_embed_available(settings) or not doc_chunks:
+            return {}
+    elif not doc_chunks:
+        return {}
     try:
         md = page.markdown or ""
         if settings.late_chunking_enabled and len(md) > settings.late_chunking_doc_max_chars:
@@ -62,7 +73,14 @@ async def _doc_chunk_embeddings(
                 segment_chars=settings.late_chunking_segment_chars,
                 overlap_chars=settings.late_chunking_segment_overlap_chars,
             )[:12]
-            vectors = await asyncio.wait_for(_embedder.embed_many(segments), timeout=10.0)
+            if use_vision:
+                from app.retrieval.vision import embed_texts_via_vision_api
+
+                vectors = await asyncio.wait_for(
+                    embed_texts_via_vision_api(settings, segments), timeout=15.0
+                )
+            else:
+                vectors = await asyncio.wait_for(embedder.embed_many(segments), timeout=10.0)
             out: dict[int, list[float]] = {}
             for chunk in doc_chunks[:64]:
                 probe = chunk.content[:200]
@@ -72,7 +90,14 @@ async def _doc_chunk_embeddings(
                         break
             return out
         texts = [c.content for c in doc_chunks[:32]]
-        vectors = await asyncio.wait_for(_embedder.embed_many(texts), timeout=10.0)
+        if use_vision:
+            from app.retrieval.vision import embed_texts_via_vision_api
+
+            vectors = await asyncio.wait_for(
+                embed_texts_via_vision_api(settings, texts), timeout=15.0
+            )
+        else:
+            vectors = await asyncio.wait_for(embedder.embed_many(texts), timeout=10.0)
         return {c.position: v for c, v in zip(doc_chunks[:32], vectors, strict=True)}
     except Exception as exc:
         logger.warning("persist_embed_failed", url=page.url, error=type(exc).__name__)
@@ -273,8 +298,13 @@ async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> N
                 doc_ids.setdefault(canon, doc_id)
 
         # docs/20 P1-3: per-document embeddings (late chunking for long docs).
+        # P2-1: the vision API path counts as an embedder source too.
         embeddings_by_doc: dict[uuid.UUID, dict[int, list[float]]] = {}
-        if _embedder is not None and getattr(_embedder, "enabled", False):
+        from app.config import get_settings as _gs
+        from app.retrieval.vision import vision_embed_available as _vea
+
+        _can_embed = (_embedder is not None and getattr(_embedder, "enabled", False)) or _vea(_gs())
+        if _can_embed:
             for page in pages:
                 doc_id = doc_ids.get(page.url)
                 if doc_id is None or doc_id not in new_doc_ids:

@@ -123,10 +123,59 @@ _TRUSTED_DOMAINS: dict[str, float] = {
 }
 
 
-def tokenize(text: str) -> list[str]:
-    """Lowercase NFC tokens, stopwords removed."""
+def fold_diacritics(text: str) -> str:
+    """docs/20 P2-3 (vi-first): strip Vietnamese diacritics so "hòa" matches
+    "hoa", "đánh giá" matches "danh gia" — users type both forms interchangeably."""
+    decomposed = unicodedata.normalize("NFD", text)
+    stripped = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+    # đ/Đ has no decomposition — map it explicitly.
+    return stripped.replace("đ", "d").replace("Đ", "D")
+
+
+# Extended Vietnamese stopwords (P2-3): single-word function words (in folded
+# form) that carry no BM25 signal; multi-word phrases never match a token.
+_EXTRA_VI_STOPWORDS = frozenset(
+    [
+        "ai",
+        "sao",
+        "nay",
+        "do",
+        "kia",
+        "day",
+        "rat",
+        "nhieu",
+        "it",
+        "hon",
+        "nhat",
+        "cung",
+        "da",
+        "dang",
+        "se",
+        "van",
+        "theo",
+        "nhu",
+        "giong",
+        "khac",
+        "ma",
+        "bac",
+        "nam",
+    ]
+)
+
+
+_STOPWORDS_ALL = frozenset({fold_diacritics(w) for w in _STOPWORDS} | _EXTRA_VI_STOPWORDS)
+
+
+def tokenize(text: str, *, fold: bool = True) -> list[str]:
+    """Lowercase NFC tokens, stopwords removed.
+
+    docs/20 P2-3: Vietnamese diacritics are folded by default (``fold=True``)
+    so accented and unaccented queries match the same documents.
+    """
     normalized = unicodedata.normalize("NFC", text).lower()
-    return [t for t in _TOKEN_RE.findall(normalized) if len(t) > 1 and t not in _STOPWORDS]
+    if fold:
+        normalized = fold_diacritics(normalized)
+    return [t for t in _TOKEN_RE.findall(normalized) if len(t) > 1 and t not in _STOPWORDS_ALL]
 
 
 def keyword_relevance(query_terms: list[str], title: str, snippet: str) -> float:
@@ -208,8 +257,13 @@ def snippet_quality(snippet: str) -> float:
 
 
 def domain_authority(domain: str) -> float:
+    """Curated trust table wins; otherwise the P2-7 reputation tier base."""
+    from app.retrieval.tiers import tier_score
+
     clean = domain.lower().removeprefix("www.")
-    return _TRUSTED_DOMAINS.get(clean, _TRUSTED_DOMAINS.get(domain.lower(), 0.5))
+    if clean in _TRUSTED_DOMAINS or domain.lower() in _TRUSTED_DOMAINS:
+        return _TRUSTED_DOMAINS.get(clean, _TRUSTED_DOMAINS.get(domain.lower(), 0.5))
+    return tier_score(domain)
 
 
 def apply_signals(
@@ -245,6 +299,9 @@ def apply_signals(
     item.freshness = fresh
     item.domain_authority = da
     item.snippet_quality = sq
+    from app.retrieval.tiers import domain_tier
+
+    item.domain_tier = domain_tier(item.domain)
 
     return (
         WEIGHTS["keyword"] * kw

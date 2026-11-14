@@ -194,6 +194,16 @@
             "title": "Query",
             "type": "string"
           },
+          "response_format": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "space": {
             "anyOf": [
               {
@@ -843,6 +853,16 @@
             "title": "Query",
             "type": "string"
           },
+          "response_format": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "space": {
             "anyOf": [
               {
@@ -1084,6 +1104,16 @@
             "minLength": 1,
             "title": "Query",
             "type": "string"
+          },
+          "response_format": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "space": {
             "anyOf": [
@@ -1504,6 +1534,103 @@
           "symbol"
         ],
         "title": "FaSymbolResult",
+        "type": "object"
+      },
+      "GraphBuildResponse": {
+        "description": "docs/20 P2-2: result of building a Space's knowledge graph.",
+        "properties": {
+          "docs": {
+            "title": "Docs",
+            "type": "integer"
+          },
+          "edges": {
+            "title": "Edges",
+            "type": "integer"
+          },
+          "nodes": {
+            "title": "Nodes",
+            "type": "integer"
+          },
+          "space": {
+            "title": "Space",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space",
+          "docs",
+          "nodes",
+          "edges"
+        ],
+        "title": "GraphBuildResponse",
+        "type": "object"
+      },
+      "GraphQueryRequest": {
+        "description": "docs/20 P2-2: entity-centric (local) graph query within a Space.",
+        "properties": {
+          "answer": {
+            "default": false,
+            "title": "Answer",
+            "type": "boolean"
+          },
+          "query": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "GraphQueryRequest",
+        "type": "object"
+      },
+      "GraphQueryResponse": {
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer"
+          },
+          "edges": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "matched_labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Labels",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "space": {
+            "title": "Space",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space"
+        ],
+        "title": "GraphQueryResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1935,6 +2062,18 @@
             "title": "Kind",
             "type": "string"
           },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          },
           "text": {
             "default": "",
             "maxLength": 4000,
@@ -2198,6 +2337,34 @@
           "query"
         ],
         "title": "ResearchRequest",
+        "type": "object"
+      },
+      "ResponseFormat": {
+        "description": "docs/20 P2-6: request a structured JSON answer over the search results.\n\nDefined BEFORE SearchRequest so the `response_format` forward reference\nresolves in this module's namespace (subclasses in other modules rebuild\nthe parent with their own namespace — an unresolved ref there breaks\nOpenAPI generation).",
+        "properties": {
+          "json_schema": {
+            "additionalProperties": true,
+            "minProperties": 1,
+            "title": "Json Schema",
+            "type": "object"
+          },
+          "name": {
+            "default": "result",
+            "maxLength": 100,
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "const": "json_schema",
+            "default": "json_schema",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "json_schema"
+        ],
+        "title": "ResponseFormat",
         "type": "object"
       },
       "ScanTopicInfo": {
@@ -2485,6 +2652,16 @@
             "title": "Query",
             "type": "string"
           },
+          "response_format": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseFormat"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "space": {
             "anyOf": [
               {
@@ -2573,6 +2750,18 @@
             "title": "Engines Used",
             "type": "array"
           },
+          "interleave": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interleave"
+          },
           "latency_ms": {
             "title": "Latency Ms",
             "type": "integer"
@@ -2587,6 +2776,25 @@
               "type": "object"
             },
             "title": "Results",
+            "type": "array"
+          },
+          "structured": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structured"
+          },
+          "structured_errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Structured Errors",
             "type": "array"
           }
         },
@@ -4393,6 +4601,31 @@
         ]
       }
     },
+    "/v1/ops/interleave": {
+      "get": {
+        "description": "docs/20 P2-4: per-variant interleaving stats from explicit 👍/👎 feedback\n(memory_items with payload.variant). Always 200; DB down -> empty stats.",
+        "operationId": "ops_interleave_v1_ops_interleave_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ops Interleave V1 Ops Interleave Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ops Interleave",
+        "tags": [
+          "v1",
+          "ops"
+        ]
+      }
+    },
     "/v1/ops/status": {
       "get": {
         "operationId": "ops_status_v1_ops_status_get",
@@ -4495,6 +4728,70 @@
           }
         },
         "summary": "Briefing Status",
+        "tags": [
+          "v1",
+          "podcast"
+        ]
+      }
+    },
+    "/v1/podcast/personal": {
+      "post": {
+        "operationId": "create_personal_briefing_v1_podcast_personal_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PodcastBriefingStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create Personal Briefing",
+        "tags": [
+          "v1",
+          "podcast"
+        ]
+      }
+    },
+    "/v1/podcast/personal/latest": {
+      "get": {
+        "operationId": "personal_briefing_latest_v1_podcast_personal_latest_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Personal Briefing Latest",
+        "tags": [
+          "v1",
+          "podcast"
+        ]
+      }
+    },
+    "/v1/podcast/personal/status": {
+      "get": {
+        "operationId": "personal_briefing_status_v1_podcast_personal_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PodcastBriefingStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Personal Briefing Status",
         "tags": [
           "v1",
           "podcast"
@@ -5178,6 +5475,104 @@
           }
         },
         "summary": "Crawl Space",
+        "tags": [
+          "v1",
+          "spaces"
+        ]
+      }
+    },
+    "/v1/spaces/{slug}/graph/build": {
+      "post": {
+        "description": "docs/20 P2-2: extract entities/relations from the space's crawled docs\n(bounded LLM calls) into kg_nodes/kg_edges.",
+        "operationId": "build_graph_v1_spaces__slug__graph_build_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphBuildResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Build Graph",
+        "tags": [
+          "v1",
+          "spaces"
+        ]
+      }
+    },
+    "/v1/spaces/{slug}/graph/query": {
+      "post": {
+        "description": "docs/20 P2-2: local graph query — match query terms to entity labels, return\nthe 1-hop subgraph; optionally answer over it with the cheap LLM.",
+        "operationId": "query_graph_endpoint_v1_spaces__slug__graph_query_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphQueryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Graph Endpoint",
         "tags": [
           "v1",
           "spaces"

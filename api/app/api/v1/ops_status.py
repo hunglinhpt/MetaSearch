@@ -63,3 +63,28 @@ async def ops_status() -> dict[str, Any]:
         "engines": engines,
         "failing": failing,
     }
+
+
+@router.get("/ops/interleave")
+async def ops_interleave() -> dict[str, Any]:
+    """docs/20 P2-4: per-variant interleaving stats from explicit 👍/👎 feedback
+    (memory_items with payload.variant). Always 200; DB down -> empty stats."""
+    from app.retrieval.interleave import interleave_stats
+
+    settings = get_settings()
+    if not settings.interleave_enabled:
+        return {"enabled": False, "variants": {}}
+    try:
+        async with deps.get_session_factory()() as session:
+            stats = await interleave_stats(session)
+    except Exception as exc:
+        from app.core.logging import get_logger
+
+        get_logger(__name__).warning("interleave_stats_failed", error=type(exc).__name__)
+        stats = {"variants": {}}
+    return {
+        "enabled": True,
+        "ratio": settings.interleave_ratio,
+        "treatment_rrf_weight": settings.interleave_treatment_rrf_weight,
+        **stats,
+    }

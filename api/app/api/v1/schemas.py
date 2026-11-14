@@ -169,6 +169,21 @@ class PodcastBriefingStatus(BaseModel):
     created_at: str | None = None
 
 
+class ResponseFormat(BaseModel):
+    """docs/20 P2-6: request a structured JSON answer over the search results.
+
+    Defined BEFORE SearchRequest so the `response_format` forward reference
+    resolves in this module's namespace (subclasses in other modules rebuild
+    the parent with their own namespace — an unresolved ref there breaks
+    OpenAPI generation).
+    """
+
+    type: Literal["json_schema"] = "json_schema"
+    json_schema: dict[str, Any] = Field(min_length=1)
+    # Optional human-readable name (Exa-style); echoed back in the response.
+    name: str = Field(default="result", max_length=100)
+
+
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     lang: str | None = Field(default=None, pattern=r"^[a-z]{2}(-[A-Z]{2})?$")
@@ -196,6 +211,10 @@ class SearchRequest(BaseModel):
     # docs/20 P1-6: search within one of the caller's Spaces (slug). Domain
     # scope is applied post-cache; pinned URLs become per-key boosts.
     space: str | None = Field(default=None, max_length=100)
+    # docs/20 P2-6: structured output — Exa-style response_format. When set,
+    # the response carries a validated `structured` object extracted from the
+    # top results (null + errors are reported, never fabricated).
+    response_format: ResponseFormat | None = None
 
 
 class CitationItem(BaseModel):
@@ -240,6 +259,14 @@ class SearchResponse(BaseModel):
     # docs/20 P0-7: instant answer over the top results (present only when
     # requested via extras=["answer"] and an LLM is configured).
     answer: str | None = None
+    # docs/20 P2-6: structured object extracted from the top results when
+    # response_format was given; null when extraction/validation failed
+    # (errors in `structured_errors`).
+    structured: dict[str, Any] | None = None
+    structured_errors: list[str] = Field(default_factory=list)
+    # docs/20 P2-4: online interleaving assignment for this query ("a"|"b"),
+    # present only when INTERLEAVE_ENABLED=true.
+    interleave: dict[str, Any] | None = None
     engines_used: list[str]
     engines_failed: list[str]
     engines_status: list[dict[str, Any]] = Field(default_factory=list)
@@ -285,6 +312,9 @@ class MemoryCreateRequest(BaseModel):
     text: str = Field(default="", max_length=4000)
     url: str | None = Field(default=None, max_length=2000)
     weight: float = Field(default=0.0, ge=-1.0, le=1.0)
+    # docs/20 P2-4: feedback may carry {"variant": "a"|"b", "query_id": ...}
+    # so /v1/ops/interleave can aggregate per-variant 👍/👎.
+    payload: dict[str, Any] | None = None
 
 
 class MemoryOut(BaseModel):
@@ -411,3 +441,27 @@ class CrawlResponse(BaseModel):
     pages: list[CrawlPageItem] = Field(default_factory=list)
     indexed: bool = False  # pages were persisted to the document/chunk index
     latency_ms: int = 0
+
+
+class GraphBuildResponse(BaseModel):
+    """docs/20 P2-2: result of building a Space's knowledge graph."""
+
+    space: str
+    docs: int
+    nodes: int
+    edges: int
+
+
+class GraphQueryRequest(BaseModel):
+    """docs/20 P2-2: entity-centric (local) graph query within a Space."""
+
+    query: str = Field(min_length=1, max_length=2000)
+    answer: bool = False  # also synthesize an answer over the subgraph with the LLM
+
+
+class GraphQueryResponse(BaseModel):
+    space: str
+    matched_labels: list[str] = Field(default_factory=list)
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    answer: str | None = None  # present when answer=true and the LLM answered

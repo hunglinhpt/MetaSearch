@@ -31,8 +31,11 @@ BRIEFING_PRESETS: tuple[tuple[str, str, int], ...] = (
 )
 
 _BRIEFING_FILE_RE = re.compile(r"^briefing-\d{4}-\d{2}-\d{2}\.mp3$")
-# Orphaned temp files from a crash mid-write — retention removes these too.
-_BRIEFING_TMP_RE = re.compile(r"^briefing-\d{4}-\d{2}-\d{2}\.mp3\.tmp$")
+# Orphaned temp files from a crash mid-write — retention removes these too
+# (daily + personal prefixes).
+_BRIEFING_TMP_RE = re.compile(r"^(?:briefing|personal-[0-9a-f]{8})-\d{4}-\d{2}-\d{2}\.mp3\.tmp$")
+# docs/20 P2-5: personalized podcast files (personal-<ownerhash8>-<date>.mp3).
+_PERSONAL_FILE_RE = re.compile(r"^personal-[0-9a-f]{8}-\d{4}-\d{2}-\d{2}\.mp3$")
 
 
 @dataclass(slots=True)
@@ -82,21 +85,18 @@ def build_briefing_script(
     return cut.strip()
 
 
-def briefing_path(data_dir: str | Path, day: date) -> Path:
-    return Path(data_dir) / f"briefing-{day.isoformat()}.mp3"
+def briefing_path(data_dir: str | Path, day: date, prefix: str = "briefing") -> Path:
+    return Path(data_dir) / f"{prefix}-{day.isoformat()}.mp3"
 
 
-def latest_briefing(data_dir: str | Path) -> Path | None:
+def latest_briefing(data_dir: str | Path, prefix: str = "briefing") -> Path | None:
     """Newest existing briefing file (name-validated, so no path tricks)."""
     d = Path(data_dir)
     if not d.is_dir():
         return None
+    file_re = re.compile(rf"^{re.escape(prefix)}-\d{{4}}-\d{{2}}-\d{{2}}\.mp3$")
     candidates = sorted(
-        (
-            p
-            for p in d.iterdir()
-            if p.is_file() and not p.is_symlink() and _BRIEFING_FILE_RE.match(p.name)
-        ),
+        (p for p in d.iterdir() if p.is_file() and not p.is_symlink() and file_re.match(p.name)),
         key=lambda p: p.name,
         reverse=True,
     )
@@ -136,10 +136,19 @@ def cleanup_retention(
             except OSError as exc:
                 logger.warning("podcast_retention_unlink_failed", file=p.name, error=str(exc))
             continue
-        if not _BRIEFING_FILE_RE.match(p.name):
+        # v3.0 P2-5: personal podcast files (personal-<hash>-<day>.mp3) share
+        # the same retention horizon as the daily briefing.
+        prefix_len = None
+        if _BRIEFING_FILE_RE.match(p.name):
+            prefix_len = len("briefing-")
+        elif _PERSONAL_FILE_RE.match(p.name):
+            # personal-<8 hex>-<day>.mp3: the date starts after "personal-" +
+            # 8 hex chars + "-" (index("-", 8) would wrongly match the first "-").
+            prefix_len = len("personal-") + 8 + 1
+        else:
             continue
         try:
-            file_day = date.fromisoformat(p.name[len("briefing-") : -len(".mp3")])
+            file_day = date.fromisoformat(p.name[prefix_len : -len(".mp3")])
         except ValueError:
             continue
         if file_day < horizon:
@@ -151,11 +160,11 @@ def cleanup_retention(
     return removed
 
 
-def write_briefing(data_dir: str | Path, day: date, audio: bytes) -> Path:
+def write_briefing(data_dir: str | Path, day: date, audio: bytes, prefix: str = "briefing") -> Path:
     """Write one briefing file (mkdir -p, atomic rename)."""
     d = Path(data_dir)
     d.mkdir(parents=True, exist_ok=True)
-    final = briefing_path(d, day)
+    final = briefing_path(d, day, prefix=prefix)
     tmp = final.with_suffix(".mp3.tmp")
     tmp.write_bytes(audio)
     tmp.replace(final)

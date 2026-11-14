@@ -301,6 +301,25 @@ class Settings(BaseSettings):
     hybrid_search_enabled: bool = True
     hybrid_rrf_weight: float = 0.5
 
+    # --- v3.0 wave P2 (docs/20 §4 P2, docs/23) -------------------------------
+    # P2-4: online interleaving — hash-bucketed A/B on retrieval params
+    # (treatment = different RRF_WEIGHT), explicit 👍/👎 stats per variant.
+    interleave_enabled: bool = True
+    interleave_ratio: float = 0.5  # fraction of traffic on treatment "b"
+    interleave_treatment_rrf_weight: float = 0.5
+    interleave_salt: str = "v3"
+    # P2-1: PDF page-level retrieval (pypdf) + optional vision embedding API
+    # (jina-embeddings-v4 / NeMo NIM) for page images — empty = text-only.
+    pdf_max_pages: int = 60
+    vision_embed_api_base_url: str = ""
+    vision_embed_model: str = "jina-embeddings-v4"
+    # P2-2: knowledge graph per Space (LightRAG-lite).
+    kg_enabled: bool = True
+    kg_max_docs_per_build: int = 20
+    kg_max_nodes_per_build: int = 200
+    # P2-5: personalized podcast built from the caller's watchlist.
+    podcast_personal_enabled: bool = True
+
     # --- Phase 2: cache + engine management -------------------------------
     cache_enabled: bool = True
     cache_search_ttl_s: int = 1800  # docs/03 §7: 15-60m, news 15m

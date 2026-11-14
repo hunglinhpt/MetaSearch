@@ -71,6 +71,10 @@ class ScoredResult:
     domain_authority: float = 0.0
     snippet_quality: float = 0.0
     score: float = 0.0
+    # v3.0 P2-7: domain reputation tier ("official"|"primary"|"research"|
+    # "reference"|"aggregator"|"community"|"unknown") — informational + feeds
+    # domain_authority via the tier base score.
+    domain_tier: str = "unknown"
 
 
 @dataclass(slots=True)

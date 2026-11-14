@@ -83,9 +83,36 @@ async def search(request: SearchRequest) -> SearchResponse:
                     gateway=deps.get_gateway(),
                 )
 
+            # v3.0 P2-6: structured JSON output over the top results (Exa-style
+            # response_format). Post-cache, validated with jsonschema; failures
+            # are reported in structured_errors, never fabricated.
+            structured: dict | None = None
+            structured_errors: list[str] = []
+            if request.response_format and outcome.results:
+                from app.llm.structured import extract_structured
+
+                gateway = deps.get_gateway()
+                settings = deps.get_settings()
+                model = getattr(gateway, "default_quick_model", settings.llm_quick_model)
+                structured, structured_errors, _raw = await extract_structured(
+                    gateway,
+                    request.query,
+                    request.response_format.json_schema,
+                    outcome.results,
+                    model=model,
+                )
+            # v3.0 P2-4: expose the interleaving variant so clients can attach
+            # feedback to the right arm (POST /v1/memory payload.variant).
+            interleave = (
+                {"variant": outcome.interleave_variant} if outcome.interleave_variant else None
+            )
+
             return SearchResponse(
                 query_id=str(outcome.query_id),
                 answer=instant_answer,
+                structured=structured,
+                structured_errors=structured_errors,
+                interleave=interleave,
                 results=[
                     {
                         "rank": i,
@@ -97,6 +124,8 @@ async def search(request: SearchRequest) -> SearchResponse:
                         "found_by": r.adapters,
                         "engines": r.engines,
                         "domain": r.domain,
+                        # v3.0 P2-7: domain reputation tier (official/primary/.../unknown)
+                        "domain_tier": r.domain_tier,
                         "published_at": r.published_at.isoformat() if r.published_at else None,
                         # Provenance: None means unknown, never a guess (D3).
                         "source_url": r.source_url,

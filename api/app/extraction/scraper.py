@@ -341,6 +341,24 @@ class Scraper:
                             max_bytes=self._settings.max_extract_bytes,
                         )
                         body = body[: self._settings.max_extract_bytes]
+                    # docs/20 P2-1: PDFs get page-level extraction (## p.N headings)
+                    # so chunks stay page-addressable for "trang có X" queries.
+                    from app.extraction.pdf import is_pdf_bytes, pdf_pages_to_markdown
+
+                    if is_pdf_bytes(body) or url.lower().split("?")[0].endswith(".pdf"):
+                        pdf_md = await run_cpu(
+                            pdf_pages_to_markdown, body, max_pages=self._settings.pdf_max_pages
+                        )
+                        if pdf_md:
+                            title = f"PDF {urlsplit(url).path.rsplit('/', 1)[-1] or url}"
+                            return PageContent(
+                                url=url,
+                                final_url=final_url,
+                                title=title,
+                                markdown=pdf_md[: self._settings.max_page_markdown_chars],
+                                extractor_used="pdf-pages",
+                                fetched_at=_utcnow(),
+                            )
                     markdown, title, extractor = await run_cpu(extract_static, body)
                     if markdown:
                         if len(markdown) > self._settings.max_page_markdown_chars:

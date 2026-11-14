@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "metasearch-api"
-version = "2.6.0"
+version = "3.0.0"
 description = "MetaSearch AI — thin orchestration layer on top of SearXNG + crawl4ai/trafilatura (giants-first)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -29,6 +29,8 @@ dependencies = [
     "structlog>=24.1",
     "prometheus-client>=0.20",
     "python-dotenv>=1.0",
+    "pypdf>=7.1.0",
+    "jsonschema>=4.26.0",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,31 @@
+{
+  "description": "v3.0.0 Vietnamese-first golden set (docs/20 P2-3): 24 VI queries exercising diacritic-folded matching (accented and unaccented spellings of the same query must hit the same sources), multi-hop finance, and developer topics. Run: python scripts/eval_v2.py --golden evals/golden_v3_vi.json --base-url http://localhost:8000",
+  "thresholds": {"hit_at_5": 0.6, "recall_at_10": 0.5, "ndcg_at_10": 0.5, "context_precision": 0.6, "claim_support": 0.7},
+  "queries": [
+    {"query": "cách tính thuế thu nhập cá nhân từ tiền lương 2026", "lang": "vi", "relevant": ["thuvienphapluat.vn", "luatvietnam.vn", "mof.gov.vn"], "categories": ["general"]},
+    {"query": "cach tinh thue thu nhap ca nhan tu tien luong 2026 (không dấu)", "lang": "vi", "relevant": ["thuvienphapluat.vn", "luatvietnam.vn", "mof.gov.vn"], "categories": ["general"]},
+    {"query": "giá cổ phiếu VIC Vingroup biến động mới nhất", "lang": "vi", "relevant": ["cafef.vn", "vietstock.vn", "vnexpress.net", "dantri.com.vn"], "categories": ["financial"]},
+    {"query": "gia co phieu VIC Vingroup bien dong moi nhat (không dấu)", "lang": "vi", "relevant": ["cafef.vn", "vietstock.vn", "vnexpress.net", "dantri.com.vn"], "categories": ["financial"]},
+    {"query": "VN-Index có bao nhiêu mã chứng khoán niêm yết trên HOSE", "lang": "vi", "relevant": ["hose.vn", "vnexpress.net", "cafef.vn"], "categories": ["financial"]},
+    {"query": "khái niệm replication trong PostgreSQL khác gì streaming replication", "lang": "vi", "relevant": ["postgresql.org", "viblo.asia", "200lab.io"], "categories": ["general"]},
+    {"query": "so sánh machine learning và deep learning khác nhau như thế nào", "lang": "vi", "relevant": ["viblo.asia", "topdev.vn", "machinelearningcoban.com"], "categories": ["general"]},
+    {"query": "so sanh machine learning va deep learning khac nhau nhu the nao (không dấu)", "lang": "vi", "relevant": ["viblo.asia", "topdev.vn", "machinelearningcoban.com"], "categories": ["general"]},
+    {"query": "thuật toán Dijkstra tìm đường đi ngắn nhất giải thích bằng ví dụ", "lang": "vi", "relevant": ["viblo.asia", "geeksforgeeks.org", "topdev.vn"], "categories": ["developer"]},
+    {"query": "Mastra framework AI agent dùng để làm gì", "lang": "vi", "relevant": ["mastra.ai", "github.com"], "categories": ["developer"]},
+    {"query": "tin tức công nghệ AI mới nhất Việt Nam hôm nay", "lang": "vi", "relevant": ["vnexpress.net", "tinhte.vn", "genk.vn", "dantri.com.vn"], "categories": ["news"]},
+    {"query": "bảng giá xăng dầu mới nhất hôm nay", "lang": "vi", "relevant": ["vnexpress.net", "dantri.com.vn", "cafef.vn", "petrolimex.com.vn"], "categories": ["news"]},
+    {"query": "lịch thi đấu Ngoại hạng Anh vòng mới nhất", "lang": "vi", "relevant": ["vnexpress.net", "bongda.com.vn", "thethaovan.com.vn"], "categories": ["news"]},
+    {"query": "thủ tục đăng ký户籍 thường trú mới nhất", "lang": "vi", "relevant": ["thuvienphapluat.vn", "luatvietnam.vn"], "categories": ["general"]},
+    {"query": "cách nấu phở bò ngon đúng vị Hà Nội", "lang": "vi", "relevant": ["vnexpress.net", "monngonmoingay.com", "dantri.com.vn"], "categories": ["general"]},
+    {"query": "review laptop MacBook Air M4 2026 có nên mua", "lang": "vi", "relevant": ["tinhte.vn", "genk.vn", "vnexpress.net"], "categories": ["general"]},
+    {"query": "phân tích báo cáo tài chính doanh nghiệp cần đọc chỉ số nào", "lang": "vi", "relevant": ["cafef.vn", "vietstock.vn", "viblo.asia", "Topdev.vn"], "categories": ["financial"]},
+    {"query": "phan tich bao cao tai chinh doanh nghiep can doc chi so nao (không dấu)", "lang": "vi", "relevant": ["cafef.vn", "vietstock.vn", "viblo.asia"], "categories": ["financial"]},
+    {"query": "Altman Z-Score là gì và cách tính", "lang": "vi", "relevant": ["investopedia.com", "viblo.asia", "cafef.vn"], "categories": ["financial"]},
+    {"query": "Ichimoku Cloud là gì cách đọc biểu đồ", "lang": "vi", "relevant": ["cafef.vn", "vietstock.vn", "investopedia.com"], "categories": ["financial"]},
+    {"query": "hướng dẫn dùng FastAPI dependency injection", "lang": "vi", "relevant": ["fastapi.tiangolo.com", "viblo.asia", "200lab.io"], "categories": ["developer"]},
+    {"query": "Redis pub sub khác gì Stream như thế nào", "lang": "vi", "relevant": ["redis.io", "viblo.asia", "topdev.vn"], "categories": ["developer"]},
+    {"query": "kiến trúc microservices khác monolith ở điểm nào", "lang": "vi", "relevant": ["viblo.asia", "200lab.io", "topdev.vn", "vnexpress.net"], "categories": ["developer"]},
+    {"query": "kiến trúc microservices khác monolith o diem nao (không dấu)", "lang": "vi", "relevant": ["viblo.asia", "200lab.io", "topdev.vn"], "categories": ["developer"]},
+    {"query": "thời tiết Hà Nội và TP.HCM dự báo 7 ngày tới", "lang": "vi", "relevant": ["vnexpress.net", "dantri.com.vn", "baomoi.com"], "categories": ["news"]}
+  ]
+}

@@ -269,6 +269,8 @@ def search_cache_key(query: str, params: Any, *, news: bool = False) -> str:
         # so their signatures must be part of the key (no cross-key leakage).
         getattr(params, "boosts_sig", ""),
         getattr(params, "expansion_sig", ""),
+        # v3.0 P2-4: interleaving variant must not share a cache entry.
+        getattr(params, "interleave_sig", ""),
     )
     return f"sr:v3:{h}"
 
@@ -342,6 +344,7 @@ def serialize_results(results: list[ScoredResult]) -> list[dict[str, Any]]:
             "source_name": r.source_name,
             "as_of": r.as_of.isoformat() if r.as_of else None,
             "data_kind": r.data_kind,
+            "domain_tier": r.domain_tier,
         }
         for r in results
     ]
@@ -372,6 +375,7 @@ def deserialize_results(payload: list[dict[str, Any]]) -> list[ScoredResult]:
                 source_name=item.get("source_name"),
                 as_of=datetime.fromisoformat(as_of) if as_of else None,
                 data_kind=item.get("data_kind"),
+                domain_tier=item.get("domain_tier") or "unknown",
             )
         )
     return out

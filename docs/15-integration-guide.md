@@ -33,6 +33,13 @@ metasearch keys create my-system --rate-limit 600 --max-concurrent 16
 | Hậu kiểm `[n]` trong câu trả lời LLM của bạn | `POST /v1/citations/validate` | Xem `marker_valid` ở mục 3.4. |
 | Báo cáo nhiều vòng (30-180 s) | `POST /v1/research`, rồi `GET /v1/research/{id}` | Chạy nền, chỉ chủ job đọc được. |
 
+> **v3.0.0 (2026-11-14):** OpenAPI snapshot đổi: `SearchRequest` thêm
+> `response_format` (structured JSON output, `SearchResponse` có `structured` +
+> `structured_errors`), `SearchResponse` có thêm `interleave` và mỗi result có
+> `domain_tier`; `MemoryCreateRequest` thêm `payload`; 6 endpoint mới
+> (`/v1/podcast/personal*`, `/v1/spaces/{slug}/graph/build|query`,
+> `/v1/ops/interleave`). Xem docs/24 và docs/06.
+>
 > **v2.6.0 (2026-11-13):** OpenAPI snapshot đổi: `SearchRequest`/`AnswerRequest`
 > thêm field `space`, và thêm 6 endpoint mới (`/v1/map`, `/v1/crawl`, `/v1/hybrid`,
 > `/v1/memory`, `/v1/memory/{id}`, `/v1/spaces`...). Xem docs/22 và docs/06.

@@ -180,6 +180,20 @@ New endpoints:
   TTS (optional, VOICESTUDIO_URL). Cost 5 / 1.
 - `POST /v1/podcast/briefing`, `GET /v1/podcast/briefing/status|latest|feed.xml`
   — daily audio briefing (optional VoiceStudio). Cost 5 / 1.
+- v3.0: `POST /v1/podcast/personal`, `GET /v1/podcast/personal/status|latest` —
+  podcast cá nhân hoá theo watchlist của key (file `personal-<hash>-<date>.mp3`,
+  cùng retention với bản tin ngày; cần `PODCAST_PERSONAL_ENABLED=true` + VoiceStudio).
+  Cost 5 / 1.
+- v3.0: `POST /v1/spaces/{slug}/graph/build`, `POST /v1/spaces/{slug}/graph/query`
+  — knowledge graph theo Space (kg_nodes/kg_edges, trích bằng LLM rẻ, query
+  entity-centric 1-hop, `answer=true` để tổng hợp trả lời; cần `KG_ENABLED=true`).
+  Cost 5.
+- v3.0: `GET /v1/ops/interleave` — thống kê A/B interleaving theo variant (chỉ đếm
+  feedback 👍/👎 explicit có `payload.variant`). Cost 1.
+- v3.0: `POST /v1/search` nhận thêm `response_format={type:"json_schema", json_schema, name}`
+  → response có `structured` (đã validate bằng jsonschema) + `structured_errors`;
+  mỗi result có thêm `domain_tier` (official/primary/research/reference/aggregator/
+  community/unknown); response có thêm `interleave.variant` khi interleaving bật.
 - `POST /v1/research`, `GET /v1/research/{id}`, `GET /v1/research/{id}/events`
   (SSE) — Deep Research job lifecycle (FR-9). v2.6: vòng lặp IRCoT (reformulate
   theo evidence) + coverage gate; event `learnings`/`done` có thêm `coverage`.

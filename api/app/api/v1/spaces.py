@@ -23,6 +23,9 @@ from sqlalchemy import Table, delete, select
 
 from app.api import deps
 from app.api.v1.schemas import (
+    GraphBuildResponse,
+    GraphQueryRequest,
+    GraphQueryResponse,
     SpaceCreateRequest,
     SpaceListResponse,
     SpaceOut,
@@ -276,3 +279,86 @@ async def crawl_space(slug: str, max_pages: int = Query(default=20, ge=1)) -> di
             await session.commit()
     invalidate(_owner())
     return {"space": slug, "targets": len(uniq), "pages": results, "capped": cap}
+
+
+@router.post("/spaces/{slug}/graph/build", response_model=GraphBuildResponse)
+async def build_graph(slug: str) -> GraphBuildResponse:
+    """docs/20 P2-2: extract entities/relations from the space's crawled docs
+    (bounded LLM calls) into kg_nodes/kg_edges."""
+    settings = get_settings()
+    if not settings.kg_enabled:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST, "knowledge graph is disabled", status_code=400
+        )
+    if not await _ensure_table():
+        raise MetaSearchError(ErrorCode.INTERNAL, "spaces storage unavailable", status_code=503)
+    async with deps.get_session_factory()() as session:
+        row = await _get_owned(session, slug)
+        if row is None:
+            raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
+        from app.retrieval.graph import build_space_graph
+
+        gateway = deps.get_gateway()
+        model = getattr(gateway, "default_quick_model", settings.llm_quick_model)
+        stats = await build_space_graph(
+            session,
+            row,
+            gateway,
+            settings=settings,
+            max_docs=settings.kg_max_docs_per_build,
+            max_nodes=settings.kg_max_nodes_per_build,
+            model=model,
+        )
+    invalidate(_owner())
+    return GraphBuildResponse(space=slug, **stats)
+
+
+@router.post("/spaces/{slug}/graph/query", response_model=GraphQueryResponse)
+async def query_graph_endpoint(slug: str, request: GraphQueryRequest) -> GraphQueryResponse:
+    """docs/20 P2-2: local graph query — match query terms to entity labels, return
+    the 1-hop subgraph; optionally answer over it with the cheap LLM."""
+    settings = get_settings()
+    if not settings.kg_enabled:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST, "knowledge graph is disabled", status_code=400
+        )
+    if not await _ensure_table():
+        raise MetaSearchError(ErrorCode.INTERNAL, "spaces storage unavailable", status_code=503)
+    async with deps.get_session_factory()() as session:
+        row = await _get_owned(session, slug)
+        if row is None:
+            raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
+        from app.retrieval.graph import query_graph
+
+        result = await query_graph(session, row, request.query)
+    answer_text: str | None = None
+    if request.answer and result["context"]:
+        gateway = deps.get_gateway()
+        model = getattr(gateway, "default_quick_model", settings.llm_quick_model)
+        try:
+            text, _usage = await gateway.complete(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Answer the question using ONLY the knowledge graph context below. "
+                            "Cite entities as (label). If the context does not contain the "
+                            "answer, say so."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Question: {request.query}\n\nGraph context:\n{result['context']}"
+                        ),
+                    },
+                ],
+                model=model,
+                max_tokens=600,
+                task="kg_query",
+            )
+            answer_text = text
+        except Exception as exc:
+            logger.warning("kg_query_answer_failed", error=type(exc).__name__)
+            answer_text = None
+    return GraphQueryResponse(space=slug, answer=answer_text, **result)

@@ -13,7 +13,17 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-13 — v2.6.0 Deep Intelligence wave P1 docs/22: IRCoT + coverage gate, adaptive router, late chunking, hybrid chunk search, per-key memory, Spaces, map/crawl, freshness half-life)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-14 — v3.0.0 Wave P2 docs/24: PDF page retrieval, per-Space KG, vi-first BM25 + VI golden eval, online interleaving, personalized podcast, structured JSON output, domain tiers)
+
+- ✅ **v3.0.0 Wave P2 (docs/20 §4 → docs/24)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/24-wave-p2-v3.0.md](docs/24-wave-p2-v3.0.md):
+  - P2-1 PDF page-level retrieval: `extraction/pdf.py` (pypdf pinned, `## p.N`, bounded, fail-open) hook vào scraper sau check challenge page; vision-embed API tuỳ chọn (`VISION_EMBED_API_BASE_URL`, guard `EMBEDDING_DIM`, chỉ http(s)) ghi cùng cột `chunks.embedding`; persist vẫn embed khi L2 off nhưng vision API có cấu hình.
+  - P2-2 KG theo Space (LightRAG-lite): `kg_nodes`/`kg_edges` (alembic 0009, unique constraint → rebuild idempotent), `POST /v1/spaces/{slug}/graph/build|query` (LLM rẻ trích entity, `parse_graph_json` sanitize fold dấu, query entity-centric 1-hop + `answer=true`).
+  - P2-3 vi-first: `fold_diacritics()` + `tokenize(fold=True)` mặc định, stopword VI mở rộng, golden eval `evals/golden_v3_vi.json` (25 câu, `scripts/eval_v2.py --golden`).
+  - P2-4 online interleaving: variant sha256 deterministic theo (query, owner), `interleave_sig` trong `search_cache_key`, treatment RRF weight, `/v1/search` trả `interleave.variant`, `POST /v1/memory` nhận `payload.variant`, `GET /v1/ops/interleave` (scan bounded 5000 row).
+  - P2-5 personalized podcast: `/v1/podcast/personal*` từ watchlist của owner (fallback preset global), file `personal-<sha256[:8]>-<date>.mp3` cùng retention; `PODCAST_PERSONAL_ENABLED`.
+  - P2-6 structured JSON output: `SearchRequest.response_format` (jsonschema pinned), response `structured`/`structured_errors` — lỗi thì báo, không bịa. `ResponseFormat` phải định nghĩa TRƯỚC `SearchRequest` (forward-ref của subclass ở module khác).
+  - P2-7 domain tiers (`retrieval/tiers.py`): curated `_TRUSTED_DOMAINS` vẫn thắng, ngược lại tier base; `domain_tier` trên mọi result + cache round-trip.
+  - 43 test mới (`test_v30_wave_p2.py`); 3 vòng tự audit 8-lens (docs/24 §8 — phát hiện & fix: pdf.py string bị hỏng do heredoc, ResponseFormat ordering làm vỡ OpenAPI, retention prefix_len của file personal, kg unique constraint, interleave scan unbounded, vision dim guard); full pytest xanh, ruff/bandit/mypy sạch, frontend 49 vitest + tsc xanh, OpenAPI snapshot regen (6 endpoint mới).
 
 - ✅ **v2.6.0 Deep Intelligence wave P1 (docs/20 §4 → docs/22)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/22-deep-intelligence-wave-v2.6.md](docs/22-deep-intelligence-wave-v2.6.md):
   - P1-1 IRCoT loop trong `research.py`: reformulate gap theo learnings (`_reformulate_query`) + coverage gate (`_plan_coverage`, `RESEARCH_COVERAGE_THRESHOLD=0.6`), `coverage` trong event `learnings`/`done`.

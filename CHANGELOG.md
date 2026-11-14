@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.0.0] - 2026-11-14
+
+### Added (docs/20 P2 wave — docs/24)
+
+- P2-1 PDF page-level retrieval: `extraction/pdf.py` (pypdf, pinned) trích text từng trang thành markdown `## p.N`, hook vào scraper (`extractor_used="pdf-pages"`, sau check challenge page); vision/multimodal qua API tuỳ chọn `VISION_EMBED_API_BASE_URL`/`VISION_EMBED_MODEL` ghi vào cùng cột `chunks.embedding` (guard đúng `EMBEDDING_DIM`, chỉ http(s)); persist vẫn embed khi L2 off nhưng vision API có cấu hình. `PDF_MAX_PAGES=60`.
+- P2-2 Knowledge graph theo Space (LightRAG-lite): bảng `kg_nodes`/`kg_edges` (alembic 0009, unique constraint nên rebuild idempotent), `POST /v1/spaces/{slug}/graph/build|query` (trích bằng LLM rẻ, sanitize JSON, query entity-centric 1-hop + `answer=true` tuỳ chọn). `KG_ENABLED`, `KG_MAX_DOCS_PER_BUILD=20`, `KG_MAX_NODES_PER_BUILD=200`.
+- P2-3 vi-first: `fold_diacritics()` + `tokenize(fold=True)` mặc định (NFD strip Mn + đ→d) nên câu có dấu/không dấu cùng match; mở rộng stopword VI; golden eval mới `evals/golden_v3_vi.json` (25 câu) chạy bằng `scripts/eval_v2.py --golden`.
+- P2-4 online interleaving: gán variant deterministic sha256(`salt|owner|query`), `interleave_sig` vào `search_cache_key` (hai nhánh không share cache), treatment chạy với `INTERLEAVE_TREATMENT_RRF_WEIGHT`; `/v1/search` trả thêm `interleave.variant`; `POST /v1/memory` nhận `payload` (vd `{"variant":"a"}`); `GET /v1/ops/interleave` tổng hợp up_rate theo variant (chỉ feedback explicit, scan bounded 5000 row).
+- P2-5 personalized podcast: `POST /v1/podcast/personal` + `GET .../status|latest` — một bản tin/owner/ngày từ watchlist của owner (fallback preset global, không bịa chủ đề), file `personal-<sha256[:8]>-<date>.mp3` cùng retention với bản tin ngày. `PODCAST_PERSONAL_ENABLED`.
+- P2-6 structured JSON output (Exa-style): `SearchRequest.response_format={type:"json_schema", json_schema, name}` → response `structured` + `structured_errors` (validate bằng jsonschema, pinned; lỗi thì báo, không bịa). Post-cache, fail-open.
+- P2-7 domain reputation tiers (`retrieval/tiers.py`): official/primary/research/reference/aggregator/community/unknown; `domain_authority()` ưu tiên bảng curated, ngược lại dùng tier; mọi result của `/v1/search` có `domain_tier` (cache round-trip được field này).
+- Kèm các commit Phase 1-4 của docs/23 (benchmarking proposals: CSV export cho `/v1/fa/compare`…) đã nằm trên main từ trước bản này.
+
+### Changed
+
+- 6 endpoint mới + các field mới (`response_format`, `structured`, `interleave`, `domain_tier`, `MemoryCreateRequest.payload`) trong OpenAPI snapshot (regenerated); `tests/test_v30_wave_p2.py` 43 test mới; `test_models.py` + `kg_nodes`/`kg_edges`; alembic 0009.
+- Version 3.0.0 đồng bộ `pyproject.toml` / `app/__init__.py` / `frontend/package.json` / `uv.lock`.
+
 ## [2.6.0] - 2026-11-13
 
 ### Added (docs/20 P1 wave — docs/22)

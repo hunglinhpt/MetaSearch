@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     PrimaryKeyConstraint,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -322,6 +323,48 @@ class Space(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     last_crawl_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class KgNode(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """One entity in a Space's knowledge graph (docs/20 P2-2 — LightRAG-lite, v3.0).
+
+    Nodes/edges are extracted from the space's crawled documents by a cheap LLM
+    call and are scoped to (space, owner)."""
+
+    __tablename__ = "kg_nodes"
+    __table_args__ = (
+        Index("idx_kg_nodes_space", "space_id"),
+        Index("idx_kg_nodes_space_label", "space_id", "label"),
+        # One row per (space, label): repeated builds must not duplicate nodes.
+        UniqueConstraint("space_id", "label", name="uq_kg_node"),
+    )
+
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType, ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class KgEdge(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """One relation between two KgNode labels (source/target are labels)."""
+
+    __tablename__ = "kg_edges"
+    __table_args__ = (
+        Index("idx_kg_edges_space", "space_id"),
+        # One row per (space, source, target, relation): idempotent rebuilds.
+        UniqueConstraint("space_id", "source", "target", "relation", name="uq_kg_edge"),
+    )
+
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType, ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    relation: Mapped[str] = mapped_column(Text, nullable=False)
+    weight: Mapped[float] = mapped_column(REAL, nullable=False, server_default="1")
+
+
 __all__ = [
     "Answer",
     "ApiKey",
@@ -332,6 +375,8 @@ __all__ = [
     "Engine",
     "EngineHealth",
     "KeyBoost",
+    "KgEdge",
+    "KgNode",
     "MemoryItem",
     "Query",
     "SearchResult",

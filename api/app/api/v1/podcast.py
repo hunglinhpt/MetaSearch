@@ -4,6 +4,11 @@ POST /v1/podcast/briefing          -> 202 {date,status}; single-flight per day
 GET  /v1/podcast/briefing/status   -> job/file status for the newest briefing
 GET  /v1/podcast/briefing/latest   -> audio/mpeg stream of the newest file
 GET  /v1/podcast/briefing/feed.xml -> RSS 2.0 with one enclosure (latest)
+POST /v1/podcast/personal          -> 202 {date,status}; one personalized briefing
+                                      per owner per day, built from the owner's
+                                      watchlist (docs/20 P2-5)
+GET  /v1/podcast/personal/status   -> job/file status of the owner's newest file
+GET  /v1/podcast/personal/latest   -> audio/mpeg stream of the owner's newest file
 
 All routes sit behind the v1 auth dependency. Without VOICESTUDIO_URL every
 route answers 503 TTS_DISABLED with a pointer to docs/17 — the Web UI keeps
@@ -18,20 +23,24 @@ the key, or keep auth off on loopback (docs/18 §7, item 4 — RSS stays behind 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections import OrderedDict
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, Response
+from sqlalchemy import Table, select
 
 from app.api import deps
 from app.api.v1.schemas import PodcastBriefingStatus
 from app.config import get_settings
 from app.core.admission import admit
+from app.core.auth import current_api_key_id
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
 from app.core.offload import run_cpu
+from app.db.models import WatchlistItem
 from app.orchestration.pipeline import SearchParams
 from app.tts.briefing import (
     BRIEFING_PRESETS,
@@ -73,8 +82,10 @@ def _prune_jobs(retention_days: int) -> None:
     # Same horizon as on-disk retention (briefing.py keeps exactly N days
     # including today) so the job registry and the files never disagree.
     horizon = (_today() - timedelta(days=max(1, retention_days) - 1)).isoformat()
-    while _jobs and next(iter(_jobs)) < horizon:
-        _jobs.popitem(last=False)
+    # v3.0 P2-5: personal job keys ("personal-<hash>:<date>") are not plain
+    # dates - they never match the horizon sweep and are bounded by the LRU cap.
+    for key in [k for k in _jobs if not k.startswith("personal-") and k < horizon]:
+        del _jobs[key]
     while len(_jobs) > _JOBS_MAX:
         _jobs.popitem(last=False)
 
@@ -145,6 +156,48 @@ def _require_voicestudio() -> None:
         )
 
 
+async def _gather_sections(
+    pipeline, presets: tuple[tuple[str, str, int], ...]
+) -> tuple[list[BriefingSection], bool]:
+    """Run one search per preset; each preset degrades independently (empty
+    section on failure). Returns (sections, any_ok)."""
+    settings = get_settings()
+    sections: list[BriefingSection] = []
+    any_ok = False
+    for label, query, freshness in presets:
+        try:
+            outcome = await pipeline.run(
+                SearchParams(
+                    query=query,
+                    engines=["google_news"],
+                    news=True,
+                    k=settings.podcast_items_per_category,
+                    freshness_days=freshness,
+                    timeout_ms=settings.podcast_search_timeout_ms,
+                )
+            )
+            items = [
+                {
+                    "title": r.title,
+                    "url": r.url,
+                    "published_at": r.published_at.isoformat() if r.published_at else "",
+                }
+                for r in outcome.results
+            ]
+            if items:
+                any_ok = True
+            sections.append(BriefingSection(label=label, items=items))
+        except Exception as exc:
+            logger.warning(
+                "podcast_preset_failed",
+                label=label,
+                error=type(exc).__name__,
+                detail=str(exc)[:200],
+            )
+            sections.append(BriefingSection(label=label, items=[]))
+    return sections, any_ok
+
+
 async def _run_briefing(day: date) -> None:
     """Background job: gather preset news -> script -> VoiceStudio -> file.
 
@@ -156,39 +209,7 @@ async def _run_briefing(day: date) -> None:
     key = day.isoformat()
     try:
         pipeline = deps.get_search_pipeline()
-        sections: list[BriefingSection] = []
-        any_ok = False
-        for label, query, freshness in BRIEFING_PRESETS:
-            try:
-                outcome = await pipeline.run(
-                    SearchParams(
-                        query=query,
-                        engines=["google_news"],
-                        news=True,
-                        k=settings.podcast_items_per_category,
-                        freshness_days=freshness,
-                        timeout_ms=settings.podcast_search_timeout_ms,
-                    )
-                )
-                items = [
-                    {
-                        "title": r.title,
-                        "url": r.url,
-                        "published_at": r.published_at.isoformat() if r.published_at else "",
-                    }
-                    for r in outcome.results
-                ]
-                if items:
-                    any_ok = True
-                sections.append(BriefingSection(label=label, items=items))
-            except Exception as exc:
-                logger.warning(
-                    "podcast_preset_failed",
-                    label=label,
-                    error=type(exc).__name__,
-                    detail=str(exc)[:200],
-                )
-                sections.append(BriefingSection(label=label, items=[]))
+        sections, any_ok = await _gather_sections(pipeline, BRIEFING_PRESETS)
         script = build_briefing_script(sections, max_chars=settings.podcast_max_chars, today=day)
         if not any_ok or not script.strip():
             raise MetaSearchError(ErrorCode.NO_RESULTS, "no news results to brief", status_code=503)
@@ -349,3 +370,245 @@ _XML_ESCAPES = str.maketrans({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quo
 
 def _xml_escape(text: str) -> str:
     return text.translate(_XML_ESCAPES)
+
+
+# ---------------------------------------------------------------------------
+# v3.0.0 P2-5 - personalized podcast (docs/20 section 4): one briefing per
+# owner per day, built from the owner's watchlist queries instead of the global
+# presets. Files are named personal-<ownerhash8>-<date>.mp3 and share the same
+# data dir and retention sweep as the daily briefing (tts/briefing.py
+# _PERSONAL_FILE_RE). The owner hash keeps the raw API key id out of file
+# names and URLs.
+
+
+def _personal_owner() -> str:
+    return current_api_key_id.get() or "anonymous"
+
+
+def _personal_prefix(owner: str) -> str:
+    return f"personal-{hashlib.sha256(owner.encode('utf-8')).hexdigest()[:8]}"
+
+
+def _personal_key(owner: str, day: date) -> str:
+    # Distinct from the daily key "<date>" so the two jobs never collide in
+    # the single-flight registry (an owner could run both in one day).
+    return f"{_personal_prefix(owner)}:{day.isoformat()}"
+
+
+async def _watchlist_queries(owner: str) -> list[str]:
+    """Owner's watchlist queries in creation order; empty on DB failure so the
+    caller falls back to the global presets - topics are never fabricated."""
+    try:
+        from app.db.session import get_engine
+
+        table = cast(Table, WatchlistItem.__table__)
+        async with get_engine().begin() as conn:
+            await conn.run_sync(table.create, checkfirst=True)
+        async with deps.get_session_factory()() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(WatchlistItem.query)
+                        .where(WatchlistItem.api_key_id == owner)
+                        .order_by(WatchlistItem.created_at.asc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [str(q) for q in rows if q]
+    except Exception as exc:
+        logger.warning("personal_podcast_watchlist_read_failed", error=type(exc).__name__)
+        return []
+
+
+def _personal_presets(queries: list[str]) -> tuple[tuple[str, str, int], ...]:
+    """Map watchlist queries to briefing presets (label=query, 2-day freshness,
+    capped at the watchlist cap so a big list cannot blow the char budget)."""
+    if not queries:
+        return BRIEFING_PRESETS
+    cap = get_settings().watchlist_max_items
+    return tuple((q[:40], q, 2) for q in queries[:cap])
+
+
+def _personal_status_for(owner: str, day: date) -> PodcastBriefingStatus:
+    """Mirror of _status_for for the owner-scoped file (prefix-scoped path)."""
+    key = _personal_key(owner, day)
+    job = _jobs.get(key)
+    path = briefing_path(_data_dir(), day, _personal_prefix(owner))
+    if job is not None and job.get("status") in ("pending", "running"):
+        return PodcastBriefingStatus(
+            date=day.isoformat(),
+            status=str(job.get("status", "pending")),
+            error=job.get("error"),
+            chars=int(job.get("chars") or 0),
+            audio_bytes=int(job.get("audio_bytes") or 0),
+            created_at=job.get("created_at"),
+        )
+    try:
+        stat = path.stat() if path.is_file() else None
+    except OSError:
+        stat = None
+    if stat is not None:
+        return PodcastBriefingStatus(
+            date=day.isoformat(),
+            status="ready",
+            chars=int(job.get("chars") or 0) if job else 0,
+            audio_bytes=stat.st_size,
+            created_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+        )
+    if job is not None:
+        return PodcastBriefingStatus(
+            date=day.isoformat(),
+            status=str(job.get("status", "none")),
+            error=job.get("error"),
+            chars=int(job.get("chars") or 0),
+            audio_bytes=int(job.get("audio_bytes") or 0),
+            created_at=job.get("created_at"),
+        )
+    return PodcastBriefingStatus(date=day.isoformat(), status="none")
+
+
+async def _run_personal_briefing(owner: str, day: date) -> None:
+    """Background job: owner's watchlist -> sections -> script -> VoiceStudio
+    -> personal-<hash>-<date>.mp3. Same degradation contract as _run_briefing."""
+    settings = get_settings()
+    key = _personal_key(owner, day)
+    try:
+        pipeline = deps.get_search_pipeline()
+        queries = await _watchlist_queries(owner)
+        sections, any_ok = await _gather_sections(pipeline, _personal_presets(queries))
+        script = build_briefing_script(sections, max_chars=settings.podcast_max_chars, today=day)
+        if not any_ok or not script.strip():
+            raise MetaSearchError(
+                ErrorCode.NO_RESULTS, "no watchlist results to brief", status_code=503
+            )
+        _jobs[key]["chars"] = len(script)
+        client = deps.get_tts_client()
+        async with asyncio.timeout(settings.podcast_timeout_s):
+            audio, _media_type = await client.synthesize(script, response_format="mp3")
+        # File writes/retention are sync IO - keep them off the event loop.
+        path = await run_cpu(write_briefing, _data_dir(), day, audio, _personal_prefix(owner))
+        removed = await run_cpu(
+            cleanup_retention,
+            _data_dir(),
+            retention_days=settings.podcast_retention_days,
+            today=day,
+        )
+        if removed:
+            logger.info("podcast_retention_removed", count=removed, date=key)
+        _jobs[key].update(status="ready", audio_bytes=len(audio), file=str(path))
+        logger.info(
+            "podcast_personal_ready",
+            owner_hash=_personal_prefix(owner),
+            date=day.isoformat(),
+            chars=len(script),
+            bytes=len(audio),
+        )
+    except asyncio.CancelledError:
+        job = _jobs.get(key)
+        if job is not None and job.get("status") in ("pending", "running"):
+            job.update(status="cancelled", error="briefing_cancelled")
+        raise
+    except Exception as exc:
+        logger.warning(
+            "podcast_personal_failed",
+            date=day.isoformat(),
+            error=type(exc).__name__,
+            detail=str(exc)[:300],
+        )
+        job = _jobs.get(key)
+        if job is not None:
+            job.update(status="error", error="briefing_failed")
+
+
+@router.post("/podcast/personal", response_model=PodcastBriefingStatus, status_code=202)
+async def create_personal_briefing() -> PodcastBriefingStatus:
+    settings = get_settings()
+    if not settings.podcast_personal_enabled:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            "personal podcast is disabled (PODCAST_PERSONAL_ENABLED=false)",
+            status_code=400,
+        )
+    _require_voicestudio()
+    owner = _personal_owner()
+    day = _today()
+    key = _personal_key(owner, day)
+    async with admit("tts"):
+        existing = _personal_status_for(owner, day)
+        if existing.status == "ready":
+            # Idempotent per owner per day: re-creating returns the existing file.
+            return existing
+        if _jobs.get(key, {}).get("status") == "running":
+            return PodcastBriefingStatus(date=day.isoformat(), status="running")
+        # Single-flight: mark running SYNCHRONOUSLY before scheduling.
+        _jobs[key] = {
+            "status": "running",
+            "created_at": datetime.now(UTC).isoformat(),
+            "error": None,
+            "chars": 0,
+            "audio_bytes": 0,
+        }
+        _jobs.move_to_end(key)
+        _prune_jobs(settings.podcast_retention_days)
+        task = asyncio.create_task(_run_personal_briefing(owner, day))
+        _tasks.add(task)
+        task.add_done_callback(_tasks.discard)
+    return PodcastBriefingStatus(date=day.isoformat(), status="running")
+
+
+@router.get("/podcast/personal/status", response_model=PodcastBriefingStatus)
+async def personal_briefing_status() -> PodcastBriefingStatus:
+    _require_voicestudio()
+    if not get_settings().podcast_personal_enabled:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            "personal podcast is disabled (PODCAST_PERSONAL_ENABLED=false)",
+            status_code=400,
+        )
+    owner = _personal_owner()
+    # Newest of today's job and the latest on-disk personal file (prefix-scoped).
+    day = _today()
+    if _jobs.get(_personal_key(owner, day)):
+        return _personal_status_for(owner, day)
+    path = latest_briefing(_data_dir(), _personal_prefix(owner))
+    if path is not None:
+        try:
+            latest_day = date.fromisoformat(path.stem.removeprefix(f"{_personal_prefix(owner)}-"))
+        except ValueError:
+            latest_day = day
+        return _personal_status_for(owner, latest_day)
+    return _personal_status_for(owner, day)
+
+
+@router.get("/podcast/personal/latest")
+async def personal_briefing_latest() -> FileResponse:
+    _require_voicestudio()
+    if not get_settings().podcast_personal_enabled:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            "personal podcast is disabled (PODCAST_PERSONAL_ENABLED=false)",
+            status_code=400,
+        )
+    settings = get_settings()
+    owner = _personal_owner()
+    # Retention runs BEFORE picking the file (same ordering as /briefing/latest).
+    await run_cpu(
+        cleanup_retention,
+        _data_dir(),
+        retention_days=settings.podcast_retention_days,
+        today=_today(),
+    )
+    path = latest_briefing(_data_dir(), _personal_prefix(owner))
+    if path is None or not path.is_file() or path.is_symlink():
+        raise MetaSearchError(
+            ErrorCode.NOT_FOUND, "no personal briefing generated yet", status_code=404
+        )
+    # Per-owner content: never let a shared cache store it.
+    return FileResponse(
+        path,
+        media_type="audio/mpeg",
+        filename=path.name,
+        headers={"Cache-Control": "private, no-store"},
+    )

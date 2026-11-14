@@ -343,6 +343,10 @@ class SearchParams:
     # docs/20 P1-5: set False for synthetic sub-queries (research loop) so the
     # memory log only contains real user queries.
     record_memory: bool = True
+    # docs/20 P2-4: online interleaving — deterministic variant ("a"|"b") and
+    # its signature (folded into the cache key so variants never share entries).
+    interleave_variant: str = ""
+    interleave_sig: str = ""
 
 
 @contextlib.contextmanager
@@ -456,6 +460,8 @@ class SearchOutcome:
     cached: bool = False
     complete: bool = True
     age_s: int | None = None
+    # docs/20 P2-4: interleaving variant served ("a"|"b", "" when disabled).
+    interleave_variant: str = ""
 
 
 def normalize_query(raw: str) -> str:
@@ -553,6 +559,19 @@ class SearchPipeline:
                 normalize_query(params.query),
                 max_per_key=self.settings.memory_max_per_key,
             )
+        # docs/20 P2-4: deterministic interleave variant per (query, owner).
+        if self.settings.interleave_enabled:
+            from app.retrieval.interleave import assign_variant, variant_signature
+
+            variant = assign_variant(
+                normalize_query(params.query),
+                owner,
+                ratio=self.settings.interleave_ratio,
+                salt=self.settings.interleave_salt,
+            )
+            params = dataclasses.replace(
+                params, interleave_variant=variant, interleave_sig=variant_signature(variant)
+            )
         if (
             self.gateway is not None
             and self.settings.query_expansion_enabled
@@ -627,6 +646,7 @@ class SearchPipeline:
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 cached=True,
                 complete=bool(cached_payload.get("complete", True)),
+                interleave_variant=params.interleave_variant,
                 age_s=age_s,
             )
         CACHE_EVENTS.labels(kind="search", outcome="miss").inc()
@@ -649,12 +669,18 @@ class SearchPipeline:
             )
             raws.extend(vraws)
         configs = await self.registry.configs()
+        # docs/20 P2-4: treatment variant runs with the configured RRF weight.
+        rrf_weight = (
+            self.settings.interleave_treatment_rrf_weight
+            if params.interleave_variant == "b"
+            else self.settings.rrf_weight
+        )
         results = merge(
             raws,
             query=query,
             registry=configs,
             news=params.news,
-            rrf_weight=self.settings.rrf_weight,
+            rrf_weight=rrf_weight,
             boosts=list(params.boost_rules) or None,
             # docs/20 P1-8: configurable freshness half-lives (stale downrank).
             news_half_life_days=self.settings.freshness_half_life_days_news,
@@ -685,6 +711,7 @@ class SearchPipeline:
             statuses=statuses,
             latency_ms=latency_ms,
             complete=is_complete,
+            interleave_variant=params.interleave_variant,
         )
 
     async def _cache_lookup(self, query: str, params: SearchParams) -> dict | None:
