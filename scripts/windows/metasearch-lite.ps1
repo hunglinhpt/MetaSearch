@@ -149,7 +149,15 @@ function Start-Lite {
         Write-Log "venv not found at $Python (cd api; python -m venv .venv; .venv\Scripts\pip install -e .)"
         exit 1
     }
-    Import-EnvFile $EnvFile
+    if (-not $EnvFile) {
+        # Lite mode: auto-detect .env.lbs if present
+        $lbsFile = Join-Path $ApiDir ".env.lbs"
+        if (Test-Path $lbsFile) {
+            Import-EnvFile $lbsFile
+        }
+    } else {
+        Import-EnvFile $EnvFile
+    }
     Invoke-LogRotation
     Ensure-LiteUi
     $env:API_HOST = "127.0.0.1"
