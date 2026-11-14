@@ -153,7 +153,7 @@ function Start-Lite {
     Invoke-LogRotation
     Ensure-LiteUi
     $env:API_HOST = "127.0.0.1"
-    $env:AUTH_ENABLED = "true"
+    
     $proc = Start-Process -FilePath $Python `
         -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "$Port", "--timeout-graceful-shutdown", "15" `
         -WorkingDirectory $ApiDir -WindowStyle Hidden `
