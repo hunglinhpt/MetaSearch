@@ -83,13 +83,10 @@ async def answer(request: AnswerRequest):
     is_council = (
         request.council_mode or bool(request.council_endpoints) or settings.llm_council_enabled
     )
+    # Lite mode: allow search-only answers without LLM when provider is none
+    run_kwargs = _extra_run_kwargs(request)
     if not has_override and not is_council and effective_provider == "none":
-        raise MetaSearchError(
-            ErrorCode.INTERNAL,
-            "No LLM provider configured. Set LLM_PROVIDER in environment "
-            "or supply 'llm' override in request.",
-            status_code=500,
-        )
+        run_kwargs.pop("model", None)
 
     budget = create_budget_for_route("answer", timeout_ms=request.timeout_ms)
     max_s = settings.answer_stream_max_s
@@ -99,7 +96,7 @@ async def answer(request: AnswerRequest):
                 deadline = asyncio.timeout(max_s)
                 try:
                     async with deadline:
-                        return await _json(_params(request), _extra_run_kwargs(request))
+                        return await _json(_params(request), run_kwargs)
                 except TimeoutError:
                     if deadline.expired():
                         raise MetaSearchError(
@@ -114,7 +111,7 @@ async def answer(request: AnswerRequest):
         return _SlotStreamResponse(
             _sse(
                 _params(request),
-                _extra_run_kwargs(request),
+                run_kwargs,
                 budget=budget,
                 max_s=max_s,
             ),

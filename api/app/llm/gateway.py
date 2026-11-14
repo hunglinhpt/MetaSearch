@@ -353,15 +353,9 @@ class LLMGateway:
         """
         target = self.resolve_target()
         if target.provider == "none" or target.protocol == "none":
-            if target.fallback_provider and target.fallback_provider != "none":
-                target = resolve_llm_target(
-                    self._settings,
-                    request_override=LLMOverride(provider=target.fallback_provider),  # type: ignore[arg-type]
-                )
-            else:
-                raise LLMError(
-                    "LLM provider is 'none': set LLM_PROVIDER plus an API key to use /v1/answer"
-                )
+            # Lite mode: skip LLM processing when provider is none
+            return
+            yield  # Never reached, but satisfies type checker
 
         eff_model = self._effective_model(model, target, task=task)
         max_tok = max_tokens or self._settings.llm_answer_max_tokens
