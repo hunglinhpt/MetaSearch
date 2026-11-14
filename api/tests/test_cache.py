@@ -49,6 +49,15 @@ class TestCacheClient:
         assert await client.get_json("k") == {"a": 1}
 
     async def test_dead_redis_is_a_miss_not_a_crash(self):
+        # Audit round 15: the redis-down marker has a 30s TTL and leaks across
+        # tests via the module global — reset it so this test always exercises
+        # the fake's raise path (full-suite order-dependent flake). The shared
+        # module-level _local_cache leaks the same way (an earlier test's
+        # set_json lands there while the marker is up), so clear it too.
+        import app.cache as _cache_mod
+
+        _cache_mod._redis_down_until = 0.0
+        _cache_mod._local_cache.clear()
         fake = FakeRedis()
         fake.fail = True
         client = CacheClient(fake)
