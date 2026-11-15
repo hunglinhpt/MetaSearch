@@ -254,7 +254,7 @@ DOMAIN_INTELLIGENCE_REGISTRY: dict[str, DomainIntelligencePack] = {
     ),
     "general_discovery": DomainIntelligencePack(
         id="general_discovery",
-        name=" Đa Lĩnh Vực Tổng Hợp (Universal Multi-Perspective Synthesis)",
+        name="Đa Lĩnh Vực Tổng Hợp (Universal Multi-Perspective Synthesis)",
         maturity="active_vertical",
         categories=["general", "reference", "social"],
         preferred_engines=["searxng", "ddg", "wikipedia", "reddit"],
@@ -301,7 +301,7 @@ def classify_domain_intelligence(
         "academic": "academic_research",
         "fengshui": "eastern_metaphysics",
         "news": "news_geopolitics",
-        "comparative": "technology_ai",
+        "comparative": "general_discovery",
         "general": "general_discovery",
     }
     q_lower = query.lower()

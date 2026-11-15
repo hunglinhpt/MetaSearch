@@ -62,7 +62,9 @@ _PUBLISH_KEYS = ("reportdate", "createdat")
 
 # Plausibility band for a VN issuer's VND-billion amounts (revenue, profit,
 # balance-sheet anchors) and growth percentages — mirrors the TCBS gates.
+# Flow/residual figures (net_profit, total_equity) may legitimately be negative.
 _VND_BIL_BAND = (0.0, 3_000_000.0)  # 3,000,000 tỷ đ ≈ 120 tỷ USD
+_SIGNED_VND_BIL_FIELDS = frozenset({"net_profit_vnd_bil", "total_equity_vnd_bil"})
 _GROWTH_PCT_BOUND = 500.0
 
 
@@ -70,8 +72,9 @@ def _drop_implausible_vnd_bil(fields: dict[str, float], sym: str) -> None:
     lo, hi = _VND_BIL_BAND
     for name in [k for k in fields if k.endswith("_vnd_bil")]:
         val = fields[name]
-        if not (lo <= val <= hi):
-            logger.warning("fa_suspect_unit: %s %s=%s outside %s", sym, name, val, (lo, hi))
+        low_bound = -hi if name in _SIGNED_VND_BIL_FIELDS else lo
+        if not (low_bound <= val <= hi):
+            logger.warning("fa_suspect_unit: %s %s=%s outside %s", sym, name, val, (low_bound, hi))
             del fields[name]
     for name in ("revenue_growth_pct", "profit_growth_pct"):
         val = fields.get(name)

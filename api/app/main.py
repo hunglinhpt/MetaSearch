@@ -123,6 +123,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         environment=settings.environment,
         giants=settings.giants(),
     )
+    if not settings.is_test:
+        if not settings.auth_enabled:
+            # Review F-01: say it out loud instead of relying on the operator knowing.
+            logger.warning(
+                "auth_disabled_open_api",
+                note="every /v1 route is open to any local caller",
+                anonymous_rate_limit_rpm=settings.anonymous_rate_limit_rpm,
+                hint="set AUTH_ENABLED=true on anything reachable beyond this machine",
+            )
+        workers = _configured_worker_count()
+        if workers > 1:
+            # Review F-12: admission limits, job registries, single-flight and the key
+            # cache are per process; N workers multiply the limits by N.
+            logger.warning(
+                "multi_worker_process_local_state",
+                workers=workers,
+                hint="run one worker per deployment or move this state to Redis (docs/08)",
+            )
     if settings.scheduler_enabled and not settings.is_test:
         from app.api.deps import get_scanner
 
@@ -176,6 +194,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("service_stopped")
 
 
+def _configured_worker_count() -> int:
+    """Worker count requested through the usual process-manager env vars (1 if unset)."""
+    import os
+
+    for name in ("WEB_CONCURRENCY", "UVICORN_WORKERS"):
+        raw = os.environ.get(name, "").strip()
+        if raw.isdigit() and int(raw) > 0:
+            return int(raw)
+    return 1
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
@@ -194,8 +223,11 @@ def create_app() -> FastAPI:
     setup_tracing(app)
 
     async def _check_docs_access(request: Request) -> None:
-        client_host = request.client.host if request.client else ""
-        if client_host in ("127.0.0.1", "::1", "localhost", "testclient"):
+        from app.core.net import is_direct_loopback
+
+        # Review F-09: a proxy on the same host makes every caller look like 127.0.0.1;
+        # is_direct_loopback() also rejects requests that carry forwarding headers.
+        if is_direct_loopback(request):
             return
         from app.core.auth import authenticate
         from app.core.errors import ErrorCode, MetaSearchError

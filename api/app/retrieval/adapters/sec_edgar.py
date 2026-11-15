@@ -31,9 +31,12 @@ def _parse_sec_date(val: str | None) -> datetime | None:
     if not val:
         return None
     try:
-        return datetime.fromisoformat(val).replace(tzinfo=UTC)
+        parsed = datetime.fromisoformat(val)
     except (ValueError, TypeError):
         return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 class SecEdgarAdapter:
@@ -106,7 +109,7 @@ class SecEdgarAdapter:
         except ValueError as exc:
             raise AdapterError("sec_edgar returned non-JSON body") from exc
 
-        hits = payload.get("hits", {}).get("hits") or []
+        hits = (payload.get("hits") or {}).get("hits") or [] if isinstance(payload, dict) else []
         results: list[RawResult] = []
 
         for item in hits:

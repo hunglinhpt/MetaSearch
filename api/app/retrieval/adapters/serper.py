@@ -91,7 +91,8 @@ class SerperAdapter:
             raise AdapterError("serper returned non-JSON body") from exc
 
         results: list[RawResult] = []
-        for item in body.get("organic") or []:
+        organic = body.get("organic") or [] if isinstance(body, dict) else []
+        for item in organic:
             link = item.get("link")
             if not link:
                 continue

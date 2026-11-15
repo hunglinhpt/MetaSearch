@@ -34,7 +34,7 @@ _BRIEFING_FILE_RE = re.compile(r"^briefing-\d{4}-\d{2}-\d{2}\.mp3$")
 # Orphaned temp files from a crash mid-write — retention removes these too
 # (daily + personal prefixes).
 _BRIEFING_TMP_RE = re.compile(r"^(?:briefing|personal-[0-9a-f]{16})-\d{4}-\d{2}-\d{2}\.mp3\.tmp$")
-# docs/20 P2-5: personalized podcast files (personal-<ownerhash8>-<date>.mp3).
+# docs/20 P2-5: personalized podcast files (personal-<ownerhash16>-<date>.mp3).
 _PERSONAL_FILE_RE = re.compile(r"^personal-[0-9a-f]{16}-\d{4}-\d{2}-\d{2}\.mp3$")
 
 

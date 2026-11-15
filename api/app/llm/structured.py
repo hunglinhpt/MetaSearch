@@ -11,14 +11,12 @@ the log — same "no fabrication" rule as citations.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
+from app.core.json_utils import extract_json_object
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
-
-_JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def validate_instance(instance: Any, schema: dict[str, Any]) -> list[str]:
@@ -98,13 +96,9 @@ async def extract_structured(
     except Exception as exc:
         logger.warning("structured_extract_llm_failed", error=type(exc).__name__)
         return None, [f"llm: {type(exc).__name__}"], ""
-    match = _JSON_BLOCK.search(text or "")
-    if not match:
-        return None, ["no JSON object in LLM reply"], text or ""
-    try:
-        obj = json.loads(match.group(0))
-    except json.JSONDecodeError as exc:
-        return None, [f"json: {exc}"], text or ""
+    obj = extract_json_object(text or "")
+    if obj is None:
+        return None, ["no valid JSON object in LLM reply"], text or ""
     errors = validate_instance(obj, schema)
     if errors:
         logger.info("structured_validation_failed", errors=errors[:3])

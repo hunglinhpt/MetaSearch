@@ -15,6 +15,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.core.metrics import READINESS, render_metrics
+from app.core.net import is_direct_loopback
 from app.db.session import get_engine
 from app.http import get_http_client
 
@@ -117,12 +118,42 @@ async def collect_readiness() -> dict[str, Any]:
     return {"ready": ready, "checks": checks}
 
 
+async def _readiness_detail_allowed(request: Request) -> bool:
+    """Review F-10: exception class names and the Alembic head are for the operator only."""
+    if is_direct_loopback(request):
+        return True
+    if not get_settings().auth_enabled:
+        return False
+    raw_auth = request.headers.get("authorization", "").strip()
+    bearer = raw_auth[7:].strip() if raw_auth[:7].lower() == "bearer " else raw_auth
+    if not bearer:
+        return False
+    try:
+        from app.core.auth import authenticate
+
+        return (await authenticate(bearer)).role == "admin"
+    except Exception:
+        return False
+
+
+def _redact_checks(result: dict[str, Any]) -> None:
+    keep = ("ok", "skipped", "status")
+    result["checks"] = {
+        name: {k: v for k, v in check.items() if k in keep}
+        for name, check in result["checks"].items()
+    }
+
+
 @router.get("/readyz", summary="Readiness probe with degraded state (WP-14)")
-async def readyz(response: Response, strict: bool = False) -> dict[str, Any]:
+async def readyz(request: Request, response: Response, strict: bool = False) -> dict[str, Any]:
     """ready 200; degraded 200 (a dependency is down, search still works; 503 with strict);
-    not_ready 503 (no usable engine); shutting_down 503."""
+    not_ready 503 (no usable engine); shutting_down 503. Error names and schema_version
+    are returned to local/admin callers only (the status code and ok flags are public)."""
     result = await collect_readiness()
-    result["schema_version"] = schema_version()
+    if await _readiness_detail_allowed(request):
+        result["schema_version"] = schema_version()
+    else:
+        _redact_checks(result)
     if _shutting_down:
         result["status"] = "shutting_down"
         READINESS.set(0)
@@ -146,9 +177,8 @@ async def readyz(response: Response, strict: bool = False) -> dict[str, Any]:
 async def _any_engine_usable() -> bool:
     """At least one engine both has an adapter and is enabled in the engine store."""
     from app.api import deps
-    from app.retrieval.registry import build_adapters
 
-    adapters = build_adapters(get_settings())
+    adapters = deps.get_registry().adapters
     try:
         snapshot = await deps.get_engine_store().snapshot()
     except Exception:  # store down: fall back to "an adapter exists"
@@ -212,9 +242,8 @@ async def metrics(request: Request) -> Response:
                     ErrorCode.UNAUTHORIZED, "metrics require an admin key", status_code=403
                 )
     else:
-        # No-auth deployments keep metrics loopback-only.
-        client_host = request.client.host if request.client else "?"
-        if client_host not in ("127.0.0.1", "::1", "testclient"):
+        # No-auth deployments keep metrics loopback-only (a direct caller, not a proxy).
+        if not is_direct_loopback(request):
             raise MetaSearchError(
                 ErrorCode.UNAUTHORIZED, "metrics restricted to loopback", status_code=403
             )

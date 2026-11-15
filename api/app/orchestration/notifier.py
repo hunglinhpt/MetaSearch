@@ -67,7 +67,7 @@ class NotificationDispatcher:
             )
             return False
         except Exception as exc:
-            logger.warning("telegram_notification_exception", error=str(exc))
+            logger.warning("telegram_notification_exception", error=type(exc).__name__)
             return False
 
     async def _send_webhook(self, post: BlogPost, client: httpx.AsyncClient) -> bool:
@@ -100,7 +100,7 @@ class NotificationDispatcher:
             )
             return False
         except Exception as exc:
-            logger.warning("webhook_notification_exception", error=str(exc))
+            logger.warning("webhook_notification_exception", error=type(exc).__name__)
             return False
 
     async def _send_discord(self, post: BlogPost, client: httpx.AsyncClient) -> bool:
@@ -113,7 +113,7 @@ class NotificationDispatcher:
             "embeds": [
                 {
                     "title": post.title,
-                    "description": post.summary[:2000],
+                    "description": (post.summary or "")[:2000],
                     "color": 3891446,  # 0x3b82f6 Blue
                     "fields": [
                         {"name": "Chủ đề", "value": post.topic, "inline": True},
@@ -138,7 +138,7 @@ class NotificationDispatcher:
             )
             return False
         except Exception as exc:
-            logger.warning("discord_notification_exception", error=str(exc))
+            logger.warning("discord_notification_exception", error=type(exc).__name__)
             return False
 
     async def send_briefing_notification(self, post: BlogPost) -> dict[str, bool]:
@@ -159,6 +159,6 @@ class NotificationDispatcher:
             results["webhook"] = bool(res_wh) if not isinstance(res_wh, Exception) else False
             results["discord"] = bool(res_dc) if not isinstance(res_dc, Exception) else False
         except Exception as exc:
-            logger.error("notification_dispatcher_unexpected_error", error=str(exc))
+            logger.error("notification_dispatcher_unexpected_error", error=type(exc).__name__)
             results = {"telegram": False, "webhook": False, "discord": False}
         return results

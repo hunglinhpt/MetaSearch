@@ -92,8 +92,8 @@ def apply_boosts(item: ScoredResult, query: str, rules: list[BoostRule]) -> int:
                 url_factor += rule.weight
                 applied += 1
     if applied:
-        domain_factor = max(1.0 - _MAX_DOMAIN_FACTOR, min(domain_factor, _MAX_DOMAIN_FACTOR))
-        url_factor = max(1.0 - _MAX_DOMAIN_FACTOR, min(url_factor, _MAX_DOMAIN_FACTOR))
+        domain_factor = max(0.0, min(domain_factor, _MAX_DOMAIN_FACTOR))
+        url_factor = max(0.0, min(url_factor, _MAX_DOMAIN_FACTOR))
         item.score = max(0.0, item.score * domain_factor * url_factor + keyword_add * _KEYWORD_STEP)
         item.boosts_applied = applied
     return applied

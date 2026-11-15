@@ -152,9 +152,26 @@ class ResearchJob:
 
 
 class ResearchJobStore:
+    _MAX_CACHED_JOBS = 500
+
     def __init__(self) -> None:
         self._jobs: dict[uuid.UUID, ResearchJob] = {}
         self._lock = asyncio.Lock()
+
+    def _prune_locked(self) -> None:
+        now = time.monotonic()
+        for job_id in [
+            jid for jid, j in self._jobs.items() if j.finished and now - j.created_at > 3600
+        ]:
+            self._jobs.pop(job_id, None)
+        if len(self._jobs) > self._MAX_CACHED_JOBS:
+            finished_oldest = sorted(
+                ((j.created_at, jid) for jid, j in self._jobs.items() if j.finished),
+                key=lambda item: item[0],
+            )
+            excess = len(self._jobs) - self._MAX_CACHED_JOBS
+            for _, jid in finished_oldest[:excess]:
+                self._jobs.pop(jid, None)
 
     async def create(self, query: str) -> ResearchJob:
         settings = get_settings()
@@ -168,12 +185,7 @@ class ResearchJobStore:
                 )
             job = ResearchJob(id=uuid.uuid4(), query=query)
             self._jobs[job.id] = job
-            # Prune finished jobs older than an hour to bound memory.
-            now = time.monotonic()
-            for job_id in [
-                jid for jid, j in self._jobs.items() if j.finished and now - j.created_at > 3600
-            ]:
-                self._jobs.pop(job_id, None)
+            self._prune_locked()
             return job
 
     async def get(self, research_id: str) -> ResearchJob:
@@ -187,7 +199,12 @@ class ResearchJobStore:
 
         restored = await self._load_from_db(job_id)
         if restored is not None:
-            self._jobs[job_id] = restored
+            async with self._lock:
+                existing = self._jobs.get(job_id)
+                if existing is not None:
+                    return existing
+                self._jobs[job_id] = restored
+                self._prune_locked()
             return restored
 
         raise MetaSearchError(

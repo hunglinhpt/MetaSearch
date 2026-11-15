@@ -11,20 +11,17 @@ shows they only win on corpus-summary questions, and they cost the most.
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from app.core.json_utils import extract_json_object
 from app.core.logging import get_logger
 from app.retrieval.scoring import fold_diacritics, tokenize
 
 logger = get_logger(__name__)
-
-_JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 _EXTRACT_SYSTEM = (
     "You build a knowledge graph from a document. Reply with ONE JSON object: "
@@ -44,12 +41,8 @@ def _extract_messages(text: str) -> list[dict[str, str]]:
 
 def parse_graph_json(text: str, *, max_nodes: int = 200) -> dict[str, list[dict]]:
     """Parse + sanitize the LLM's graph JSON. Never raises."""
-    match = _JSON_BLOCK.search(text or "")
-    if not match:
-        return {"nodes": [], "edges": []}
-    try:
-        obj = json.loads(match.group(0))
-    except json.JSONDecodeError:
+    obj = extract_json_object(text or "")
+    if obj is None:
         return {"nodes": [], "edges": []}
     raw_nodes = obj.get("nodes")
     raw_edges = obj.get("edges")

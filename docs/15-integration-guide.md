@@ -33,6 +33,13 @@ metasearch keys create my-system --rate-limit 600 --max-concurrent 16
 | Hậu kiểm `[n]` trong câu trả lời LLM của bạn | `POST /v1/citations/validate` | Xem `marker_valid` ở mục 3.4. |
 | Báo cáo nhiều vòng (30-180 s) | `POST /v1/research`, rồi `GET /v1/research/{id}` | Chạy nền, chỉ chủ job đọc được. |
 
+> **v3.2.0 (2026-11-15):** OpenAPI snapshot đổi: `POST /v1/context` thêm
+> `compression` và `skill` vào `include`; `AnswerResponse` thêm `compression`
+> và `skill`; thêm 7 endpoint mới (`/v1/llm/validate`, `/v1/llm/health`,
+> `/v1/skills`, `/v1/ops/skills`, `/v1/memory/search`, `/v1/memory/timeline`,
+> `/v1/memory/observations`). MCP thêm 3 tools: `memory_search`,
+> `memory_timeline`, `memory_get_observations`. Xem docs/25.
+>
 > **v3.0.0 (2026-11-14):** OpenAPI snapshot đổi: `SearchRequest` thêm
 > `response_format` (structured JSON output, `SearchResponse` có `structured` +
 > `structured_errors`), `SearchResponse` có thêm `interleave` và mỗi result có
@@ -72,7 +79,7 @@ Mặc định `include: ["chunks", "sources"]`. Thêm phần cần thiết:
 {"query": "...", "k": 5, "include": ["chunks", "sources", "messages"]}
 ```
 
-Giá trị hợp lệ: `chunks`, `sources`, `context_md`, `messages`, `system_prompt`, `domain_intelligence`. `context_md` và `messages` lặp lại nội dung chunk, nên payload mặc định nhỏ hơn khoảng một nửa. **Đây là thay đổi hành vi:** client cũ đọc `context_md` phải thêm nó vào `include`.
+Giá trị hợp lệ: `chunks`, `sources`, `context_md`, `messages`, `system_prompt`, `domain_intelligence`, `compression`, `skill`. `context_md` và `messages` lặp lại nội dung chunk, nên payload mặc định nhỏ hơn khoảng một nửa. **Đây là thay đổi hành vi:** client cũ đọc `context_md` phải thêm nó vào `include`.
 
 ### 3.4 Citation
 
@@ -141,4 +148,5 @@ Danh sách engine đang bật và sức khỏe của chúng: `GET /v1/engines`, 
 
 | Ngày | Thay đổi |
 |---|---|
+| 2026-11-15 | `/v1/context` `include` thêm `compression`, `skill`; `AnswerResponse` thêm `compression`, `skill`. Thêm 7 endpoint: `POST /v1/llm/validate`, `GET /v1/llm/health`, `GET /v1/skills`, `GET /v1/ops/skills`, `GET /v1/memory/search`, `GET /v1/memory/timeline`, `POST /v1/memory/observations`. MCP: thêm `memory_search`, `memory_timeline`, `memory_get_observations`. Hardening `docs/26`: `GET /v1/ops/status`, `GET /v1/ops/interleave`, `GET /v1/ops/skills`, `GET /v1/llm/health`, `POST /v1/podcast/briefing` yêu cầu `require_operator` (bắt buộc role `admin` khi `AUTH_ENABLED=true`, mở cho Lite `AUTH_ENABLED=false`); `/openapi.json`, `/docs`, `/metrics` và chi tiết nội bộ `/readyz` từ chối request có forwarding header (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`); toàn bộ request body/query/path có cận trên tường minh. |
 | 2026-11-08 | `/v1/context` mặc định chỉ trả `chunks`, `sources`; thêm `include`. Thêm `include_domains`, `exclude_domains`. Thêm mốc dữ liệu cho kết quả, source, chunk. Thêm `marker_valid`. MCP: thêm tool `research_status`, bỏ `poll_hint`. |

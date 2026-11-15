@@ -107,6 +107,7 @@ async def _doc_chunk_embeddings(
 # Hold strong references to fire-and-forget tasks so Python's GC never collects
 # an in-flight coroutine before it finishes.
 _background_tasks: set[asyncio.Task[Any]] = set()
+_pending_coros: dict[asyncio.Task[Any], Any] = {}
 
 
 def _dialect_insert(session: Any):
@@ -142,6 +143,7 @@ def _spawn_task(label: str, coro: Any) -> asyncio.Task[None] | None:
         return None
     task = asyncio.create_task(_run(label, coro))
     _background_tasks.add(task)
+    _pending_coros[task] = coro
     task.add_done_callback(_on_task_done)
     return task
 
@@ -150,15 +152,35 @@ async def wait_background(timeout_s: float) -> None:
     """Wait for fallback write tasks still running; used on shutdown."""
     pending = [t for t in list(_background_tasks) if not t.done()]
     if pending:
-        await asyncio.wait(pending, timeout=timeout_s)
+        _, still_pending = await asyncio.wait(pending, timeout=timeout_s)
+        for t in still_pending:
+            t.cancel()
+        if still_pending:
+            await asyncio.gather(*still_pending, return_exceptions=True)
 
 
 def _on_task_done(task: asyncio.Task[Any]) -> None:
     _background_tasks.discard(task)
+    _pending_coros.pop(task, None)
     if task.done() and not task.cancelled():
         exc = task.exception()
         if exc is not None:
             logger.warning("persist_task_failed", error=type(exc).__name__)
+
+
+def discard_background_tasks() -> None:
+    """Cancel fallback write tasks and close un-started coroutines on test teardown."""
+    import contextlib
+
+    for task in list(_background_tasks):
+        coro = _pending_coros.pop(task, None)
+        if not task.done():
+            task.cancel()
+        if coro is not None and asyncio.iscoroutine(coro) and not coro.cr_running:
+            with contextlib.suppress(RuntimeError):
+                coro.close()
+    _background_tasks.clear()
+    _pending_coros.clear()
 
 
 def _url_hash(url: str) -> str:
@@ -227,8 +249,7 @@ async def _persist_search_all(
                 normalized_text=normalized_text,
                 lang=lang,
                 params=params,
-                # FIX1: record the owning key (same rationale as _persist_query).
-                api_key_id=current_api_key_id.get(),
+                api_key_id=owner if owner is not None else current_api_key_id.get(),
             )
             .on_conflict_do_nothing(index_elements=["id"])
         )
@@ -464,6 +485,7 @@ async def persist_answer(
             cost_usd,
             latency_ms,
             citations,
+            status=status,
         ),
     )
 

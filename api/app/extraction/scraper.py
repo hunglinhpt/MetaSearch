@@ -15,6 +15,7 @@ import collections.abc
 import ipaddress
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _NEGATIVE_CACHE_MAX = 4096
+_DOMAIN_SEM_MAX = 2048
 
 
 @dataclass(slots=True)
@@ -137,15 +139,23 @@ class Scraper:
         self._single_flight = SingleFlight()
         self._lock = asyncio.Lock()
         self._global_sem = asyncio.Semaphore(self._settings.scrape_global_concurrency)
-        self._domain_sems: dict[str, asyncio.Semaphore] = {}
+        self._domain_sems: OrderedDict[str, asyncio.Semaphore] = OrderedDict()
         self._domain_sem_lock = asyncio.Lock()
 
     async def _get_domain_sem(self, domain: str) -> asyncio.Semaphore:
         async with self._domain_sem_lock:
             sem = self._domain_sems.get(domain)
             if sem is None:
+                while len(self._domain_sems) >= _DOMAIN_SEM_MAX:
+                    evicted = next(
+                        (k for k, s in self._domain_sems.items() if not s.locked()), None
+                    )
+                    if evicted is None:
+                        break
+                    self._domain_sems.pop(evicted, None)
                 sem = asyncio.Semaphore(self._settings.scrape_per_domain_concurrency)
                 self._domain_sems[domain] = sem
+            self._domain_sems.move_to_end(domain)
             return sem
 
     # -- public API --------------------------------------------------------
@@ -389,7 +399,10 @@ class Scraper:
             target_url = final_url or url
         await ssrf.resolve_and_check(target_url)
 
-        page = await self._crawl4ai(target_url, timeout_s, original_url=url)
+        esc_timeout = timeout_s
+        if budget is not None:
+            esc_timeout = max(0.1, min(timeout_s, budget.remaining()))
+        page = await self._crawl4ai(target_url, esc_timeout, original_url=url)
         if page is not None and not is_challenge_page(page.markdown):
             try:
                 await ssrf.resolve_and_check(page.final_url)
@@ -402,7 +415,11 @@ class Scraper:
                     error=str(exc),
                 )
 
-        page = await self._jina(target_url, timeout_s, original_url=url)
+        if budget is not None:
+            if budget.remaining() <= 0.5:
+                raise TimeoutError("exhausted budget before Jina escalation")
+            esc_timeout = max(0.1, min(timeout_s, budget.remaining()))
+        page = await self._jina(target_url, esc_timeout, original_url=url)
         if page is not None and not is_challenge_page(page.markdown):
             try:
                 await ssrf.resolve_and_check(page.final_url)
@@ -507,6 +524,8 @@ class Scraper:
             payload = resp.json()
         except Exception as exc:
             logger.info("crawl4ai_unavailable", url=url, error=type(exc).__name__)
+            return None
+        if not isinstance(payload, dict):
             return None
 
         markdown, title = _crawl4ai_markdown(payload)

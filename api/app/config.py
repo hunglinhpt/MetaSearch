@@ -156,6 +156,21 @@ class Settings(BaseSettings):
     # (words by default; real tokens with CONTEXT_TOKENIZER=tiktoken).
     answer_context_budget: int = 6000
 
+    # --- AI Infrastructure Stack (OmniRoute, Headroom, One-Skill, Claude-Mem) ---
+    # OmniRoute-inspired multi-provider key validation & health-aware failover routing
+    llm_auto_fallback: bool = True
+    llm_fallback_chain: str = ""
+    llm_allow_keyless_fallback: bool = False
+    llm_key_probe_timeout_s: float = Field(default=5.0, ge=0.5, le=30.0)
+    # Headroom-inspired semantic/structural context compression
+    context_compression_enabled: bool = True
+    context_compression_min_chunks: int = Field(default=2, ge=1, le=50)
+    # One-Skill-to-Rule-Them-All unified skill routing & task telemetry
+    skill_orchestration_enabled: bool = True
+    # Claude-Mem-inspired persistent episodic observations & progressive recall
+    memory_recall_enabled: bool = True
+    memory_recall_max_tokens: int = Field(default=250, ge=0, le=2000)
+
     # --- server-side TTS (optional VoiceStudio backend, docs/17) -----------
     # Empty voicestudio_url = feature disabled (Web Speech API stays the default
     # in the browser). URL comes from env only, never from a request (SSRF).
@@ -402,6 +417,10 @@ class Settings(BaseSettings):
     # Local-only escape hatch to reach admin endpoints without a key; startup
     # guard refuses it on non-loopback binds.
     dev_anon_admin: bool = False
+    # Review F-01: with AUTH_ENABLED=false the anonymous caller used to bypass the rate
+    # limiter entirely. 0 keeps that single-operator behaviour (Lite); a positive value
+    # applies the same weighted sliding window to the anonymous caller.
+    anonymous_rate_limit_rpm: int = Field(default=0, ge=0, le=100_000)
 
     # --- Phase 4: optional observability + MCP ------------------------------
     # OTel needs `pip install '.[otel]'` plus standard OTEL_* env vars.

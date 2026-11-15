@@ -30,9 +30,11 @@ import {
   DomainProfileInfo,
   EngineDone,
   EngineInfo,
+  LLMHealthResponse,
   LLMOverridePayload,
   LLMProviderPresetInfo,
   LLMTestResult,
+  LLMValidateResponse,
   safeHref,
   SearchHit,
   SourceItem,
@@ -41,6 +43,7 @@ import {
   createSuperAgentTicket,
   getDigest,
   getDomains,
+  getLLMHealth,
   getLLMProviders,
   getSuperAgentWatchdogStatus,
   listDigests,
@@ -51,6 +54,7 @@ import {
   search,
   streamAnswer,
   testLLMConnection,
+  validateLLMKeys,
   triggerScan,
   ttsCapabilities,
   updateCouncilEndpoints,
@@ -153,8 +157,11 @@ export default function HomePage() {
   const [llmHeadersJson, setLlmHeadersJson] = useState<string>("");
   const [llmSaving, setLlmSaving] = useState<boolean>(false);
   const [llmTesting, setLlmTesting] = useState<boolean>(false);
+  const [llmValidating, setLlmValidating] = useState<boolean>(false);
   const [llmStatusMsg, setLlmStatusMsg] = useState<string>("");
   const [llmTestResult, setLlmTestResult] = useState<LLMTestResult | null>(null);
+  const [llmValidation, setLlmValidation] = useState<LLMValidateResponse | null>(null);
+  const [llmHealth, setLlmHealth] = useState<LLMHealthResponse | null>(null);
 
   // Super-Agent state
   const [superagentTickets, setSuperagentTickets] = useState<SuperAgentTicket[]>([]);
@@ -182,9 +189,13 @@ export default function HomePage() {
 
   const loadLLMState = useCallback(async (signal?: AbortSignal) => {
     try {
-      const data = await getLLMProviders(signal);
+      const [data, health] = await Promise.all([
+        getLLMProviders(signal),
+        getLLMHealth("answer", signal).catch(() => null),
+      ]);
       setLlmPresets(data.providers);
       setActiveLlm(data.active);
+      if (health) setLlmHealth(health);
       setLlmProvider(data.active.provider);
       setLlmProtocol(
         data.active.protocol === "anthropic" ? "anthropic" : "openai"
@@ -217,6 +228,14 @@ export default function HomePage() {
     loadLLMState(controller.signal);
     return () => controller.abort();
   }, [loadLLMState]);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      answerTtsRef.current?.cancel();
+      ttsStop();
+    };
+  }, []);
 
   const handleSelectPreset = (presetId: string) => {
     setLlmProvider(presetId);
@@ -312,6 +331,28 @@ export default function HomePage() {
       });
     } finally {
       setLlmTesting(false);
+    }
+  };
+
+  const handleValidateAllKeys = async () => {
+    setLlmValidating(true);
+    setLlmStatusMsg("");
+    try {
+      const [valRes, healthRes] = await Promise.all([
+        validateLLMKeys({ include_unconfigured: false, dry_run: false }),
+        getLLMHealth("answer").catch(() => null),
+      ]);
+      setLlmValidation(valRes);
+      if (healthRes) setLlmHealth(healthRes);
+      setLlmStatusMsg(
+        `🔎 Đã kiểm tra ${valRes.total_checked} provider: ${valRes.valid_count} key hợp lệ, ${valRes.invalid_count} key lỗi, ${valRes.unreachable_count} không kết nối được.`
+      );
+    } catch (err: unknown) {
+      setLlmStatusMsg(
+        `❌ Không thể validate API keys: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setLlmValidating(false);
     }
   };
 
@@ -942,6 +983,10 @@ export default function HomePage() {
                         <span className="answer-meta">
                           {meta.latency_ms} ms · {meta.model}
                           {meta.cached ? " · cached" : ""}
+                          {meta.skill ? ` · 🎯 ${meta.skill.skill_id}` : ""}
+                          {meta.compression?.compressed
+                            ? ` · 🗜️ -${meta.compression.saved_pct.toFixed(0)}% ctx`
+                            : ""}
                         </span>
                       )}
                       {(ttsReady || (vsEnabled && effectiveTtsEngine === "voicestudio")) && (
@@ -1430,6 +1475,14 @@ export default function HomePage() {
               <button type="button" className="chip chip-toggle on" onClick={handleTestLLM} disabled={llmTesting}>
                 {llmTesting ? "Đang kiểm tra..." : "⚡ Test Kết Nối LLM"}
               </button>
+              <button
+                type="button"
+                className="chip chip-toggle"
+                onClick={handleValidateAllKeys}
+                disabled={llmValidating}
+              >
+                {llmValidating ? "Đang quét keys..." : "🔑 Kiểm Tra Keys & Health"}
+              </button>
               <button type="button" className="chip chip-toggle" onClick={handleResetLLMConfig} disabled={llmSaving}>
                 🔄 Khôi Phục Mặc Định (.env)
               </button>
@@ -1437,6 +1490,77 @@ export default function HomePage() {
 
             {llmStatusMsg && (
               <p style={{ marginTop: "0.8rem", fontSize: "0.9rem" }}>{llmStatusMsg}</p>
+            )}
+
+            {llmValidation && llmValidation.results.length > 0 && (
+              <div
+                style={{
+                  marginTop: "0.85rem",
+                  padding: "0.8rem",
+                  borderRadius: "8px",
+                  border: "1px solid var(--border)",
+                  overflowX: "auto",
+                  fontSize: "0.84rem",
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: "0.45rem" }}>
+                  🔑 Kết Quả Kiểm Định API Key & Kết Nối Live ({llmValidation.valid_count}/
+                  {llmValidation.total_checked} hợp lệ)
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--border)", color: "var(--muted)" }}>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Provider</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Masked Key</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Format</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Live Probe</th>
+                      <th style={{ padding: "0.35rem 0.5rem" }}>Latency / Models</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {llmValidation.results.map((r) => (
+                      <tr key={r.provider} style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                        <td style={{ padding: "0.35rem 0.5rem" }}>
+                          <code>{r.provider}</code>
+                        </td>
+                        <td style={{ padding: "0.35rem 0.5rem" }}>
+                          <code>{r.masked_key || (r.requires_api_key ? "—" : "keyless/local")}</code>
+                        </td>
+                        <td style={{ padding: "0.35rem 0.5rem" }}>
+                          {r.format_valid ? "✅ OK" : `❌ ${r.format_reason}`}
+                        </td>
+                        <td style={{ padding: "0.35rem 0.5rem" }}>
+                          {r.key_valid === true
+                            ? r.rate_limited
+                              ? "⚠️ Rate Limited (429)"
+                              : "✅ Hợp lệ"
+                            : r.key_valid === false
+                            ? `❌ ${r.error || "Invalid"}`
+                            : r.reachable === false
+                            ? `🔌 ${r.error || "Unreachable"}`
+                            : "—"}
+                        </td>
+                        <td style={{ padding: "0.35rem 0.5rem" }}>
+                          {r.latency_ms !== null ? `${r.latency_ms} ms` : "—"}
+                          {r.models_count !== null ? ` · ${r.models_count} models` : ""}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {llmHealth && llmHealth.ranked_providers.some((p) => p.configured) && (
+              <div style={{ marginTop: "0.65rem", fontSize: "0.82rem", color: "var(--muted)" }}>
+                OmniRoute Auto-Failover:{" "}
+                <strong>{llmHealth.auto_fallback_enabled ? "Bật" : "Tắt"}</strong> · Top Priority:{" "}
+                {llmHealth.ranked_providers
+                  .filter((p) => p.configured)
+                  .slice(0, 4)
+                  .map((p) => `${p.provider} [${p.breaker_state}]`)
+                  .join(" → ")}
+              </div>
             )}
 
             {llmTestResult && (

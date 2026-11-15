@@ -9,10 +9,10 @@ no embeddings exist yet — never an error.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.api import deps
 from app.config import get_settings
@@ -31,8 +31,12 @@ class HybridRequest(BaseModel):
     k: int = Field(default=10, ge=1, le=50)
     # Restrict the candidate set: exact document URLs and/or domain suffixes,
     # or one of the caller's Spaces (domains scope from the space).
-    urls: list[str] | None = Field(default=None, max_length=50)
-    domains: list[str] | None = Field(default=None, max_length=20)
+    urls: list[Annotated[str, StringConstraints(max_length=2000)]] | None = Field(
+        default=None, max_length=50
+    )
+    domains: list[Annotated[str, StringConstraints(max_length=253)]] | None = Field(
+        default=None, max_length=20
+    )
     space: str | None = Field(default=None, max_length=100)
     dense: bool = True  # use the dense side when the embedder is configured
     timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)

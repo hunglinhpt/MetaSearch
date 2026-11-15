@@ -47,9 +47,7 @@ async def _call(method: str, path: str, payload: dict | None = None) -> Any:
         if client is None:
             _SHARED_CLIENT = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_S)
             client = _SHARED_CLIENT
-            resp = await client.request(
-                method, f"{_api_url()}{path}", json=payload, headers=_headers()
-            )
+        resp = await client.request(method, f"{_api_url()}{path}", json=payload, headers=_headers())
     except httpx.HTTPError as exc:
         raise MCPClientError(
             f"MetaSearch API unreachable at {_api_url()} ({type(exc).__name__})"
@@ -188,6 +186,44 @@ async def research_status(research_id: str, *, max_chars: int = _TOTAL_CHAR_BUDG
     return json.dumps(out, ensure_ascii=False)
 
 
+async def memory_search(
+    query: str,
+    *,
+    kind: str | None = None,
+    limit: int = 10,
+) -> str:
+    """Layer 1 Progressive Disclosure: search compact memory index (~40 tokens/item)."""
+    from urllib.parse import urlencode
+
+    params: dict[str, Any] = {"q": query, "limit": max(1, min(limit, 50))}
+    if kind:
+        params["kind"] = kind
+    data = await _call("GET", f"/v1/memory/search?{urlencode(params)}")
+    return json.dumps(data, ensure_ascii=False)
+
+
+async def memory_timeline(
+    *,
+    anchor_id: str | None = None,
+    before: int = 3,
+    after: int = 3,
+) -> str:
+    """Layer 2 Progressive Disclosure: chronological context around anchor_id."""
+    from urllib.parse import urlencode
+
+    params: dict[str, Any] = {"before": before, "after": after}
+    if anchor_id:
+        params["anchor_id"] = anchor_id
+    data = await _call("GET", f"/v1/memory/timeline?{urlencode(params)}")
+    return json.dumps(data, ensure_ascii=False)
+
+
+async def memory_get_observations(ids: list[str], *, max_chars: int = _TOTAL_CHAR_BUDGET) -> str:
+    """Layer 3 Progressive Disclosure: fetch full memory details for selected IDs."""
+    data = await _call("POST", "/v1/memory/observations", {"ids": ids[:50]})
+    return _cap(json.dumps(data, ensure_ascii=False), max(max_chars, 500))
+
+
 def run_tool(name: str, kwargs: dict[str, Any]) -> Any:
     """Sync entry for tests/CLI; dispatches one tool call."""
     tools = {
@@ -196,6 +232,9 @@ def run_tool(name: str, kwargs: dict[str, Any]) -> Any:
         "web_search_and_scrape": web_search_and_scrape,
         "deep_research": deep_research,
         "research_status": research_status,
+        "memory_search": memory_search,
+        "memory_timeline": memory_timeline,
+        "memory_get_observations": memory_get_observations,
     }
     if name not in tools:
         raise MCPClientError(f"unknown tool: {name}")

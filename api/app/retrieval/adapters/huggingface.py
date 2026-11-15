@@ -7,7 +7,7 @@ Category: ``developer``.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 
@@ -23,9 +23,12 @@ def _parse_iso(val: str | None) -> datetime | None:
     if not val:
         return None
     try:
-        return datetime.fromisoformat(val.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(val.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 class HuggingFaceAdapter:

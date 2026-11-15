@@ -187,8 +187,8 @@ class YahooFinanceAdapter:
         except ValueError as exc:
             raise AdapterError("yahoo_finance returned non-JSON body") from exc
 
-        quotes = payload.get("quotes") or []
-        news_items = payload.get("news") or []
+        quotes = payload.get("quotes") or [] if isinstance(payload, dict) else []
+        news_items = payload.get("news") or [] if isinstance(payload, dict) else []
         results: list[RawResult] = []
 
         # 1. Process Quotes (Equities, ETFs, Indices, Crypto)

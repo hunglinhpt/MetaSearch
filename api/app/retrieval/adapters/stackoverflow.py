@@ -103,6 +103,8 @@ class StackOverflowAdapter:
         except ValueError as exc:
             raise AdapterError("stackoverflow returned non-JSON body") from exc
 
+        if not isinstance(payload, dict):
+            return []
         if "error_id" in payload:
             err_msg = payload.get("error_message") or payload.get("error_name") or "API error"
             raise AdapterError(f"stackoverflow API error: {err_msg}", retryable=False)

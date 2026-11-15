@@ -6,7 +6,7 @@
  * touches it; theme colors come from the CSS variables in globals.css.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { IChartApi, Time } from "lightweight-charts";
 
@@ -31,7 +31,11 @@ export default function ChartPanel({ symbol }: { symbol: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!symbol.trim()) return;
+    if (!symbol.trim()) {
+      setData(null);
+      setError("");
+      return;
+    }
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -52,10 +56,12 @@ export default function ChartPanel({ symbol }: { symbol: string }) {
     return () => controller.abort();
   }, [symbol, days]);
 
+  const model = useMemo(() => (data ? chartModel(data) : null), [data]);
+
   // (Re)draw the chart whenever data or container changes.
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !data) return;
+    if (!container || !model) return;
     let disposed = false;
     let chart: IChartApi | null = null;
     (async () => {
@@ -65,7 +71,7 @@ export default function ChartPanel({ symbol }: { symbol: string }) {
         // v5, so using them is a runtime TypeError (caught below, chart blank).
         const lwc = await import("lightweight-charts");
         if (disposed || !containerRef.current) return;
-        const model = chartModel(data);
+        setError("");
         chart = lwc.createChart(container, {
           width: container.clientWidth,
           height: 320,
@@ -107,9 +113,9 @@ export default function ChartPanel({ symbol }: { symbol: string }) {
       if (chart) chart.remove();
       chart = null;
     };
-  }, [data]);
+  }, [model]);
 
-  const stats = data ? chartModel(data).stats : null;
+  const stats = model ? model.stats : null;
 
   return (
     <div className="chart-panel">

@@ -25,6 +25,7 @@ from app.api.v1 import (
     scrape,
     search,
     site,
+    skills,
     spaces,
     superagent,
     tts,
@@ -87,6 +88,7 @@ router.include_router(memory.router, dependencies=_auth)
 router.include_router(hybrid.router, dependencies=_auth)
 router.include_router(site.router, dependencies=_auth)
 router.include_router(spaces.router, dependencies=_auth)
+router.include_router(skills.router, dependencies=_auth)
 router.include_router(
     superagent.router,
     dependencies=_auth,

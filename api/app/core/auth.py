@@ -369,6 +369,51 @@ async def _request_item_count(request: Request) -> int:
         return 0
 
 
+# Review F-02: weights live in ONE declarative table instead of an if/elif chain. A route
+# that calls an LLM/TTS or fans out to many fetches MUST have an entry here, otherwise it
+# silently bills 1 unit (tests/test_w5_guardrails.py fails when an expensive route is
+# missing). Matching is by path suffix + method, so prefixed mounts are covered too.
+# (path suffix, method or None for any method, cost)
+_STATIC_ROUTE_COSTS: tuple[tuple[str, str | None, int], ...] = (
+    ("/answer", None, 5),
+    ("/context", None, 3),
+    ("/research", "POST", 20),
+    ("/tts/synthesize", "POST", 5),  # upstream synthesis can take seconds (docs/17)
+    ("/podcast/briefing", "POST", 5),  # server-side synthesis of a whole digest (docs/18 D)
+    ("/podcast/personal", "POST", 5),  # multi-query search + synthesis (docs/24 P2-5)
+    ("/llm/council", "POST", 10),  # up to 6 LLM candidates + cross-review + synthesis
+    ("/graph/build", "POST", 10),  # up to kg_max_docs_per_build LLM extractions
+    ("/graph/query", "POST", 2),  # optional LLM answer over the subgraph
+    ("/market/ohlcv", "POST", 2),  # one upstream feed call + possible SSI fallback
+    ("/crawl", "POST", 8),  # crawl fans out to dozens of guarded fetches (also Spaces crawl)
+    ("/map", "POST", 3),  # sitemap/HTML discovery
+)
+
+
+def static_route_cost(method: str, path: str) -> int | None:
+    """Weight for a fixed-cost route, or None when the route has no table entry."""
+    clean = path.rstrip("/")
+    verb = method.upper()
+    for suffix, only_method, weight in _STATIC_ROUTE_COSTS:
+        if clean.endswith(suffix) and (only_method is None or only_method == verb):
+            return weight
+    return None
+
+
+async def _route_cost(request: Request) -> int:
+    """Rate-limit weight for this request (payload-proportional for list endpoints)."""
+    path = request.url.path.rstrip("/")
+    method = request.method.upper()
+    if path.endswith("/fa/compare") and method == "POST":
+        # Payload-proportional (audit round 12): flat weights allowed 20 symbols for
+        # 3 units - 10-40 upstream fetches.
+        return 3 + min(await _request_item_count(request), 20)
+    if path.endswith("/watchlist/alerts"):
+        # Each alert runs a full pipeline search per watched item.
+        return 1 + min(await _request_item_count(request), 100) // 4
+    return static_route_cost(method, path) or 1
+
+
 async def authenticate_and_rate_limit(request: Request, *, cost: int | None = None) -> AuthContext:
     """Core authenticator with weighted rate limit check.
 
@@ -384,43 +429,27 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
     if not settings.auth_enabled:
         # Anonymous callers get role "user" (SEC-03): admin endpoints require a
         # real key or DEV_ANON_ADMIN=true on a loopback bind.
+        # Review F-01: ANONYMOUS_RATE_LIMIT_RPM > 0 puts the anonymous caller under the
+        # same weighted window as a keyed caller (0 = single-operator Lite, unlimited).
+        anon_rpm = int(getattr(settings, "anonymous_rate_limit_rpm", 0) or 0)
         current_api_key_id.set("anonymous")
-        if settings.dev_anon_admin:
-            current_role.set("admin")
-            ctx = AuthContext(key_id="anonymous", name=None, role="admin", rate_limit_rpm=0)
-        else:
-            current_role.set("user")
-            ctx = AuthContext(key_id="anonymous", name=None, role="user", rate_limit_rpm=0)
+        role = "admin" if settings.dev_anon_admin else "user"
+        current_role.set(role)
+        ctx = AuthContext(key_id="anonymous", name=None, role=role, rate_limit_rpm=anon_rpm)
         current_auth_context.set(ctx)
+        anon_headers: dict[str, Any] | None = None
+        if anon_rpm > 0:
+            anon_cost = cost if cost is not None else await _route_cost(request)
+            anon_headers = await check_rate_limit(ctx, cost=anon_cost)
         if state is not None:
             state.auth = ctx
+            if anon_headers is not None:
+                with contextlib.suppress(Exception):
+                    state.rate_limit_headers = anon_headers
         return ctx
 
     if cost is None:
-        path = request.url.path.rstrip("/")
-        if path.endswith("/answer"):
-            cost = 5
-        elif path.endswith("/context"):
-            cost = 3
-        elif path.endswith("/research") and request.method == "POST":
-            cost = 20
-        elif path.endswith("/tts/synthesize") and request.method == "POST":
-            cost = 5  # upstream synthesis can take seconds (docs/17)
-        elif path.endswith("/podcast/briefing") and request.method == "POST":
-            cost = 5  # server-side synthesis of a whole news digest (docs/18 D)
-        elif path.endswith("/fa/compare") and request.method == "POST":
-            # Payload-proportional (audit round 12): flat weights allowed 20
-            # symbols for 3 units — 10-40 upstream fetches.
-            cost = 3 + min(await _request_item_count(request), 20)
-        elif path.endswith("/market/ohlcv") and request.method == "POST":
-            cost = 2  # one upstream feed call + possible SSI fallback (docs/18 B2)
-        elif path.endswith("/crawl") and request.method == "POST":
-            cost = 8  # crawl/map fan out to dozens of guarded fetches (Pass 3 P3)
-        elif path.endswith("/watchlist/alerts"):
-            # Each alert runs a full pipeline search per watched item.
-            cost = 1 + min(await _request_item_count(request), 100) // 4
-        else:
-            cost = 1
+        cost = await _route_cost(request)
 
     raw_auth = request.headers.get("authorization", "").strip()
     bearer = raw_auth[7:].strip() if raw_auth[:7].lower() == "bearer " else raw_auth
@@ -449,6 +478,23 @@ def require_weighted_key(cost: int):
         return await authenticate_and_rate_limit(request, cost=cost)
 
     return _dependency
+
+
+async def require_operator(request: Request) -> AuthContext:
+    """Operational and cross-tenant surfaces (review F-05 / F-06 / F-22).
+
+    AUTH_ENABLED=false is the single-operator Lite profile: the one caller IS the
+    operator, so nothing is withheld (unlike require_admin, which there also needs
+    DEV_ANON_ADMIN). With auth on, an admin key is required.
+    """
+    ctx = await require_api_key(request)
+    if get_settings().auth_enabled and ctx.role != "admin":
+        raise MetaSearchError(
+            ErrorCode.UNAUTHORIZED,
+            "admin role required for this operation",
+            status_code=403,
+        )
+    return ctx
 
 
 async def require_admin(request: Request) -> AuthContext:

@@ -38,7 +38,7 @@ from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Path
 from sqlalchemy import Table, delete, select
 
 from app.api import deps
@@ -241,22 +241,28 @@ async def _save_items(owner: str, items: list[dict[str, Any]], storage: str) -> 
         return True
     try:
         async with deps.get_session_factory()() as session, session.begin():
-            existing = (
+            owned_rows = (
                 (
                     await session.execute(
-                        select(WatchlistItem.id).where(WatchlistItem.api_key_id == owner)
+                        select(WatchlistItem).where(WatchlistItem.api_key_id == owner)
                     )
                 )
                 .scalars()
                 .all()
             )
-            wanted = {str(it["id"]) for it in items}
-            for old_id in existing:
-                if str(old_id) not in wanted:
-                    await session.execute(delete(WatchlistItem).where(WatchlistItem.id == old_id))
+            by_id = {row.id: row for row in owned_rows}
+            wanted = {str(row_id) for it in items for row_id in [it["id"]]}
+            stale_ids = [row_id for row_id in by_id if str(row_id) not in wanted]
+            if stale_ids:
+                await session.execute(
+                    delete(WatchlistItem).where(
+                        WatchlistItem.api_key_id == owner,
+                        WatchlistItem.id.in_(stale_ids),
+                    )
+                )
             for it in items:
                 item_id = it["id"] if isinstance(it["id"], uuid.UUID) else uuid.UUID(str(it["id"]))
-                row = await session.get(WatchlistItem, item_id)
+                row = by_id.get(item_id)
                 if row is None:
                     session.add(
                         WatchlistItem(
@@ -291,7 +297,9 @@ async def _save_items(owner: str, items: list[dict[str, Any]], storage: str) -> 
 
 @router.get("/watchlist", response_model=WatchlistListResponse)
 async def list_watchlist() -> WatchlistListResponse:
-    items, storage = await _list_items(_owner())
+    owner = _owner()
+    async with await _owner_lock(owner):
+        items, storage = await _list_items(owner)
     return WatchlistListResponse(items=[_item_out(it) for it in items], storage=storage)
 
 
@@ -328,7 +336,7 @@ async def add_watchlist(request: WatchlistCreateRequest) -> WatchlistItemOut:
 
 
 @router.delete("/watchlist/{item_id}")
-async def remove_watchlist(item_id: str) -> dict[str, Any]:
+async def remove_watchlist(item_id: str = Path(max_length=64)) -> dict[str, Any]:
     try:
         uid = uuid.UUID(item_id)
     except ValueError as exc:

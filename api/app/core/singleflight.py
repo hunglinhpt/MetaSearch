@@ -31,7 +31,7 @@ class SingleFlight:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
             async with self._lock:
-                if key in self._waiters:
+                if self._tasks.get(key) is task and key in self._waiters:
                     self._waiters[key] -= 1
                     if self._waiters[key] <= 0:
                         if not task.done():

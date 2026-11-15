@@ -57,6 +57,7 @@ export default function ResearchPanel() {
   const ttsHandleRef = useRef<TtsHandle | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const settledRef = useRef(false);
+  const streamDonePromiseRef = useRef<Promise<void> | null>(null);
   const sectionsRef = useRef<{ title: string; text: string }[]>([]);
   const reportRef = useRef("");
   const rafRef = useRef<number | null>(null);
@@ -150,8 +151,9 @@ export default function ResearchPanel() {
    * backend replays its event buffer) up to `reattachLeft` times. */
   const finalize = async (id: string, signal: AbortSignal, reattachLeft = 0, expectDone = false) => {
     // Audit round 9: the done event and the stream-close fallback can both
-    // call finalize — only the first may settle the phase.
+    // call finalize — lock synchronously before awaiting so only one runs.
     if (settledRef.current) return;
+    settledRef.current = true;
     try {
       let status: ResearchStatus | null = null;
       // After a "done" SSE event the DB status can lag a beat behind the event
@@ -159,7 +161,7 @@ export default function ResearchPanel() {
       for (let attempt = 0; attempt < (expectDone ? 3 : 1); attempt++) {
         status = await getResearch(id, signal);
         if (status.status === "done" || status.status === "failed" || status.error) break;
-        if (attempt < 2) await new Promise((r) => setTimeout(r, 400));
+        if (attempt < (expectDone ? 2 : 0)) await new Promise((r) => setTimeout(r, 400));
       }
       status = status!;
       if (status.status === "done") {
@@ -169,18 +171,17 @@ export default function ResearchPanel() {
         setLearnings(status.learnings ?? []);
         setStage("");
         setError(""); // a transient poll failure must not shadow the report
-        settledRef.current = true;
         setPhase("done");
         return;
       }
       if (status.status === "failed" || status.error) {
         setError(status.error || "Job nghiên cứu thất bại");
-        settledRef.current = true;
         setPhase("error");
         return;
       }
-      // Still queued/running: never mark "done" with an empty report.
+      // Still queued/running: release lock before re-attaching or stopping.
       if (reattachLeft > 0 && !signal.aborted) {
+        settledRef.current = false;
         await attachStream(id, signal, reattachLeft - 1);
         return;
       }
@@ -199,6 +200,8 @@ export default function ResearchPanel() {
    * the report accumulator MUST reset here — otherwise tokens duplicate. */
   const attachStream = async (id: string, signal: AbortSignal, reattachLeft: number) => {
     reportRef.current = "";
+    streamDonePromiseRef.current = null;
+    let streamErrored = false;
     try {
       await streamSse(
       researchEventsUrl(id),
@@ -228,6 +231,8 @@ export default function ResearchPanel() {
               /* ignore */
             }
           } else if (name === "error") {
+            streamErrored = true;
+            settledRef.current = true;
             try {
               const d = JSON.parse(dataJson) as { message?: string };
               setError(d.message ?? "Job lỗi không rõ nguyên nhân");
@@ -236,24 +241,28 @@ export default function ResearchPanel() {
             }
             setPhase("error");
           } else if (name === "done") {
-            void finalize(id, signal, 0, true);
+            streamDonePromiseRef.current = finalize(id, signal, 0, true);
           }
         },
         onError: (err) => {
           if (signal.aborted) return;
+          streamErrored = true;
+          settledRef.current = true;
           setError(err instanceof Error ? err.message : String(err));
           setPhase("error");
         },
       },
       signal
       );
-    } catch (e) {
+    } catch {
       // A dropped connection (TCP reset mid-read) must not kill the panel:
       // fall through to the re-attach/finalize path unless we aborted on purpose.
       if (signal.aborted) return;
       setStage("Mất kết nối — đang thử kết nối lại...");
     }
-    if (!signal.aborted && phaseRef.current === "running") {
+    if (streamDonePromiseRef.current) {
+      await streamDonePromiseRef.current;
+    } else if (!signal.aborted && !streamErrored && !settledRef.current && phaseRef.current === "running") {
       await finalize(id, signal, reattachLeft);
     }
   };

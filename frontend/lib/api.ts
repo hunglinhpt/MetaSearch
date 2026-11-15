@@ -54,6 +54,24 @@ export type AnswerMeta = {
   cached?: boolean;
   // v2.5 P0-5: suggested follow-up questions (SSE `follow_ups` event / done payload)
   follow_ups?: string[];
+  // v3.2 AI Infrastructure: selected skill + Headroom compression stats
+  skill?: {
+    skill_id: string;
+    domain_id: string;
+    domain_name: string;
+    complexity: string;
+    recommended_mode: string;
+    compression_profile: string;
+  };
+  compression?: {
+    compressed: boolean;
+    raw_units: number;
+    compressed_units: number;
+    saved_units: number;
+    saved_pct: number;
+    chunks_in: number;
+    chunks_out: number;
+  };
 };
 
 export type LLMOverridePayload = {
@@ -183,6 +201,94 @@ export type LLMTestResult = {
   reply?: string;
   error?: string;
   latency_ms: number;
+};
+
+export type LLMKeyValidationItem = {
+  provider: string;
+  name: string;
+  protocol: string;
+  base_url: string;
+  requires_api_key: boolean;
+  free_tier_type: string;
+  configured: boolean;
+  format_valid: boolean;
+  format_reason: string;
+  masked_key: string;
+  key_valid: boolean | null;
+  reachable: boolean | null;
+  rate_limited: boolean;
+  status_code: number | null;
+  latency_ms: number | null;
+  models_count: number | null;
+  error: string | null;
+};
+
+export type LLMValidateResponse = {
+  dry_run: boolean;
+  total_checked: number;
+  configured_count: number;
+  valid_count: number;
+  invalid_count: number;
+  unreachable_count: number;
+  results: LLMKeyValidationItem[];
+};
+
+export type LLMHealthProviderItem = {
+  provider: string;
+  score: number;
+  configured: boolean;
+  format_valid: boolean;
+  key_valid: boolean | null;
+  breaker_state: string;
+  ewma_latency_ms: number | null;
+  consecutive_failures: number;
+  free_tier_type: string;
+};
+
+export type LLMHealthResponse = {
+  primary_provider: string;
+  explicit_fallback_provider: string | null;
+  auto_fallback_enabled: boolean;
+  allow_keyless_fallback: boolean;
+  fallback_chain: string[];
+  ranked_providers: LLMHealthProviderItem[];
+};
+
+export type SkillSummary = {
+  id: string;
+  domain_id: string;
+  name: string;
+  description: string;
+  compression_profile: string;
+  preferred_engines: string[];
+};
+
+export type SkillsResponse = {
+  enabled: boolean;
+  total: number;
+  skills: SkillSummary[];
+  routed?: Record<string, unknown>;
+};
+
+export type SkillTelemetryResponse = {
+  enabled: boolean;
+  total_recorded: number;
+  skills: Record<string, Record<string, unknown>>;
+};
+
+export type MemoryIndexItem = {
+  id: string;
+  kind: string;
+  title: string;
+  snippet: string;
+  score: number;
+  created_at?: string | null;
+};
+
+export type MemorySearchResponse = {
+  query: string;
+  items: MemoryIndexItem[];
+  storage: string;
 };
 
 /**
@@ -382,6 +488,73 @@ export async function testLLMConnection(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(llm ? { llm } : {}),
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function validateLLMKeys(opts?: {
+  providers?: string[];
+  include_unconfigured?: boolean;
+  dry_run?: boolean;
+  timeout_s?: number;
+}): Promise<LLMValidateResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/llm/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts ?? {}),
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function getLLMHealth(
+  task = "answer",
+  signal?: AbortSignal
+): Promise<LLMHealthResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/llm/health?task=${encodeURIComponent(task)}`, {
+    signal,
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function listSkills(
+  query?: string,
+  signal?: AbortSignal
+): Promise<SkillsResponse> {
+  const qs = query ? `?q=${encodeURIComponent(query)}` : "";
+  const resp = await fetch(`${API_BASE_URL}/v1/skills${qs}`, { signal });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function getSkillTelemetry(
+  signal?: AbortSignal
+): Promise<SkillTelemetryResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/ops/skills`, { signal });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function searchMemoryIndex(
+  q: string,
+  opts?: { kind?: string; limit?: number; signal?: AbortSignal }
+): Promise<MemorySearchResponse> {
+  const params = new URLSearchParams({ q, limit: String(opts?.limit ?? 10) });
+  if (opts?.kind) params.set("kind", opts.kind);
+  const resp = await fetch(`${API_BASE_URL}/v1/memory/search?${params.toString()}`, {
+    signal: opts?.signal,
   });
   if (!resp.ok) {
     throw await parseError(resp);

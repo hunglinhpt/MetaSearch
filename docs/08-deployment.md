@@ -111,7 +111,7 @@ flowchart LR
 
 - **searxng**: meta-search core (giant #1), `formats: [html, json]`, limiter off (nội bộ).
 - **crawl4ai**: extraction service (giant #2), Playwright/Chromium đóng gói sẵn trong image, API `POST /md` — ta không tự cài Chromium.
-- **api**: FastAPI orchestration mỏng; một tiến trình uvicorn (`--workers 1`): breaker, admission, gộp request trùng và rate limit dự phòng là trạng thái trong tiến trình, nhiều worker sẽ chia nhỏ chúng.
+- **api**: FastAPI orchestration mỏng; **bắt buộc chạy một tiến trình uvicorn (`--workers 1` / `WEB_CONCURRENCY=1`)** khi chưa cấu hình Redis chia sẻ: circuit breaker, admission control, single-flight coalescing, in-process cache/rate-limit fallback và các job nền (`/v1/spaces/{slug}/graph/build`, `/v1/podcast/*`, `/v1/research`) giữ trạng thái trong bộ nhớ tiến trình. Nếu khởi động với `WEB_CONCURRENCY > 1` hoặc `UVICORN_WORKERS > 1`, API sẽ phát cảnh báo `multi_worker_process_local_state` lúc startup (`F-12`).
 - **worker**: asyncio worker cho deep research.
 - **frontend**: Next.js standalone.
 - **postgres**: image `pgvector/pgvector:pg16`.

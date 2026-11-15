@@ -47,6 +47,15 @@ CACHE_EVENTS = Counter(
     registry=REGISTRY,
 )
 
+# Review F-14: broad `except Exception` blocks that deliberately fail open must still
+# be countable, otherwise a policy check that silently stops working is invisible.
+SWALLOWED_ERRORS = Counter(
+    "metasearch_swallowed_errors_total",
+    "Exceptions deliberately swallowed by fail-open code paths",
+    labelnames=("site", "error"),
+    registry=REGISTRY,
+)
+
 LLM_TOKENS = Counter(
     "metasearch_llm_tokens_total",
     "LLM tokens consumed",

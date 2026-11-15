@@ -49,16 +49,23 @@ from app.db.session import get_sessionmaker
 from app.extraction.chunker import Chunk, chunk_markdown
 from app.extraction.scraper import PageContent, PageFailure, Scraper
 from app.llm.citations import ClaimCheck, check_claims, validate_citations
+from app.llm.compressor import compress_chunks
 from app.llm.embeddings import EmbeddingClient, EmbeddingError
 from app.llm.gateway import LLMError, LLMGateway, Usage, record_usage
 from app.llm.prompts import SYSTEM_PROMPT, build_context, build_messages, render_context
 from app.llm.providers import LLMOverride
 from app.llm.tokens import make_counter
 from app.orchestration import persist
+from app.orchestration.skill_orchestrator import get_task_observer, select_skill
 from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.boosts import load_boosts, rules_signature
 from app.retrieval.canonical import canonicalize
-from app.retrieval.memory import load_memory_boosts, record_query_fire_and_forget
+from app.retrieval.memory import (
+    load_memory_boosts,
+    recall_context_for_query,
+    record_observation_fire_and_forget,
+    record_query_fire_and_forget,
+)
 from app.retrieval.merger import diversity_cap, merge
 from app.retrieval.models import EngineConfig, EngineStatus, RawResult, ScoredResult
 from app.retrieval.query_expansion import expand_query, expansion_signature, parse_variants
@@ -407,7 +414,16 @@ def _has_incomplete_status(statuses: list[EngineStatus]) -> bool:
 
 
 _OPTIONAL_CONTEXT_PARTS = frozenset(
-    {"chunks", "sources", "context_md", "messages", "system_prompt", "domain_intelligence"}
+    {
+        "chunks",
+        "sources",
+        "context_md",
+        "messages",
+        "system_prompt",
+        "domain_intelligence",
+        "compression",
+        "skill",
+    }
 )
 _DEFAULT_CONTEXT_INCLUDE = ("chunks", "sources")
 _EMPTY_MARKS: dict[str, object] = {
@@ -1286,12 +1302,34 @@ class AnswerPipeline:
             )
 
         chunks = await self._rerank(normalize_query(params.query), scored_chunks)
-        included = build_context(
+        normalized_q = normalize_query(params.query)
+        counter = make_counter(self.settings)
+        skill_sel = (
+            select_skill(
+                normalized_q,
+                requested_domain=domain,
+                deep=params.deep,
+                min_words_deep=self.settings.adaptive_router_min_words_deep,
+            )
+            if self.settings.skill_orchestration_enabled
+            else None
+        )
+        comp_outcome = compress_chunks(
             chunks,
+            query=normalized_q,
             budget=self.settings.answer_context_budget,
-            count=make_counter(self.settings),
+            count=counter,
+            enabled=self.settings.context_compression_enabled,
+            min_chunks=self.settings.context_compression_min_chunks,
+            profile=skill_sel.compression_profile if skill_sel else "balanced",
+        )
+        included = build_context(
+            comp_outcome.chunks,
+            budget=self.settings.answer_context_budget,
+            count=counter,
         )
         answer_id = uuid.uuid4()
+        owner = current_api_key_id.get() or "anonymous"
 
         if use_council:
             from app.llm.council import DreamRSICouncilEngine
@@ -1306,13 +1344,23 @@ class AnswerPipeline:
             council_engine = DreamRSICouncilEngine(self.settings, gateway)
             try:
                 verdict = await council_engine.run_council(
-                    normalize_query(params.query),
+                    normalized_q,
                     included,
                     endpoints=council_endpoints,
                     domain=domain,
                 )
             except LLMError as exc:
                 logger.warning("llm_council_failed", error=str(exc)[:200])
+                if skill_sel is not None:
+                    get_task_observer().record(
+                        skill_id=skill_sel.skill_id,
+                        domain_id=skill_sel.domain_id,
+                        complexity=skill_sel.complexity,
+                        ok=False,
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                        compression_saved_pct=comp_outcome.stats.saved_pct,
+                        error_code=getattr(exc, "code", "internal"),
+                    )
                 yield ("error", {"code": "internal", "message": str(exc)[:200]})
                 return
 
@@ -1336,7 +1384,7 @@ class AnswerPipeline:
                     "unsupported_markers": claims.unsupported_markers,
                 },
             )
-            follow_ups = await self._followups(gateway, normalize_query(params.query), verdict_text)
+            follow_ups = await self._followups(gateway, normalized_q, verdict_text)
             if follow_ups:
                 yield ("follow_ups", {"follow_ups": follow_ups})
             council_meta = {
@@ -1350,6 +1398,33 @@ class AnswerPipeline:
             }
             yield ("council", council_meta)
             latency_ms = int((time.perf_counter() - started) * 1000)
+            if skill_sel is not None:
+                get_task_observer().record(
+                    skill_id=skill_sel.skill_id,
+                    domain_id=skill_sel.domain_id,
+                    complexity=skill_sel.complexity,
+                    ok=True,
+                    latency_ms=latency_ms,
+                    compression_saved_pct=comp_outcome.stats.saved_pct,
+                    citations_count=len(citations_payload),
+                    invalid_markers_count=len(verdict.get("invalid_markers") or []),
+                    unsupported_markers_count=len(claims.unsupported_markers),
+                )
+            if (
+                self.settings.memory_recall_enabled
+                and self.settings.memory_enabled
+                and outcome.complete
+                and bool(ok_pages)
+            ):
+                record_observation_fire_and_forget(
+                    owner,
+                    query=normalized_q,
+                    answer_md=verdict_text,
+                    sources=sources,
+                    domain_id=skill_sel.domain_id if skill_sel else domain,
+                    skill_id=skill_sel.skill_id if skill_sel else "council",
+                    max_per_key=self.settings.memory_max_per_key,
+                )
             # F2: council answers must persist too — same as non-council path.
             council_usage = Usage()
             finalize = asyncio.create_task(
@@ -1366,29 +1441,44 @@ class AnswerPipeline:
                         (c.get("n", 0), c.get("url", ""), c.get("title", ""), None)
                         for c in citations_payload
                     ],
-                    query=normalize_query(params.query),
+                    query=normalized_q,
                     status="complete",
                 )
             )
             _background_tasks.add(finalize)
             finalize.add_done_callback(_log_background)
-            yield (
-                "done",
-                {
-                    "answer_id": str(answer_id),
-                    "latency_ms": latency_ms,
-                    "complete": outcome.complete and bool(ok_pages),
-                    "status": "complete",
-                    "model": str(verdict.get("chairman_model") or model),
-                    "cached": False,
-                    "council": council_meta,
-                    "follow_ups": follow_ups,
-                },
-            )
+            done_council: dict[str, Any] = {
+                "answer_id": str(answer_id),
+                "latency_ms": latency_ms,
+                "complete": outcome.complete and bool(ok_pages),
+                "status": "complete",
+                "model": str(verdict.get("chairman_model") or model),
+                "cached": False,
+                "council": council_meta,
+                "follow_ups": follow_ups,
+                "compression": comp_outcome.stats.to_dict(),
+            }
+            if skill_sel is not None:
+                done_council["skill"] = skill_sel.to_dict()
+            yield ("done", done_council)
             return
 
         yield ("status", {"stage": "synthesizing", "detail": f"{len(chunks)} chunks"})
-        messages = build_messages(normalize_query(params.query), included)
+        memory_context = (
+            await recall_context_for_query(
+                owner,
+                normalized_q,
+                max_tokens=self.settings.memory_recall_max_tokens,
+            )
+            if (self.settings.memory_recall_enabled and self.settings.memory_enabled)
+            else ""
+        )
+        messages = build_messages(
+            normalized_q,
+            included,
+            skill_prompt=skill_sel.prompt_instruction if skill_sel else "",
+            memory_context=memory_context,
+        )
 
         text_parts: list[str] = []
         usage = Usage()
@@ -1405,6 +1495,16 @@ class AnswerPipeline:
                     usage.output_tokens += delta.usage.output_tokens
         except LLMError as exc:
             logger.warning("llm_stream_failed", error=str(exc)[:200])
+            if skill_sel is not None:
+                get_task_observer().record(
+                    skill_id=skill_sel.skill_id,
+                    domain_id=skill_sel.domain_id,
+                    complexity=skill_sel.complexity,
+                    ok=False,
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    compression_saved_pct=comp_outcome.stats.saved_pct,
+                    error_code=getattr(exc, "code", "internal"),
+                )
             error: dict[str, object] = {
                 "code": getattr(exc, "code", "internal"),
                 "message": str(exc)[:200],
@@ -1440,13 +1540,36 @@ class AnswerPipeline:
         )
 
         # v2.5 P0-5: follow-up suggestions (cheap call, failures -> no event).
-        follow_ups = await self._followups(gateway, normalize_query(params.query), check.text)
+        follow_ups = await self._followups(gateway, normalized_q, check.text)
         if follow_ups:
             yield ("follow_ups", {"follow_ups": follow_ups})
+
+        if skill_sel is not None:
+            get_task_observer().record(
+                skill_id=skill_sel.skill_id,
+                domain_id=skill_sel.domain_id,
+                complexity=skill_sel.complexity,
+                ok=True,
+                latency_ms=latency_ms,
+                compression_saved_pct=comp_outcome.stats.saved_pct,
+                citations_count=len(citations_payload),
+                invalid_markers_count=len(check.invalid_markers),
+                unsupported_markers_count=len(claims.unsupported_markers),
+            )
 
         # REL-04: Cache write and DB finalize MUST be executed/scheduled before done event
         # so if the client disconnects immediately on done, cache and storage are never lost!
         is_complete = outcome.complete and bool(ok_pages) and answer_status == "complete"
+        if self.settings.memory_recall_enabled and self.settings.memory_enabled and is_complete:
+            record_observation_fire_and_forget(
+                owner,
+                query=normalized_q,
+                answer_md=check.text,
+                sources=sources,
+                domain_id=skill_sel.domain_id if skill_sel else domain,
+                skill_id=skill_sel.skill_id if skill_sel else "",
+                max_per_key=self.settings.memory_max_per_key,
+            )
         if (
             self.cache is not None
             and llm_override is None
@@ -1478,7 +1601,7 @@ class AnswerPipeline:
                 usage=usage,
                 latency_ms=latency_ms,
                 citations=[(c.n, c.url, c.title, c.chunk_id) for c in check.citations],
-                query=normalize_query(params.query),
+                query=normalized_q,
                 status=answer_status,
                 cacheable=not _has_domain_filter(params),
                 semantic_cacheable=_semantic_cacheable(params),
@@ -1487,18 +1610,19 @@ class AnswerPipeline:
         _background_tasks.add(finalize)
         finalize.add_done_callback(_log_background)
 
-        yield (
-            "done",
-            {
-                "answer_id": str(answer_id),
-                "latency_ms": latency_ms,
-                "complete": outcome.complete and bool(ok_pages) and answer_status == "complete",
-                "status": answer_status,
-                "model": model,
-                "cached": False,
-                "follow_ups": follow_ups,
-            },
-        )
+        done_payload: dict[str, Any] = {
+            "answer_id": str(answer_id),
+            "latency_ms": latency_ms,
+            "complete": outcome.complete and bool(ok_pages) and answer_status == "complete",
+            "status": answer_status,
+            "model": model,
+            "cached": False,
+            "follow_ups": follow_ups,
+            "compression": comp_outcome.stats.to_dict(),
+        }
+        if skill_sel is not None:
+            done_payload["skill"] = skill_sel.to_dict()
+        yield ("done", done_payload)
 
     async def _followups(self, gateway: LLMGateway, query: str, answer_text: str) -> list[str]:
         """v2.5 P0-5: suggest up to followups_max follow-up questions (Perplexity-style).
@@ -1597,13 +1721,37 @@ class AnswerPipeline:
 
         chunks = await self._rerank(normalized, scored_chunks)
         eff_budget = budget or self.settings.answer_context_budget
-        included = build_context(
+        counter = make_counter(self.settings)
+        skill_sel = (
+            select_skill(
+                normalized,
+                requested_domain=domain,
+                deep=params.deep,
+                min_words_deep=self.settings.adaptive_router_min_words_deep,
+            )
+            if self.settings.skill_orchestration_enabled
+            else None
+        )
+        comp_outcome = compress_chunks(
             chunks,
+            query=normalized,
             budget=eff_budget,
-            count=make_counter(self.settings),
+            count=counter,
+            enabled=self.settings.context_compression_enabled,
+            min_chunks=self.settings.context_compression_min_chunks,
+            profile=skill_sel.compression_profile if skill_sel else "balanced",
+        )
+        included = build_context(
+            comp_outcome.chunks,
+            budget=eff_budget,
+            count=counter,
         )
         context_md = render_context(included)
-        messages = build_messages(normalized, included)
+        messages = build_messages(
+            normalized,
+            included,
+            skill_prompt=skill_sel.prompt_instruction if skill_sel else "",
+        )
         latency_ms = int((time.perf_counter() - started) * 1000)
 
         by_url: dict[str, ScoredResult] = {r.url: r for r in outcome.results}
@@ -1632,6 +1780,8 @@ class AnswerPipeline:
             "context_md": context_md,
             "system_prompt": SYSTEM_PROMPT,
             "messages": messages,
+            "compression": comp_outcome.stats.to_dict(),
+            "skill": skill_sel.to_dict() if skill_sel is not None else None,
             "chunks": [
                 {
                     "n": n,

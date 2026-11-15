@@ -83,10 +83,21 @@ async def answer(request: AnswerRequest):
     is_council = (
         request.council_mode or bool(request.council_endpoints) or settings.llm_council_enabled
     )
-    # Lite mode: allow search-only answers without LLM when provider is none
+    # Fail fast when no LLM provider, fallback, override, or council is configured.
+    fallback_provider = getattr(settings, "llm_fallback_provider", "") or "none"
     run_kwargs = _extra_run_kwargs(request)
-    if not has_override and not is_council and effective_provider == "none":
-        run_kwargs.pop("model", None)
+    if (
+        not has_override
+        and not is_council
+        and effective_provider == "none"
+        and fallback_provider == "none"
+    ):
+        raise MetaSearchError(
+            ErrorCode.INTERNAL,
+            "No LLM provider configured. Set LLM_PROVIDER in environment "
+            "or supply 'llm' override in request.",
+            status_code=500,
+        )
 
     budget = create_budget_for_route("answer", timeout_ms=request.timeout_ms)
     max_s = settings.answer_stream_max_s
@@ -194,6 +205,8 @@ async def _json(
         cached=bool(meta.get("cached", False)),
         complete=bool(meta.get("complete", True)),
         council=council_data,
+        skill=meta.get("skill"),
+        compression=meta.get("compression"),
     )
 
 

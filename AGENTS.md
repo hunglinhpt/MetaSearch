@@ -13,7 +13,15 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-14 — v3.1.0 Lite Web UI + no-popup job runner + 2 fix P3; trước đó v3.0.0 Wave P2 docs/24)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-15 — v3.2.0 4-Repo AI Infra Integration + 5-pass audit; trước đó v3.1.0 Lite Web UI)
+
+- ✅ **v3.2.0 4-Repo AI Infra Integration & 5-pass hardening (docs/25)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/25-llm-integration-evaluation.md](docs/25-llm-integration-evaluation.md):
+  - **OmniRoute-inspired validation & router** (`llm/key_validator.py`, `llm/router.py`): 17 `KEY_FORMAT_SPECS`, live probe SSRF-safe qua `get_http_client("internal")` (`asyncio.Semaphore(6)`), `scoped_runtime_override`, `ProviderHealthTracker` + EWMA + `LLM_ALLOW_KEYLESS_FALLBACK=false`, API `POST /v1/llm/validate` (`require_admin`) & `GET /v1/llm/health?task=answer|report`.
+  - **Headroom-inspired compression** (`llm/compressor.py`): `ContentRouter` + `SmartCrusher` + verbatim `SearchCompressor` (4 profiles: `balanced`, `preserve_numbers`, `preserve_code`, `compact`) + `CacheAligner` (bọc recalled memory trong `<<<PRIOR_MEMORY_{tag}>>>`), hook vào `pipeline.py` (`CONTEXT_COMPRESSION_ENABLED`, `CONTEXT_COMPRESSION_MIN_CHUNKS=2`) & `/v1/context` `include=["compression"]`.
+  - **One-Skill Orchestrator** (`orchestration/skill_orchestrator.py`, `api/v1/skills.py`): 9 skills + `TaskObserver` bounded telemetry, `GET /v1/skills`, `GET /v1/ops/skills`, `/v1/context` `include=["skill"]`.
+  - **Claude-Mem Progressive Disclosure** (`retrieval/memory.py`, `api/v1/memory.py`, `mcp/server.py`): `kind="observation"` theo `api_key_id`, recall bounded (`MEMORY_RECALL_MAX_TOKENS=250`), 3-layer REST (`/v1/memory/search`, `/v1/memory/timeline` anchor-indexed, `/v1/memory/observations`) + 3 MCP tools (`memory_search`, `memory_timeline`, `memory_get_observations`).
+  - 5-pass audit fix xong toàn bộ lỗi logic, SSRF/pool, timeline >500 items, prompt-delimiter & DRY `scoped_runtime_override`; thêm `tests/test_phase4_ai_infra.py` (13 tests) & regen `openapi_v1.json`.
+  - **Principal Architect Review & Boundary Hardening ([docs/26-principal-architect-review-2026-11-15.md](docs/26-principal-architect-review-2026-11-15.md))**: hoàn tất xử lý 22 finding (`F-01`..`F-22`) — bảng trọng số rate-limit `_STATIC_ROUTE_COSTS`, khai báo đủ tier `admit()`, bảo vệ `/v1/llm/council` & `/v1/spaces/{slug}/crawl`, `require_operator` cho các route `/v1/ops/*`, `/v1/llm/health`, `POST /v1/podcast/briefing`, chặn chunked body > `MAX_BODY_BYTES` (413), chống giả mạo loopback qua proxy (`is_direct_loopback`), ẩn chi tiết nội bộ `/readyz` với caller từ xa, khóa cận trên toàn bộ schema/query/path bằng 43 test chống tái phát trong `tests/test_w5_guardrails.py`, mở rộng `mypy` sang `app/llm`.
 
 - ✅ **v3.1.0 Lite Web UI + job runner không popup (docs/08 §Lite, docs/24 §8)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md):
   - Web UI static export (`npm run build:export` → `frontend/out`, gitignored) được API mount tại `/` trên cùng cổng khi `SERVE_UI=true` (`UI_STATIC_DIR` override, auto-detect `frontend/out`); UI build với `NEXT_PUBLIC_API_BASE_URL=""` (same-origin); static không cần auth, `/v1` vẫn sau auth; bản Docker không đổi (image không có `frontend/out` → tự bỏ qua). Test `tests/test_v31_lite_ui.py`.
@@ -257,5 +265,9 @@ METASEARCH_INTEGRATION=1 pytest tests/integration -q   # từ api/
 4. Chạy đủ: pytest + ruff + bandit (+ frontend typecheck/build nếu đụng UI).
 5. Tự review tối thiểu 2 lần (pattern đã dùng từ Phase 1) — lần 1 từng module,
    lần 2 fresh-eyes + smoke test live.
-6. Cập nhật `docs/12-roadmap-plan.md` (checkbox + verify table),
+6. **3 Quy tắc Cứng về Ranh giới (Hard Boundary Rules — bắt buộc khi thêm/sửa route `/v1/*`, kiểm tự động bởi `tests/test_w5_guardrails.py`)**:
+   - **Rule 1 (Rate-Limit Weight & Admission Tier)**: Mọi route `POST` mới bắt buộc phải được phân loại trọng số trong `_STATIC_ROUTE_COSTS` (`app/core/auth.py`) nếu gọi LLM/TTS/crawl/fan-out, hoặc khai báo tường minh vào `UNIT_COST_POST` (`tests/test_w5_guardrails.py`). Mọi lệnh gọi `async with admit("<tier>")` phải có `<tier>` khai báo trong `_TIER_CONFIG` (`app/core/admission.py`).
+   - **Rule 2 (Strict Input Upper Bounds)**: Mọi trường `str`, `list`, và tham số số nguyên (`limit`, `offset`, `days`, `max_pages`, `max_urls`, `depth`, `breadth`, `k`) trong Pydantic request schema, `Query(...)` và `Path(...)` bắt buộc phải có cận trên (`max_length`, `StringConstraints(max_length=...)`, `le`).
+   - **Rule 3 (Tenancy & Operator Surface Authorization)**: Mọi truy vấn ORM trên bảng có dữ liệu người dùng (`Query`, `WatchlistItem`, `KeyBoost`, `MemoryItem`, `Space`, `KgNode`, `KgEdge`) phải lọc theo `api_key_id` của caller (trả `404` khi lệch chủ sở hữu). Các route vận hành/chẩn đoán hoặc ghi tài nguyên dùng chung phải gắn `Depends(require_admin)` hoặc `Depends(require_operator)`.
+7. Cập nhật `docs/12-roadmap-plan.md` (checkbox + verify table),
    `CHANGELOG.md` (version mới nếu đáng nhớ), và mục "Trạng thái" ở đây.

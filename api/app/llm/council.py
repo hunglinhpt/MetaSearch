@@ -22,7 +22,6 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
-import json
 import math
 import re
 import time
@@ -31,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.config import Settings
+from app.core.json_utils import extract_json_object
 from app.core.logging import get_logger
 from app.extraction.chunker import Chunk
 from app.llm.citations import validate_citations
@@ -47,69 +47,6 @@ logger = get_logger(__name__)
 _QUANT_TOKEN_RE = re.compile(
     r"\b\d+(?:[.,]\d+)?(?:\s*%|\s*x|\s*tỷ|\s*triệu|\s*bps|\b)", re.IGNORECASE
 )
-
-
-def extract_json_object(text: str) -> dict[str, Any] | None:
-    """Robustly extract a JSON object from text, handling markdown code fences,
-    preceding/trailing prose, and nested braces.
-    """
-    clean_text = text.strip()
-    if not clean_text:
-        return None
-
-    # 1. Direct parse attempt
-    if clean_text.startswith("{") and clean_text.endswith("}"):
-        try:
-            val = json.loads(clean_text)
-            if isinstance(val, dict):
-                return val
-        except (json.JSONDecodeError, ValueError, TypeError):  # nosec B110
-            pass
-
-    # 2. Markdown fence extraction ```json ... ``` or ``` ... ```
-    fence_pattern = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
-    for m in fence_pattern.finditer(clean_text):
-        try:
-            val = json.loads(m.group(1))
-            if isinstance(val, dict):
-                return val
-        except (json.JSONDecodeError, ValueError, TypeError):  # nosec B110
-            pass
-
-    # 3. Balanced braces extraction
-    start_idx = clean_text.find("{")
-    while start_idx != -1:
-        depth = 0
-        in_string = False
-        escape = False
-        for i in range(start_idx, len(clean_text)):
-            c = clean_text[i]
-            if escape:
-                escape = False
-                continue
-            if c == "\\":
-                escape = True
-                continue
-            if c == '"':
-                in_string = not in_string
-                continue
-            if not in_string:
-                if c == "{":
-                    depth += 1
-                elif c == "}":
-                    depth -= 1
-                    if depth == 0:
-                        candidate = clean_text[start_idx : i + 1]
-                        try:
-                            val = json.loads(candidate)
-                            if isinstance(val, dict):
-                                return val
-                        except (json.JSONDecodeError, ValueError, TypeError):  # nosec B110
-                            pass
-                        break
-        start_idx = clean_text.find("{", start_idx + 1)
-
-    return None
 
 
 @dataclass(slots=True)

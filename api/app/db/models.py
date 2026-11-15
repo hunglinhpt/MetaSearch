@@ -279,11 +279,11 @@ class KeyBoost(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
 
 
 class MemoryItem(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
-    """One per-key memory entry (docs/20 P1-5 — Mem0-lite, v2.6).
+    """One per-key memory entry (docs/20 P1-5 — Mem0-lite + Claude-Mem observations).
 
-    ``kind`` is "query" (a past query, for future contextualization) or
-    "feedback" (per-URL 👍/👎, converted into rerank boost rules by
-    ``app.retrieval.memory.load_memory_boosts``). Tenancy by ``api_key_id``;
+    ``kind`` is "query" (past query), "feedback" (per-URL 👍/👎 converted into
+    rerank boost rules), or "observation" (episodic distilled summary for
+    cross-session 3-layer progressive disclosure). Tenancy by ``api_key_id``;
     the owner can wipe everything with DELETE /v1/memory (privacy).
     """
 
@@ -291,7 +291,7 @@ class MemoryItem(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __table_args__ = (Index("idx_memory_owner", "api_key_id"),)
 
     api_key_id: Mapped[str] = mapped_column(Text, nullable=False)
-    kind: Mapped[str] = mapped_column(Text, nullable=False)  # query | feedback
+    kind: Mapped[str] = mapped_column(Text, nullable=False)  # query | feedback | observation
     text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     url: Mapped[str | None] = mapped_column(Text)
     weight: Mapped[float] = mapped_column(REAL, nullable=False, server_default="0")

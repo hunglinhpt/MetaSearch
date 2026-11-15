@@ -104,15 +104,24 @@ def render_context(included: list[tuple[int, Chunk]]) -> str:
     return "\n\n".join(blocks)
 
 
-def build_messages(question: str, included: list[tuple[int, Chunk]]) -> list[dict[str, str]]:
+def build_messages(
+    question: str,
+    included: list[tuple[int, Chunk]],
+    *,
+    system_prompt: str = SYSTEM_PROMPT,
+    skill_prompt: str = "",
+    memory_context: str = "",
+) -> list[dict[str, str]]:
+    from app.llm.compressor import CacheAligner
+
     flag_injection(included)
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": f"Sources:\n\n{render_context(included)}\n\nQuestion: {question}",
-        },
-    ]
+    return CacheAligner.align_messages(
+        system_prompt=system_prompt,
+        sources_md=render_context(included),
+        question=question,
+        skill_prompt=skill_prompt,
+        memory_context=memory_context,
+    )
 
 
 def build_domain_system_prompt(

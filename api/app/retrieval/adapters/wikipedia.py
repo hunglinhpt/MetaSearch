@@ -65,7 +65,8 @@ class WikipediaAdapter:
         timeout_s: float = 3.0,
     ) -> list[RawResult]:
         raw_lang = (lang or "en").split("-")[0].lower().strip()
-        language = raw_lang if _LANG_RE.match(raw_lang) else "en"
+        valid_lang = _LANG_RE.match(raw_lang) and raw_lang not in ("auto", "all")
+        language = raw_lang if valid_lang else "en"
         params: dict[str, str] = {
             "action": "query",
             "list": "search",

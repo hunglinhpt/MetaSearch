@@ -27,8 +27,9 @@ async def v31_db(tmp_path, monkeypatch):
     from app.core.auth import create_key, reset_rate_limit_windows
 
     reset_rate_limit_windows()
-    key, _ = await create_key("v31_user", role="user", rate_limit_rpm=6000)
+    key, _ = await create_key("v31_user", role="admin", rate_limit_rpm=6000)
     yield key
+    await dispose_engine()
     get_settings.cache_clear()
 
 

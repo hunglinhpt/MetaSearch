@@ -23,7 +23,7 @@ from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Path, Query
 from sqlalchemy import Table, delete, select
 
 from app.api import deps
@@ -169,7 +169,7 @@ async def create_space(request: SpaceCreateRequest) -> SpaceOut:
 
 
 @router.get("/spaces/{slug}", response_model=SpaceOut)
-async def get_space(slug: str) -> SpaceOut:
+async def get_space(slug: str = Path(max_length=120)) -> SpaceOut:
     if not await _ensure_table():
         raise MetaSearchError(ErrorCode.INTERNAL, "spaces storage unavailable", status_code=503)
     async with deps.get_session_factory()() as session:
@@ -180,7 +180,7 @@ async def get_space(slug: str) -> SpaceOut:
 
 
 @router.patch("/spaces/{slug}", response_model=SpaceOut)
-async def update_space(slug: str, request: SpaceUpdateRequest) -> SpaceOut:
+async def update_space(request: SpaceUpdateRequest, slug: str = Path(max_length=120)) -> SpaceOut:
     if not await _ensure_table():
         raise MetaSearchError(ErrorCode.INTERNAL, "spaces storage unavailable", status_code=503)
     async with deps.get_session_factory()() as session:
@@ -199,7 +199,7 @@ async def update_space(slug: str, request: SpaceUpdateRequest) -> SpaceOut:
 
 
 @router.delete("/spaces/{slug}")
-async def delete_space(slug: str) -> dict[str, Any]:
+async def delete_space(slug: str = Path(max_length=120)) -> dict[str, Any]:
     if not await _ensure_table():
         raise MetaSearchError(ErrorCode.INTERNAL, "spaces storage unavailable", status_code=503)
     async with deps.get_session_factory()() as session:
@@ -219,7 +219,9 @@ async def delete_space(slug: str) -> dict[str, Any]:
 
 
 @router.post("/spaces/{slug}/crawl")
-async def crawl_space(slug: str, max_pages: int = Query(default=20, ge=1)) -> dict[str, Any]:
+async def crawl_space(
+    slug: str = Path(max_length=120), max_pages: int = Query(default=20, ge=1, le=100)
+) -> dict[str, Any]:
     """Map each domain root + scrape pinned URLs, persist into the index."""
     settings = get_settings()
     if not settings.spaces_enabled:
@@ -231,6 +233,15 @@ async def crawl_space(slug: str, max_pages: int = Query(default=20, ge=1)) -> di
     if row is None:
         raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
 
+    # Review F-04: crawl_site deliberately does not admit (it must not nest), so the
+    # caller owns the slot. /v1/crawl does; this route used to skip it entirely.
+    async with admit("crawl"):
+        return await _crawl_space_admitted(slug, row, max_pages, settings)
+
+
+async def _crawl_space_admitted(
+    slug: str, row: Space, max_pages: int, settings: Any
+) -> dict[str, Any]:
     from app.api.v1.schemas import CrawlRequest
     from app.api.v1.site import crawl_site  # reuse the BFS crawler (no nested admit)
 
@@ -335,26 +346,31 @@ async def _run_graph_build(owner: str, slug: str) -> None:
     key = _graph_key(owner, slug)
     settings = get_settings()
     try:
-        async with deps.get_session_factory()() as session:
-            row = await _get_owned(session, slug)
-            if row is None:
-                raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
-            from app.retrieval.graph import build_space_graph
+        async with admit("kg"):
+            async with deps.get_session_factory()() as session:
+                row = await _get_owned(session, slug)
+                if row is None:
+                    raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
+                from app.retrieval.graph import build_space_graph
 
-            gateway = deps.get_gateway()
-            model = getattr(gateway, "default_quick_model", settings.llm_quick_model)
-            stats = await build_space_graph(
-                session,
-                row,
-                gateway,
-                settings=settings,
-                max_docs=settings.kg_max_docs_per_build,
-                max_nodes=settings.kg_max_nodes_per_build,
-                model=model,
-            )
-        invalidate(owner)
-        _graph_jobs.setdefault(key, {"status": "pending"}).update(status="ready", **stats)
-        logger.info("kg_build_ready", owner=owner, space=slug, **stats)
+                gateway = deps.get_gateway()
+                model = getattr(gateway, "default_quick_model", settings.llm_quick_model)
+                stats = await build_space_graph(
+                    session,
+                    row,
+                    gateway,
+                    settings=settings,
+                    max_docs=settings.kg_max_docs_per_build,
+                    max_nodes=settings.kg_max_nodes_per_build,
+                    model=model,
+                )
+            invalidate(owner)
+            _graph_jobs.setdefault(key, {"status": "pending"}).update(status="ready", **stats)
+            logger.info("kg_build_ready", owner=owner, space=slug, **stats)
+    except MetaSearchError as exc:
+        logger.warning("kg_build_rejected", space=slug, error=exc.message)
+        job = _graph_jobs.setdefault(key, {"status": "running"})
+        job.update(status="error", error=exc.message[:120])
     except asyncio.CancelledError:
         job = _graph_jobs.setdefault(key, {"status": "running"})
         if job.get("status") in ("pending", "running"):
@@ -387,7 +403,7 @@ async def _graph_db_counts(session: Any, space_id: Any) -> tuple[int, int]:
 
 
 @router.post("/spaces/{slug}/graph/build", response_model=GraphBuildResponse, status_code=202)
-async def build_graph(slug: str) -> GraphBuildResponse:
+async def build_graph(slug: str = Path(max_length=120)) -> GraphBuildResponse:
     """docs/20 P2-2 + v3.1: enqueue a background knowledge-graph build for the
     space (single-flight per owner+space); poll GET /graph/status."""
     settings = get_settings()
@@ -403,29 +419,29 @@ async def build_graph(slug: str) -> GraphBuildResponse:
         if row is None:
             raise MetaSearchError(ErrorCode.NOT_FOUND, "space not found", status_code=404)
     key = _graph_key(owner, slug)
-    async with admit("kg"):
-        if _graph_jobs.get(key, {}).get("status") in ("pending", "running"):
-            return _graph_response(owner, slug)
-        # Single-flight: mark running SYNCHRONOUSLY before scheduling.
-        _graph_jobs[key] = {
-            "status": "running",
-            "created_at": datetime.now(UTC).isoformat(),
-            "error": None,
-            "docs": 0,
-            "nodes": 0,
-            "edges": 0,
-        }
-        _graph_jobs.move_to_end(key)
-        while len(_graph_jobs) > _GRAPH_JOBS_MAX:
-            _graph_jobs.popitem(last=False)
-        task = asyncio.create_task(_run_graph_build(owner, slug))
-        _graph_tasks.add(task)
-        task.add_done_callback(_graph_tasks.discard)
+    if _graph_jobs.get(key, {}).get("status") in ("pending", "running"):
+        return _graph_response(owner, slug)
+    # Single-flight: mark running SYNCHRONOUSLY before scheduling; admit("kg")
+    # wraps the background work itself rather than releasing on HTTP 202 return.
+    _graph_jobs[key] = {
+        "status": "running",
+        "created_at": datetime.now(UTC).isoformat(),
+        "error": None,
+        "docs": 0,
+        "nodes": 0,
+        "edges": 0,
+    }
+    _graph_jobs.move_to_end(key)
+    while len(_graph_jobs) > _GRAPH_JOBS_MAX:
+        _graph_jobs.popitem(last=False)
+    task = asyncio.create_task(_run_graph_build(owner, slug))
+    _graph_tasks.add(task)
+    task.add_done_callback(_graph_tasks.discard)
     return _graph_response(owner, slug)
 
 
 @router.get("/spaces/{slug}/graph/status", response_model=GraphBuildResponse)
-async def graph_status(slug: str) -> GraphBuildResponse:
+async def graph_status(slug: str = Path(max_length=120)) -> GraphBuildResponse:
     """Job status for the space's graph build; when no job is known but kg rows
     exist, report "ready" with counts read from the tables (restart-safe)."""
     settings = get_settings()
@@ -452,7 +468,9 @@ async def graph_status(slug: str) -> GraphBuildResponse:
 
 
 @router.post("/spaces/{slug}/graph/query", response_model=GraphQueryResponse)
-async def query_graph_endpoint(slug: str, request: GraphQueryRequest) -> GraphQueryResponse:
+async def query_graph_endpoint(
+    request: GraphQueryRequest, slug: str = Path(max_length=120)
+) -> GraphQueryResponse:
     """docs/20 P2-2: local graph query — match query terms to entity labels, return
     the 1-hop subgraph; optionally answer over it with the cheap LLM."""
     settings = get_settings()

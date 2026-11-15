@@ -48,7 +48,16 @@ function Get-ServerProcess([int]$LauncherId) {
     return Get-Process -Id $LauncherId
 }
 
-$procId = [int](Get-Content $PidFile | Select-Object -First 1)
+if (-not (Test-Path $PidFile)) {
+    Write-Host "PID file $PidFile not found; start MetaSearch Lite on port $Port first"
+    exit 2
+}
+$rawPid = (Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+$procId = 0
+if (-not $rawPid -or -not [int]::TryParse($rawPid.ToString().Trim(), [ref]$procId) -or $procId -le 0) {
+    Write-Host "Invalid PID in $PidFile; start MetaSearch Lite on port $Port first"
+    exit 2
+}
 # The PID file can be stale and name someone else's process (PIDs are reused); "restart" kills
 # what it finds, so refuse unless the launcher really is this server on this port.
 $launcher = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue

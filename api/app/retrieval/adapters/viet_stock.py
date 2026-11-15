@@ -408,6 +408,16 @@ async def _fetch_simplize_summary(
         return None
 
 
+def _safe_float(raw: Any) -> float | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return val if math.isfinite(val) else None
+
+
 def _build_dynamic_company_financials(
     sym: str,
     simp: dict[str, Any],
@@ -417,42 +427,32 @@ def _build_dynamic_company_financials(
 
     Fields without authoritative disclosures remain None (WP-09 / DAT-01..DAT-04).
     """
-    mc_raw = simp.get("marketCap")
-    mc_vnd_bil = float(mc_raw) / 1e9 if mc_raw is not None else 0.0
+    mc_raw = _safe_float(simp.get("marketCap"))
+    mc_vnd_bil = mc_raw / 1e9 if mc_raw is not None else 0.0
 
-    pe_raw = simp.get("peRatio")
-    pe = float(pe_raw) if pe_raw is not None else None
+    pe = _safe_float(simp.get("peRatio"))
+    pb = _safe_float(simp.get("pbRatio"))
+    eps = _safe_float(simp.get("epsRatio"))
+    roe = _safe_float(simp.get("roe"))
+    roa = _safe_float(simp.get("roa"))
 
-    pb_raw = simp.get("pbRatio")
-    pb = float(pb_raw) if pb_raw is not None else None
+    sh_raw = _safe_float(simp.get("outstandingSharesValue"))
+    sh_out = sh_raw / 1e6 if sh_raw is not None else None
 
-    eps_raw = simp.get("epsRatio")
-    eps = float(eps_raw) if eps_raw is not None else None
-
-    roe_raw = simp.get("roe")
-    roe = float(roe_raw) if roe_raw is not None else None
-
-    roa_raw = simp.get("roa")
-    roa = float(roa_raw) if roa_raw is not None else None
-
-    sh_raw = simp.get("outstandingSharesValue")
-    sh_out = float(sh_raw) / 1e6 if sh_raw is not None else None
-
-    p_ref = float(simp.get("priceClose") or simp.get("priceReferrance") or latest_close or 0.0)
+    p_ref = (
+        _safe_float(simp.get("priceClose"))
+        or _safe_float(simp.get("priceReferrance"))
+        or float(latest_close or 0.0)
+    )
     ind = str(
         simp.get("industryActivity") or simp.get("bcEconomicSectorName") or "Doanh nghiệp niêm yết"
     )
     name = str(simp.get("nameVi") or simp.get("name") or f"Công ty Cổ phần {sym}")
     exch = str(simp.get("stockExchange") or "HSX")
 
-    ff_raw = simp.get("freeFloatRate")
-    ff_rate = float(ff_raw) if ff_raw is not None else None
-
-    div_raw = simp.get("dividendYieldCurrent")
-    div_yield = float(div_raw) if div_raw is not None else None
-
-    growth_raw = simp.get("netIncome5yGrowth")
-    growth_5y = float(growth_raw) if growth_raw is not None else None
+    ff_rate = _safe_float(simp.get("freeFloatRate"))
+    div_yield = _safe_float(simp.get("dividendYieldCurrent"))
+    growth_5y = _safe_float(simp.get("netIncome5yGrowth"))
 
     core_cat = f"{ind}"
     if pe is not None and pb is not None:
@@ -725,10 +725,14 @@ class VietStockAdapter:
             ohlcv_res, simp_data = await asyncio.gather(vnd_task, simp_task, return_exceptions=True)
             primary_elapsed = time.monotonic() - primary_t0
 
-            if isinstance(ohlcv_res, Exception):
+            if isinstance(ohlcv_res, BaseException):
+                if not isinstance(ohlcv_res, Exception):
+                    raise ohlcv_res
                 logger.debug("vndirect_gather_exception: %s", ohlcv_res)
                 ohlcv_res = None
-            if isinstance(simp_data, Exception):
+            if isinstance(simp_data, BaseException):
+                if not isinstance(simp_data, Exception):
+                    raise simp_data
                 logger.debug("simplize_gather_exception: %s", simp_data)
                 simp_data = None
 

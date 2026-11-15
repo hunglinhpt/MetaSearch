@@ -26,7 +26,9 @@ def _age_s(value: datetime | None) -> int | None:
 
 @router.post("/search", response_model=SearchResponse, response_model_exclude_none=True)
 async def search(request: SearchRequest) -> SearchResponse:
-    budget = create_budget_for_route("search", timeout_ms=request.timeout_ms)
+    budget = create_budget_for_route(
+        "search", timeout_ms=request.timeout_ms, settings=deps.get_settings()
+    )
     async with admit("search"):
         with use_budget(budget):
             outcome = await deps.get_search_pipeline().run(

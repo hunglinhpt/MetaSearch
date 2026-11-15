@@ -33,11 +33,18 @@ def assert_safe(url: str) -> IPv4Address | IPv6Address: ...
 - Rate per domain: ≤ 2 request song song, ≥ 1s giữa các request cùng domain.
 - Không fetch trang yêu cầu login; không bypass paywall.
 
-## 3. Auth & Rate limiting
+## 3. Auth, Rate Limiting & Multi-Tenant Threat Model
 
 - API key: random 32 bytes, chỉ lưu hash (sha256) trong DB; hiển thị 1 lần.
-- Rate limit: sliding window Redis per key (60 rpm default); 429 + `Retry-After`.
-- Admin endpoints (`/v1/engines` PATCH) chỉ role admin.
+- Rate limit: sliding window Redis per key (60 rpm default, có trọng số chi phí theo route tại `_STATIC_ROUTE_COSTS`: `/v1/research`=20, `/v1/llm/council`=10, `/v1/spaces/{slug}/graph/build`=10, `/v1/crawl`=8, `/v1/answer`=5, `/v1/tts/synthesize`=5, `/v1/podcast/*`=5, `/v1/context`=3, `/v1/map`=3, `/v1/market/ohlcv`=2, `/v1/spaces/{slug}/graph/query`=2); 429 + `Retry-After`.
+- Khi chạy `AUTH_ENABLED=false` (Lite single-operator), có thể bật `ANONYMOUS_RATE_LIMIT_RPM` (mặc định `0` = tắt) để áp trần RPM cho caller ẩn danh; lúc khởi động với `AUTH_ENABLED=false`, hệ thống ghi log cảnh báo `auth_disabled_open_api`.
+- Admin & Operator endpoints:
+  - `require_admin`: bắt buộc role `admin` (hoặc loopback trực tiếp khi `DEV_ANON_ADMIN=true` trong dev/test).
+  - `require_operator`: cho phép single-operator Lite (`AUTH_ENABLED=false`), nhưng bắt buộc role `admin` khi `AUTH_ENABLED=true` (áp dụng cho `/v1/ops/status`, `/v1/ops/interleave`, `/v1/ops/skills`, `/v1/llm/health`, `POST /v1/podcast/briefing`).
+- Loopback guard (`is_direct_loopback` tại `app/core/net.py`): `/openapi.json`, `/docs`, `/metrics` và phần chi tiết nội bộ của `/readyz` chỉ mở cho kết nối loopback trực tiếp **không** đi qua reverse proxy (từ chối ngay nếu có `X-Forwarded-For`, `X-Real-IP`, `Forwarded`, `X-Forwarded-Host`).
+- **Mô hình phân tách dữ liệu (Tenancy Threat Model — `F-11`)**:
+  - **Cô lập theo `api_key_id`**: `Query`, `WatchlistItem`, `KeyBoost`, `MemoryItem`, `Space`, `KgNode`, `KgEdge` được gắn chặt với `api_key_id` của caller; truy cập chéo key trả về `404` (không tiết lộ sự tồn tại của bản ghi).
+  - **Kho tri thức dùng chung (`Document`, `Chunk`, `BlogPost`)**: Bảng `documents`/`chunks` (phục vụ `/v1/hybrid`, `/v1/crawl`, `/v1/spaces/{slug}/crawl`) và `blog_posts` (`/v1/digests`) là **shared web-crawl corpus** giữa các key trên cùng một deployment nhằm tái sử dụng chỉ mục trang web công khai. **Không** dùng `/v1/crawl` hoặc `/v1/spaces/{slug}/crawl` để nạp tài liệu mật nội bộ của riêng một tenant trên cụm multi-tenant dùng chung DB; nếu cần cô lập tuyệt đối kho `chunks` theo tenant, phải triển khai instance/DB riêng cho từng tenant.
 - Web UI: session cookie httpOnly + SameSite=Lax; CSRF token cho mutation.
 
 ## 4. Secrets management

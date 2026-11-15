@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 
@@ -30,6 +30,7 @@ router = APIRouter(prefix="/digests", tags=["digests"])
 class TriggerScanRequest(BaseModel):
     topic: str | None = Field(
         default=None,
+        max_length=100,
         description=(
             "Topic ID to scan ('ai_coding', 'ai_agents', 'viet_finance', "
             "'macro_business', 'fengshui_lifestyle', 'health_wellness'). "
@@ -116,9 +117,9 @@ async def list_topics() -> list[ScanTopicInfo]:
 
 @router.get("", response_model=list[BlogPostSummary])
 async def list_digests(
-    topic: str | None = Query(default=None, description="Filter by topic"),
+    topic: str | None = Query(default=None, max_length=100, description="Filter by topic"),
     limit: int = Query(default=10, ge=1, le=50),
-    offset: int = Query(default=0, ge=0),
+    offset: int = Query(default=0, ge=0, le=10_000),
 ) -> list[BlogPostSummary]:
     """List published blog posts / daily briefings (with graceful memory fallback)."""
     try:
@@ -140,7 +141,7 @@ async def list_digests(
 
 
 @router.get("/{slug_or_id}", response_model=BlogPostDetail)
-async def get_digest(slug_or_id: str) -> BlogPostDetail:
+async def get_digest(slug_or_id: str = Path(max_length=200)) -> BlogPostDetail:
     """Retrieve full blog post / briefing by ID or slug."""
     is_uuid = False
     parsed_id: uuid.UUID | None = None

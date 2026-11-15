@@ -25,15 +25,15 @@ Endpoints:
 from __future__ import annotations
 
 import time
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.api import deps
 from app.api.v1.schemas import SearchRequest
 from app.config import get_settings
-from app.core.auth import require_admin
+from app.core.auth import require_admin, require_operator
 from app.core.errors import ErrorCode, MetaSearchError
 from app.extraction.chunker import Chunk
 from app.llm.citations import validate_citations
@@ -68,7 +68,14 @@ class LLMTestRequest(BaseModel):
 
 
 ContextPart = Literal[
-    "chunks", "sources", "context_md", "messages", "system_prompt", "domain_intelligence"
+    "chunks",
+    "sources",
+    "context_md",
+    "messages",
+    "system_prompt",
+    "domain_intelligence",
+    "compression",
+    "skill",
 ]
 
 
@@ -81,16 +88,16 @@ class ContextRequest(SearchRequest):
     domain: str = Field(default="auto", max_length=60)
     # Parts of the payload to return. The default keeps it small: chunks and sources carry
     # everything; context_md and messages repeat the chunk text for callers that want it.
-    include: list[ContextPart] = Field(default_factory=_default_context_parts)
+    include: list[ContextPart] = Field(default_factory=_default_context_parts, max_length=8)
 
 
 class ContextChunkInput(BaseModel):
     n: int | None = Field(default=None, ge=1, le=999)
     url: str = Field(min_length=1, max_length=2000)
-    title: str = ""
-    chunk_id: str = ""
-    content: str = ""
-    text: str = ""
+    title: str = Field(default="", max_length=500)
+    chunk_id: str = Field(default="", max_length=200)
+    content: str = Field(default="", max_length=100_000)
+    text: str = Field(default="", max_length=100_000)
 
 
 class CitationValidateRequest(BaseModel):
@@ -98,21 +105,34 @@ class CitationValidateRequest(BaseModel):
     chunks: list[ContextChunkInput] = Field(min_length=1, max_length=200)
 
 
+_CouncilEndpointSpec = Annotated[str, StringConstraints(max_length=150)]
+
+
 class CouncilRequest(SearchRequest):
-    endpoints: list[LLMOverride | str] | None = None
+    # Review F-07: same cap as CouncilEndpointsPatchRequest.endpoints.
+    endpoints: list[LLMOverride | _CouncilEndpointSpec] | None = Field(default=None, max_length=6)
     domain: str = Field(default="auto", max_length=60)
     enable_cross_review: bool = True
     budget: int | None = Field(default=None, ge=200, le=50_000)
-    chunks: list[ContextChunkInput] | None = None
+    chunks: list[ContextChunkInput] | None = Field(default=None, max_length=200)
 
 
 class CouncilEndpointsPatchRequest(BaseModel):
-    endpoints: list[LLMOverride | str] = Field(min_length=1, max_length=6)
+    endpoints: list[LLMOverride | _CouncilEndpointSpec] = Field(min_length=1, max_length=6)
 
 
 class DomainAnalyzeRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     domain: str = Field(default="auto", max_length=60)
+
+
+class LLMValidateRequest(BaseModel):
+    providers: list[Annotated[str, StringConstraints(max_length=64)]] | None = Field(
+        default=None, max_length=25
+    )
+    include_unconfigured: bool = False
+    dry_run: bool = False
+    timeout_s: float | None = Field(default=None, ge=0.5, le=30.0)
 
 
 def _active_config_summary() -> dict[str, Any]:
@@ -246,7 +266,9 @@ async def patch_council_endpoints(request: CouncilEndpointsPatchRequest) -> dict
     dependencies=[Depends(require_admin)],
     summary="Inspect Dream-RSI Replay World trajectories, UCB scores, and evolved domain policies",
 )
-async def get_dream_rsi_state(domain: str | None = None) -> dict[str, Any]:
+async def get_dream_rsi_state(
+    domain: str | None = Query(default=None, max_length=60),
+) -> dict[str, Any]:
     return get_dream_rsi_store().snapshot(domain=domain)
 
 
@@ -281,6 +303,22 @@ async def run_llm_council(request: CouncilRequest, raw_request: Request) -> dict
                     "LLM_BYO_ENABLED=true",
                     status_code=403,
                 )
+    from app.core.admission import admit
+    from app.core.budget import create_budget_for_route, use_budget
+
+    # Review F-03: a council fans out to up to 6 LLM candidates plus cross-review, so it
+    # takes a tier slot and a request budget like /answer and /context do. The default
+    # budget is the council's own wall-clock cap, not the generic 15 s route default.
+    budget = create_budget_for_route(
+        "council",
+        timeout_ms=request.timeout_ms or int(settings.council_budget_s * 1000),
+    )
+    async with admit("council"):
+        with use_budget(budget):
+            return await _execute_council(request, settings)
+
+
+async def _execute_council(request: CouncilRequest, settings: Any) -> dict[str, Any]:
     gateway = deps.get_gateway()
     sources: list[dict[str, Any]] = []
 
@@ -446,6 +484,54 @@ async def test_llm_connection(request: LLMTestRequest, raw_request: Request) -> 
             "error": str(exc),
             "latency_ms": latency_ms,
         }
+
+
+@router.post(
+    "/llm/validate",
+    dependencies=[Depends(require_admin)],
+    summary="Validate API key formats and probe live auth/connectivity across configured providers",
+)
+async def validate_llm_keys(request: LLMValidateRequest | None = None) -> dict[str, Any]:
+    from app.llm.key_validator import validate_all_configured_providers
+
+    req = request or LLMValidateRequest()
+    settings = get_settings()
+    override = get_runtime_llm_store().get_override()
+    results = await validate_all_configured_providers(
+        settings,
+        runtime_override=override,
+        include_unconfigured=req.include_unconfigured,
+        dry_run=req.dry_run,
+        providers=req.providers,
+        timeout_s=req.timeout_s,
+    )
+    items = [r.to_dict() for r in results]
+    return {
+        "dry_run": req.dry_run,
+        "total_checked": len(items),
+        "configured_count": sum(1 for r in items if r["configured"]),
+        "valid_count": sum(1 for r in items if r["key_valid"] is True),
+        "invalid_count": sum(1 for r in items if r["key_valid"] is False),
+        "unreachable_count": sum(1 for r in items if r["reachable"] is False),
+        "results": items,
+    }
+
+
+@router.get(
+    "/llm/health",
+    dependencies=[Depends(require_operator)],
+    summary="Inspect OmniRoute multi-provider ranking, circuit breakers, and EWMA latency",
+)
+async def get_llm_health(
+    task: Literal["answer", "report"] = Query(default="answer"),
+) -> dict[str, Any]:
+    from app.llm.router import route_summary
+
+    return route_summary(
+        get_settings(),
+        task=task,
+        runtime_override=get_runtime_llm_store().get_override(),
+    )
 
 
 @router.post(

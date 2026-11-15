@@ -83,9 +83,15 @@ class EmbeddingClient:
         except Exception as exc:
             raise EmbeddingError(f"embedding request failed: {type(exc).__name__}") from exc
         try:
-            data = sorted(payload["data"], key=lambda item: item["index"])
-            vectors = [item["embedding"] for item in data]
-        except (KeyError, TypeError) as exc:
+            raw_data = payload["data"]
+            if not isinstance(raw_data, list) or not all(isinstance(it, dict) for it in raw_data):
+                raise TypeError("data entries must be objects")
+            indexed = sorted(
+                enumerate(raw_data),
+                key=lambda pair: int(pair[1].get("index", pair[0])),
+            )
+            vectors = [item["embedding"] for _, item in indexed]
+        except (KeyError, TypeError, ValueError) as exc:
             raise EmbeddingError("unexpected embedding response shape") from exc
         if len(vectors) != len(texts):
             raise EmbeddingError(f"embedding count {len(vectors)} != input count {len(texts)}")

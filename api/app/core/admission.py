@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
-from app.core.metrics import ADMISSION_REJECTED
+from app.core.metrics import ADMISSION_REJECTED, SWALLOWED_ERRORS
 
 logger = get_logger(__name__)
 
@@ -38,6 +38,13 @@ _TIER_CONFIG: dict[str, tuple[int, float]] = {
     "watchlist": (4, 1.0),
     # v3.1: background knowledge-graph builds (docs/24 §8 P3 — off the request path).
     "kg": (4, 1.0),
+    # Review F-13: every admit("<tier>") literal in the code MUST be listed here (a test
+    # enforces it) — before, hybrid/map/crawl silently inherited the (16, 1.0) fallback.
+    "hybrid": (16, 1.0),  # DB-only chunk search
+    "map": (8, 1.0),  # sitemap/HTML discovery: several guarded fetches
+    "crawl": (8, 1.0),  # BFS crawl (also POST /v1/spaces/{slug}/crawl): dozens of fetches
+    # Review F-03: council = up to 6 concurrent LLM candidates + cross-review + synthesis.
+    "council": (4, 1.0),
 }
 
 _semaphores: dict[str, asyncio.Semaphore] = {}
@@ -98,8 +105,12 @@ async def acquire_admit_slot(
         from app.core.auth import current_auth_context
 
         ctx = current_auth_context.get()
-    except Exception:
+    except Exception as exc:
+        # Review F-14: fail-open is intentional (never 500 because of the limiter), but a
+        # per-key limit that silently stops applying must show up in metrics and logs.
         ctx = None
+        SWALLOWED_ERRORS.labels(site="admission_auth_context", error=type(exc).__name__).inc()
+        logger.warning("admission_auth_context_unavailable", error=type(exc).__name__)
 
     if ctx is not None and ctx.key_id != "anonymous" and ctx.max_concurrent > 0:
         key_sem = await get_key_semaphore(ctx.key_id, ctx.max_concurrent)

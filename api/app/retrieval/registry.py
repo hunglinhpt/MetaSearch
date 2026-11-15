@@ -52,6 +52,10 @@ class EngineRegistry:
         self.store = store
         self._adapters = adapters
 
+    @property
+    def adapters(self) -> dict[str, SearchAdapter]:
+        return self._adapters
+
     async def enabled(self) -> list[tuple[EngineConfig, SearchAdapter]]:
         """Enabled engines that have a real adapter, sorted by weight desc."""
         snapshot = await self.store.snapshot()

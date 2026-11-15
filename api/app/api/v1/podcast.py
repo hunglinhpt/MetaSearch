@@ -28,7 +28,7 @@ from collections import OrderedDict
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import Table, select
 
@@ -36,7 +36,7 @@ from app.api import deps
 from app.api.v1.schemas import PodcastBriefingStatus
 from app.config import get_settings
 from app.core.admission import admit
-from app.core.auth import current_api_key_id
+from app.core.auth import current_api_key_id, require_operator
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
 from app.core.offload import run_cpu
@@ -250,7 +250,14 @@ async def _run_briefing(day: date) -> None:
             job.update(status="error", error="briefing_failed")
 
 
-@router.post("/podcast/briefing", response_model=PodcastBriefingStatus, status_code=202)
+# Review F-06: one shared file for every tenant and a shared VoiceStudio bill, so a plain
+# key must not be able to trigger it when auth is on (reading status/latest stays open).
+@router.post(
+    "/podcast/briefing",
+    response_model=PodcastBriefingStatus,
+    status_code=202,
+    dependencies=[Depends(require_operator)],
+)
 async def create_briefing() -> PodcastBriefingStatus:
     _require_voicestudio()
     day = _today()

@@ -312,26 +312,17 @@ class LLMGateway:
         temperature: float,
         task: str,
     ) -> list[tuple[ResolvedLLMTarget, str]]:
-        """Ordered failover candidates: primary -> openrouter models -> fallback provider."""
-        candidates: list[tuple[ResolvedLLMTarget, str]] = [(target, eff_model)]
-        if target.provider == "openrouter" and target.api_key and target.fallback_models:
-            for alt_model in target.fallback_models:
-                if alt_model != eff_model:
-                    candidates.append((target, alt_model))
-        if (
-            target.fallback_provider
-            and target.fallback_provider != "none"
-            and target.fallback_provider != target.provider
-        ):
-            try:
-                fb_target = resolve_llm_target(
-                    self._settings,
-                    request_override=LLMOverride(provider=target.fallback_provider),  # type: ignore[arg-type]
-                )
-                candidates.append((fb_target, self._effective_model(None, fb_target, task=task)))
-            except Exception as exc:  # bad fallback config must not kill the request
-                logger.warning("llm_fallback_target_unresolvable", error=str(exc)[:120])
-        return candidates
+        """Ordered failover candidates via OmniRoute-style combo builder."""
+        from app.llm.router import LLMInferenceRouter
+
+        runtime_ov = get_runtime_llm_store().get_override() if self._use_runtime_store else None
+        return LLMInferenceRouter(self._settings).build_combo(
+            target,
+            eff_model,
+            task=task,
+            request_override=self._request_override,
+            runtime_override=runtime_ov,
+        )
 
     async def stream(
         self,
@@ -353,9 +344,15 @@ class LLMGateway:
         """
         target = self.resolve_target()
         if target.provider == "none" or target.protocol == "none":
-            # Lite mode: skip LLM processing when provider is none
-            return
-            yield  # Never reached, but satisfies type checker
+            if target.fallback_provider and target.fallback_provider != "none":
+                target = resolve_llm_target(
+                    self._settings,
+                    request_override=LLMOverride(provider=target.fallback_provider),  # type: ignore[arg-type]
+                )
+            else:
+                raise LLMError(
+                    "LLM provider is 'none': set LLM_PROVIDER plus an API key to use /v1/answer"
+                )
 
         eff_model = self._effective_model(model, target, task=task)
         max_tok = max_tokens or self._settings.llm_answer_max_tokens
@@ -399,6 +396,9 @@ class LLMGateway:
             provider = cand_target.provider
             started = time.perf_counter()
             first_token = True
+            from app.llm.key_validator import get_provider_health_tracker
+
+            tracker = get_provider_health_tracker()
             try:
                 async for delta in self._stream_once(
                     cand_target, messages, cand_model, max_tokens=max_tok, temperature=temp
@@ -411,19 +411,51 @@ class LLMGateway:
                             LLM_TTFT.labels(provider=provider).observe(ttft)
                             STAGE_DURATION.labels(stage="llm_first_token").observe(ttft)
                     yield delta
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
                 breaker.record(Outcome.OK)
+                tracker.record_call_outcome(
+                    provider, ok=True, latency_ms=elapsed_ms, status_code=200
+                )
                 LLM_REQUESTS.labels(provider=provider, outcome="ok").inc()
-                STAGE_DURATION.labels(stage="llm_total").observe(time.perf_counter() - started)
+                STAGE_DURATION.labels(stage="llm_total").observe(elapsed_ms / 1000.0)
                 return
             except LLMStatusError as exc:
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
                 status_outcome = (
                     Outcome.RATE_LIMITED if exc.status_code == 429 else Outcome.UPSTREAM_ERROR
                 )
                 breaker.record(status_outcome, retry_after_s=exc.retry_after_s)
+                tracker.record_call_outcome(
+                    provider,
+                    ok=False,
+                    latency_ms=elapsed_ms,
+                    status_code=exc.status_code,
+                    error=f"http_{exc.status_code}",
+                )
                 LLM_REQUESTS.labels(provider=provider, outcome=status_outcome.value).inc()
                 last_error = exc
                 if not exc.retryable:
-                    # 400/401/403/404: same key, same result — no retry, no failover.
+                    # 400/401/403/404: never retry the same provider; however on
+                    # 401/403 with a distinct healthy fallback provider still in
+                    # the combo and zero tokens emitted, strip same-provider
+                    # entries and fail over cleanly to the next provider.
+                    if (
+                        exc.status_code in (401, 403)
+                        and not emitted_any
+                        and any(c_tgt.provider != provider for c_tgt, _ in candidates)
+                    ):
+                        candidates = deque(
+                            (c_tgt, c_mod)
+                            for c_tgt, c_mod in candidates
+                            if c_tgt.provider != provider
+                        )
+                        logger.warning(
+                            "llm_auth_failover",
+                            failed_provider=provider,
+                            status_code=exc.status_code,
+                            remaining=len(candidates),
+                        )
+                        continue
                     logger.warning(
                         "llm_non_retryable",
                         provider=exc.provider,
@@ -456,11 +488,18 @@ class LLMGateway:
                     if sleep_s > 0:
                         await asyncio.sleep(sleep_s)
             except LLMError as exc:
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
                 if isinstance(exc, LLMTimeoutError):
                     outcome = Outcome.TIMEOUT if exc.provider_fault else Outcome.CANCELLED
                 else:
                     outcome = Outcome.UPSTREAM_ERROR
                 breaker.record(outcome)
+                tracker.record_call_outcome(
+                    provider,
+                    ok=False,
+                    latency_ms=elapsed_ms,
+                    error=type(exc).__name__,
+                )
                 LLM_REQUESTS.labels(provider=provider, outcome=outcome.value).inc()
                 last_error = exc
                 logger.warning(
@@ -551,17 +590,20 @@ class LLMGateway:
                     except json.JSONDecodeError as exc:
                         # REL-10: invalid JSON upstream must be an LLMError, not a crash.
                         raise LLMError(f"{target.provider} returned malformed JSON: {exc}") from exc
+                    if not isinstance(payload, dict):
+                        raise LLMError(f"{target.provider} returned non-object JSON payload")
                     choices = payload.get("choices") or []
-                    if choices:
-                        msg = choices[0].get("message") or choices[0].get("delta") or {}
-                        content = msg.get("content")
+                    first = choices[0] if isinstance(choices, list) and choices else None
+                    if isinstance(first, dict):
+                        msg = first.get("message") or first.get("delta") or {}
+                        content = msg.get("content") if isinstance(msg, dict) else None
                         if content:
                             yield StreamDelta(
                                 text=str(content),
-                                finish_reason=choices[0].get("finish_reason"),
+                                finish_reason=first.get("finish_reason"),
                             )
-                    if payload.get("usage"):
-                        u = payload["usage"]
+                    u = payload.get("usage")
+                    if isinstance(u, dict):
                         yield StreamDelta(
                             usage=Usage(
                                 input_tokens=int(u.get("prompt_tokens") or 0),

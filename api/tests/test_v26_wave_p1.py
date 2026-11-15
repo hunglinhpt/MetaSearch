@@ -308,6 +308,7 @@ async def v26_db(tmp_path, monkeypatch):
     reset_rate_limit_windows()
     key, _ = await create_key("v26_user", role="user", rate_limit_rpm=6000)
     yield key
+    await dispose_engine()
     get_settings.cache_clear()
 
 

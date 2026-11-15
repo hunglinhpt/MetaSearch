@@ -47,12 +47,27 @@ def fake_dns(request, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_pipelines():
+    from app.api import deps
+    from app.llm.key_validator import get_provider_health_tracker
     from app.orchestration.persist_queue import discard_persist_queue
+    from app.orchestration.skill_orchestrator import get_task_observer
+    from app.retrieval.memory import reset_recall_backoff
 
+    saved_deps = {
+        name: getattr(deps, name) for name in deps.__all__ if name.startswith(("get_", "build_"))
+    }
     discard_persist_queue()
+    get_provider_health_tracker().reset()
+    get_task_observer().reset()
+    reset_recall_backoff()
     reset_pipelines()
     yield
     discard_persist_queue()
+    get_provider_health_tracker().reset()
+    get_task_observer().reset()
+    reset_recall_backoff()
+    for name, orig in saved_deps.items():
+        setattr(deps, name, orig)
     reset_pipelines()
 
 

@@ -47,7 +47,6 @@ from app.retrieval.scoring import heuristic_chunk_score, tokenize
 
 logger = get_logger(__name__)
 
-_JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 _MAX_SUB_QUERIES = 5
 _EXTRACTOR_MAX_CHARS = 12_000
 _MAX_CHUNKS_PER_DOC_IN_MERGE = 3
@@ -1057,10 +1056,12 @@ class ResearchPipeline:
 
 def _extract_json(text: str) -> dict:
     """Pull the first JSON object out of an LLM reply."""
-    match = _JSON_BLOCK.search(text)
-    if not match:
+    from app.core.json_utils import extract_json_object
+
+    parsed = extract_json_object(text)
+    if parsed is None:
         raise ValueError("no JSON object in planner/extractor reply")
-    return json.loads(match.group(0))
+    return parsed
 
 
 def record_usage_safe(model: str, usage: Usage) -> None:

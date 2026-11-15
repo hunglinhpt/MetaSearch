@@ -940,8 +940,10 @@ def resolve_llm_target(
     else:
         if req_api_key is not None:
             api_key = req_api_key
-        elif run_api_key is not None and (
-            runtime_override.provider is None or runtime_override.provider == provider
+        elif (
+            run_api_key is not None
+            and runtime_override is not None
+            and (runtime_override.provider is None or runtime_override.provider == provider)
         ):
             api_key = run_api_key
         else:
@@ -1027,7 +1029,7 @@ def parse_council_endpoint_specs(
     heterogeneous Council panel of free LLM endpoints.
     """
     if isinstance(raw_specs, list) and raw_specs and isinstance(raw_specs[0], LLMOverride):
-        return list(raw_specs)  # type: ignore[arg-type]
+        return [ep for ep in raw_specs if isinstance(ep, LLMOverride)]
 
     specs: list[str] = []
     if isinstance(raw_specs, str):

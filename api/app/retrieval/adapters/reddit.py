@@ -96,7 +96,9 @@ class RedditAdapter:
         except ValueError as exc:
             raise AdapterError("reddit returned non-JSON body") from exc
 
-        children = (payload.get("data") or {}).get("children") or []
+        children = (
+            (payload.get("data") or {}).get("children") or [] if isinstance(payload, dict) else []
+        )
         results: list[RawResult] = []
 
         for rank, child in enumerate(children, start=1):

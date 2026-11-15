@@ -123,6 +123,8 @@ class SSIFASource:
         closes = [to_float(x) for x in c_list]
         if any(v is None for v in closes):
             raise FASourceError(self.source_id, "upstream_error", "non_finite_closes")
+        if any(isinstance(t, bool) for t in t_list):
+            raise FASourceError(self.source_id, "upstream_error", "bad_series")
         try:
             times = [int(t) for t in t_list]
         except (TypeError, ValueError) as exc:

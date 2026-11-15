@@ -514,6 +514,7 @@ async def prefs_stack(tmp_path, monkeypatch):
     reset_rate_limit_windows()
     key, _ = await create_key("prefs_user", role="user", rate_limit_rpm=6000)
     yield key
+    await dispose_engine()
     get_settings.cache_clear()
 
 

@@ -112,6 +112,9 @@ class PersistQueue:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._consumer_task
             self._consumer_task = None
+        while not self._queue.empty():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._discard(self._queue.get_nowait())
 
     async def _consume(self) -> None:
         while self._running:
@@ -133,9 +136,14 @@ class PersistQueue:
                 batch.append(item)
             # The gauge must fall as the consumer drains, not only rise on enqueue.
             BACKGROUND_QUEUE_DEPTH.labels(queue="persist").set(self._queue.qsize())
-            for item in batch:
+            for idx, item in enumerate(batch):
                 try:
                     await item.fn(*item.args, **item.kwargs)
+                except asyncio.CancelledError:
+                    for remaining in batch[idx:]:
+                        with contextlib.suppress(RuntimeError):
+                            self._discard(remaining)
+                    raise
                 except Exception as exc:
                     PERSIST_FAILED.inc()
                     logger.warning(
@@ -163,6 +171,13 @@ async def reset_persist_queue() -> None:
 def discard_persist_queue() -> None:
     """Sync-safe: drop the singleton without awaiting stop (test cleanup)."""
     global _queue
-    if _queue is not None and _queue._consumer_task is not None:
-        _queue._consumer_task.cancel()
+    if _queue is not None:
+        if _queue._consumer_task is not None:
+            _queue._consumer_task.cancel()
+        while not _queue._queue.empty():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                _queue._discard(_queue._queue.get_nowait())
     _queue = None
+    from app.orchestration.persist import discard_background_tasks
+
+    discard_background_tasks()

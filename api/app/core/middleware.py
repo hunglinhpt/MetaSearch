@@ -36,6 +36,7 @@ def _route_class_of(path: str) -> str:
 # Phase 4 P1: inbound JSON body cap (docs/23 P1 #5). Only applies to
 # JSON-body routes — SSE/file/stream surfaces set their own caps.
 MAX_BODY_BYTES = 1024 * 1024
+_BODY_TOO_LARGE = {"error": {"code": "invalid_request", "message": "request body too large"}}
 
 
 class RequestContextMiddleware:
@@ -52,19 +53,21 @@ class RequestContextMiddleware:
         # Audit Phase 4 P1: reject oversized JSON bodies BEFORE buffering — a
         # 100MB body was fully read then rejected field-by-field by pydantic.
         # GET/HEAD have no body; non-JSON content types are not our surface.
+        # Review F-08: the Content-Length pre-check below only sees honest clients; a
+        # chunked request has no such header. body_cap also drives the streaming byte
+        # counter wrapped around `receive` further down.
+        body_cap: int | None = None
         if str(scope.get("method") or "").upper() in ("POST", "PUT", "PATCH"):
             headers = dict(scope.get("headers") or [])
             length = headers.get(b"content-length")
             from app.config import get_settings
 
             cap = int(getattr(get_settings(), "max_body_bytes", MAX_BODY_BYTES))
+            body_cap = cap
             if length and length.isdigit() and int(length) > cap:
                 from starlette.responses import JSONResponse
 
-                resp = JSONResponse(
-                    {"error": {"code": "invalid_request", "message": "request body too large"}},
-                    status_code=413,
-                )
+                resp = JSONResponse(_BODY_TOO_LARGE, status_code=413)
                 await resp(scope, receive, send)
                 return
 
@@ -100,10 +103,47 @@ class RequestContextMiddleware:
                 message["headers"] = headers
             await send(message)
 
+        # Streaming body cap: count the bytes actually received (works for chunked
+        # transfer too). On overflow answer 413 ourselves, feed the app a disconnect so it
+        # stops reading, and swallow whatever it tries to send afterwards.
+        over_limit = False
+        response_started = False
+        received_bytes = 0
+
+        async def limited_receive() -> Message:
+            nonlocal over_limit, received_bytes
+            message = await receive()
+            if body_cap is None or message["type"] != "http.request":
+                return message
+            received_bytes += len(message.get("body") or b"")
+            if received_bytes > body_cap and not over_limit:
+                over_limit = True
+                if not response_started:
+                    from starlette.responses import JSONResponse
+
+                    resp = JSONResponse(_BODY_TOO_LARGE, status_code=413)
+                    await resp(scope, receive, send_with_header)
+            if over_limit:
+                return {"type": "http.disconnect"}
+            return message
+
+        async def guarded_send(message: Message) -> None:
+            nonlocal response_started
+            if over_limit:
+                return
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send_with_header(message)
+
         route_class = _route_class_of(str(scope.get("path") or "/"))
         INFLIGHT_REQUESTS.labels(route_class=route_class).inc()
         try:
-            await self.app(scope, receive, send_with_header)
+            try:
+                await self.app(scope, limited_receive, guarded_send)
+            except Exception:
+                # The app aborted because we cut its body; the 413 is already on the wire.
+                if not over_limit:
+                    raise
         finally:
             INFLIGHT_REQUESTS.labels(route_class=route_class).dec()
             elapsed = max(0.0, time.perf_counter() - started)

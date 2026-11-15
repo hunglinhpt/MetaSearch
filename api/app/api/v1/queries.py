@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Path
 from sqlalchemy import func, select
 
 from app.api import deps
@@ -25,7 +25,7 @@ router = APIRouter(tags=["queries"])
 async def list_queries(limit: int = 20, offset: int = 0) -> dict[str, Any]:
     """Recent queries with per-query result/answer counts (management view)."""
     limit = max(1, min(limit, 100))
-    offset = max(0, offset)
+    offset = max(0, min(offset, 100_000))
     # SEC-04: admin sees everything; a key sees only its own queries;
     # anonymous (auth off, single-operator Lite) sees all.
     owner: str | None = current_api_key_id.get()
@@ -93,7 +93,7 @@ async def list_queries(limit: int = 20, offset: int = 0) -> dict[str, Any]:
 
 
 @router.get("/queries/{query_id}")
-async def get_query(query_id: str) -> dict[str, Any]:
+async def get_query(query_id: str = Path(max_length=64)) -> dict[str, Any]:
     try:
         qid = uuid.UUID(query_id)
     except ValueError as exc:

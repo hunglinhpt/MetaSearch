@@ -94,7 +94,8 @@ class BraveAdapter:
             raise AdapterError("brave returned non-JSON body") from exc
 
         results: list[RawResult] = []
-        for item in (body.get("web") or {}).get("results") or []:
+        web_items = (body.get("web") or {}).get("results") or [] if isinstance(body, dict) else []
+        for item in web_items:
             url = item.get("url")
             if not url:
                 continue

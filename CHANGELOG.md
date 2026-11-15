@@ -1,5 +1,66 @@
 # Changelog
 
+## [3.2.0] - 2026-11-15
+
+### Added — 4-Repo AI Infrastructure Stack & 5-Pass Hardening (docs/25)
+
+- **OmniRoute-inspired Key Validation & Health-Aware Router** (`api/app/llm/key_validator.py`,
+  `api/app/llm/router.py`):
+  - `KEY_FORMAT_SPECS` (17 format specs + placeholder detection + whitespace/control/non-ASCII
+    header rejection), SSRF-safe live key probing via shared `get_http_client("internal")` with
+    bounded concurrency (`asyncio.Semaphore(6)`) and provider-scoped `scoped_runtime_override`.
+  - `ProviderHealthTracker` + `score_provider`/`rank_providers`/`route_summary` combining key
+    validity, `llm_breakers`, free tier rank (`trial_credits` included), EWMA latency, and
+    `LLM_FALLBACK_CHAIN` (`LLM_ALLOW_KEYLESS_FALLBACK=false` by default).
+  - Endpoints: `POST /v1/llm/validate` (`require_admin`) and `GET /v1/llm/health?task=answer|report`.
+- **Headroom-inspired Context Compression & KV-Cache Alignment** (`api/app/llm/compressor.py`):
+  - `ContentRouter`, `SmartCrusher` (JSON / Markdown tables / code logs), and extractive verbatim
+    `SearchCompressor` supporting 4 profiles (`balanced`, `preserve_numbers`, `preserve_code`, `compact`).
+  - `CacheAligner` keeps invariant system prompts first and isolates recalled memory inside
+    randomized `<<<PRIOR_MEMORY_{tag}>>>` boundaries.
+  - Hooked into `pipeline.py` (`CONTEXT_COMPRESSION_ENABLED`, `CONTEXT_COMPRESSION_MIN_CHUNKS=2`);
+    exposed in `POST /v1/answer` and `POST /v1/context` (`include` adds `"compression"`).
+- **One-Skill Orchestrator & TaskObserver** (`api/app/orchestration/skill_orchestrator.py`,
+  `api/app/api/v1/skills.py`):
+  - 9 unified skills wrapping domain intelligence packs, driving `compression_profile` and
+    recording bounded ring-buffer telemetry (`TaskObserver`).
+  - Endpoints: `GET /v1/skills`, `GET /v1/ops/skills`, and `"skill"` in `POST /v1/context` `include`.
+- **Claude-Mem-inspired Episodic Observations & Progressive Disclosure** (`api/app/retrieval/memory.py`,
+  `api/app/api/v1/memory.py`, `api/app/mcp/server.py`):
+  - Per-key `kind="observation"` distillation + recall (`MEMORY_RECALL_ENABLED`,
+    `MEMORY_RECALL_MAX_TOKENS=250`) and 3-layer progressive disclosure endpoints
+    (`GET /v1/memory/search`, `GET /v1/memory/timeline`, `POST /v1/memory/observations`) plus MCP
+    tools (`memory_search`, `memory_timeline`, `memory_get_observations`).
+- **Tests, Audit & Contract**:
+  - Added `api/tests/test_phase4_ai_infra.py` (13 tests covering key validator, router, Headroom
+    compression/CacheAligner, One-Skill orchestrator, Claude-Mem API + MCP tools, E2E context/answer,
+    and Pass 5 profile/override isolation/timeline regression).
+  - **Principal Architect Review Hardening (`docs/26-principal-architect-review-2026-11-15.md` — F-01..F-22)**:
+    - Declarative rate-limit cost table `_STATIC_ROUTE_COSTS` (`api/app/core/auth.py`) covering
+      `/v1/llm/council` (10), `/v1/spaces/{slug}/graph/build` (10), `/v1/crawl` (8),
+      `/v1/spaces/{slug}/crawl` (8), `/v1/podcast/personal` (5), `/v1/map` (3),
+      `/v1/spaces/{slug}/graph/query` (2), plus opt-in `ANONYMOUS_RATE_LIMIT_RPM` (`F-01`, `F-02`).
+    - Explicit admission tiers (`council`, `crawl`, `map`, `hybrid`) in `_TIER_CONFIG`
+      (`api/app/core/admission.py`); admission + budget enforcement on `POST /v1/llm/council` and
+      `POST /v1/spaces/{slug}/crawl` (`F-03`, `F-04`, `F-13`); `SWALLOWED_ERRORS` metric counter
+      (`F-14`).
+    - `require_operator` dependency protecting `/v1/ops/status`, `/v1/ops/interleave`,
+      `/v1/ops/skills`, `/v1/llm/health`, and `POST /v1/podcast/briefing` when `AUTH_ENABLED=true`
+      while keeping single-operator Lite (`AUTH_ENABLED=false`) frictionless (`F-05`, `F-06`, `F-22`).
+    - Streaming body byte cap (`RequestContextMiddleware`) rejecting chunked bodies over
+      `MAX_BODY_BYTES` with HTTP `413` (`F-08`).
+    - Proxy-aware loopback guard `is_direct_loopback` (`api/app/core/net.py`) on `/openapi.json`,
+      `/docs`, `/metrics`, and `/readyz` internal diagnostics (`F-09`, `F-10`).
+    - Upper bounds on all request schemas, array items, query parameters, and path parameters across
+      `/v1/*`, locked by structural OpenAPI & AST guardrail tests in
+      `api/tests/test_w5_guardrails.py` (43 tests) (`F-07`, `F-21`).
+    - Expanded `mypy` scope in `api/pyproject.toml` to include `app/llm` (`F-16`), aligned package
+      versions to `3.2.0` (`F-17`), and added `await dispose_engine()` teardown to async SQLite test
+      fixtures (`F-19`).
+  - Regenerated `api/tests/contract/openapi_v1.json`; documented new env vars in
+    `deploy/.env.example` & `deploy/.env.lite.example`; wrote `docs/25-llm-integration-evaluation.md`
+    and `docs/26-principal-architect-review-2026-11-15.md`; updated `docs/15-integration-guide.md`.
+
 ## [3.1.0] - 2026-11-14
 
 ### Added — Lite Web UI + job runner không popup (docs/08 §Lite)

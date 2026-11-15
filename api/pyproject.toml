@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "metasearch-api"
-version = "3.1.0"
+version = "3.2.0"
 description = "MetaSearch AI — thin orchestration layer on top of SearXNG + crawl4ai/trafilatura (giants-first)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -94,7 +94,7 @@ exclude_dirs = ["tests", "alembic"]
 [tool.mypy]
 # Typed surface checked in CI (WP-16); widen the list as modules are cleaned up.
 python_version = "3.12"
-files = ["app/core", "app/api"]
+files = ["app/core", "app/api", "app/llm"]
 follow_imports = "silent"
 ignore_missing_imports = true
 warn_unused_ignores = true

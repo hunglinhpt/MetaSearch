@@ -86,8 +86,11 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def dispose_engine() -> None:
-    """Release pooled connections on shutdown."""
+    """Release pooled connections on shutdown after draining background writes."""
     global _engine, _sessionmaker
+    from app.orchestration.persist import wait_background
+
+    await wait_background(2.0)
     if _engine is not None:
         await _engine.dispose()
     _engine = None

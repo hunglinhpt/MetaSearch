@@ -5,8 +5,10 @@
         "properties": {
           "categories": {
             "items": {
+              "maxLength": 64,
               "type": "string"
             },
+            "maxItems": 20,
             "title": "Categories",
             "type": "array"
           },
@@ -19,10 +21,12 @@
                       "$ref": "#/components/schemas/LLMOverride"
                     },
                     {
+                      "maxLength": 150,
                       "type": "string"
                     }
                   ]
                 },
+                "maxItems": 6,
                 "type": "array"
               },
               {
@@ -51,8 +55,10 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 64,
                   "type": "string"
                 },
+                "maxItems": 50,
                 "type": "array"
               },
               {
@@ -65,6 +71,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -113,6 +120,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -268,6 +276,18 @@
             "title": "Complete",
             "type": "boolean"
           },
+          "compression": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compression"
+          },
           "council": {
             "anyOf": [
               {
@@ -296,6 +316,18 @@
             "default": "",
             "title": "Model",
             "type": "string"
+          },
+          "skill": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skill"
           },
           "sources": {
             "items": {
@@ -649,11 +681,13 @@
         "properties": {
           "chunk_id": {
             "default": "",
+            "maxLength": 200,
             "title": "Chunk Id",
             "type": "string"
           },
           "content": {
             "default": "",
+            "maxLength": 100000,
             "title": "Content",
             "type": "string"
           },
@@ -672,11 +706,13 @@
           },
           "text": {
             "default": "",
+            "maxLength": 100000,
             "title": "Text",
             "type": "string"
           },
           "title": {
             "default": "",
+            "maxLength": 500,
             "title": "Title",
             "type": "string"
           },
@@ -710,8 +746,10 @@
           },
           "categories": {
             "items": {
+              "maxLength": 64,
               "type": "string"
             },
+            "maxItems": 20,
             "title": "Categories",
             "type": "array"
           },
@@ -730,8 +768,10 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 64,
                   "type": "string"
                 },
+                "maxItems": 50,
                 "type": "array"
               },
               {
@@ -744,6 +784,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -796,10 +837,13 @@
                 "context_md",
                 "messages",
                 "system_prompt",
-                "domain_intelligence"
+                "domain_intelligence",
+                "compression",
+                "skill"
               ],
               "type": "string"
             },
+            "maxItems": 8,
             "title": "Include",
             "type": "array"
           },
@@ -807,6 +851,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -904,6 +949,7 @@
                   "$ref": "#/components/schemas/LLMOverride"
                 },
                 {
+                  "maxLength": 150,
                   "type": "string"
                 }
               ]
@@ -937,8 +983,10 @@
           },
           "categories": {
             "items": {
+              "maxLength": 64,
               "type": "string"
             },
+            "maxItems": 20,
             "title": "Categories",
             "type": "array"
           },
@@ -948,6 +996,7 @@
                 "items": {
                   "$ref": "#/components/schemas/ContextChunkInput"
                 },
+                "maxItems": 200,
                 "type": "array"
               },
               {
@@ -981,10 +1030,12 @@
                       "$ref": "#/components/schemas/LLMOverride"
                     },
                     {
+                      "maxLength": 150,
                       "type": "string"
                     }
                   ]
                 },
+                "maxItems": 6,
                 "type": "array"
               },
               {
@@ -997,8 +1048,10 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 64,
                   "type": "string"
                 },
+                "maxItems": 50,
                 "type": "array"
               },
               {
@@ -1011,6 +1064,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -1059,6 +1113,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -1684,6 +1739,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 20,
@@ -1737,6 +1793,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 2000,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -1919,6 +1976,51 @@
         "title": "LLMTestRequest",
         "type": "object"
       },
+      "LLMValidateRequest": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "include_unconfigured": {
+            "default": false,
+            "title": "Include Unconfigured",
+            "type": "boolean"
+          },
+          "providers": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "maxItems": 25,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Providers"
+          },
+          "timeout_s": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 0.5,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout S"
+          }
+        },
+        "title": "LLMValidateRequest",
+        "type": "object"
+      },
       "MapRequest": {
         "description": "docs/20 P1-7: discover URLs of a site (sitemap first, HTML links fallback).",
         "properties": {
@@ -1991,6 +2093,7 @@
           "days": {
             "anyOf": [
               {
+                "maximum": 3650.0,
                 "minimum": 1.0,
                 "type": "integer"
               },
@@ -2079,12 +2182,13 @@
         "type": "object"
       },
       "MemoryCreateRequest": {
-        "description": "docs/20 P1-5: record a memory entry for the current key.\n\nkind=\"query\" remembers a past query; kind=\"feedback\" attaches a 👍/👎\n(weight ±1) to a result URL and turns into a rerank boost.",
+        "description": "docs/20 P1-5 + Claude-Mem: record a memory entry for the current key.\n\nkind=\"query\" remembers a past query; kind=\"feedback\" attaches a 👍/👎\n(weight ±1) to a result URL and turns into a rerank boost;\nkind=\"observation\" stores a structured episodic memory payload.",
         "properties": {
           "kind": {
             "enum": [
               "query",
-              "feedback"
+              "feedback",
+              "observation"
             ],
             "title": "Kind",
             "type": "string"
@@ -2133,6 +2237,73 @@
         "title": "MemoryCreateRequest",
         "type": "object"
       },
+      "MemoryIndexItem": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "score": {
+            "default": 0.0,
+            "title": "Score",
+            "type": "number"
+          },
+          "snippet": {
+            "default": "",
+            "title": "Snippet",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "MemoryIndexItem",
+        "type": "object"
+      },
+      "MemoryIndexResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryIndexItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "query": {
+            "default": "",
+            "title": "Query",
+            "type": "string"
+          },
+          "storage": {
+            "default": "db",
+            "title": "Storage",
+            "type": "string"
+          }
+        },
+        "title": "MemoryIndexResponse",
+        "type": "object"
+      },
       "MemoryListResponse": {
         "properties": {
           "items": {
@@ -2149,6 +2320,134 @@
           }
         },
         "title": "MemoryListResponse",
+        "type": "object"
+      },
+      "MemoryObservationDetail": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "domain_id": {
+            "default": "",
+            "title": "Domain Id",
+            "type": "string"
+          },
+          "facts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "weight": {
+            "default": 0.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "MemoryObservationDetail",
+        "type": "object"
+      },
+      "MemoryObservationsRequest": {
+        "properties": {
+          "ids": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "MemoryObservationsRequest",
+        "type": "object"
+      },
+      "MemoryObservationsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryObservationDetail"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "storage": {
+            "default": "db",
+            "title": "Storage",
+            "type": "string"
+          }
+        },
+        "title": "MemoryObservationsResponse",
         "type": "object"
       },
       "MemoryOut": {
@@ -2171,6 +2470,18 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
           },
           "text": {
             "default": "",
@@ -2199,6 +2510,84 @@
           "kind"
         ],
         "title": "MemoryOut",
+        "type": "object"
+      },
+      "MemoryTimelineItem": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_anchor": {
+            "default": false,
+            "title": "Is Anchor",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "snippet": {
+            "default": "",
+            "title": "Snippet",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "MemoryTimelineItem",
+        "type": "object"
+      },
+      "MemoryTimelineResponse": {
+        "properties": {
+          "anchor_found": {
+            "default": false,
+            "title": "Anchor Found",
+            "type": "boolean"
+          },
+          "anchor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryTimelineItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "storage": {
+            "default": "db",
+            "title": "Storage",
+            "type": "string"
+          }
+        },
+        "title": "MemoryTimelineResponse",
         "type": "object"
       },
       "OhlcvCandle": {
@@ -2539,6 +2928,7 @@
           },
           "urls": {
             "items": {
+              "maxLength": 2000,
               "type": "string"
             },
             "maxItems": 10,
@@ -2557,8 +2947,10 @@
         "properties": {
           "categories": {
             "items": {
+              "maxLength": 64,
               "type": "string"
             },
+            "maxItems": 20,
             "title": "Categories",
             "type": "array"
           },
@@ -2571,8 +2963,10 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 64,
                   "type": "string"
                 },
+                "maxItems": 50,
                 "type": "array"
               },
               {
@@ -2585,6 +2979,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -2633,6 +3028,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -3001,6 +3397,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 253,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -3029,6 +3426,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 2000,
                   "type": "string"
                 },
                 "maxItems": 100,
@@ -3044,6 +3442,7 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 200,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -3075,6 +3474,7 @@
           "topic": {
             "anyOf": [
               {
+                "maxLength": 100,
                 "type": "string"
               },
               {
@@ -3570,6 +3970,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 100,
                   "type": "string"
                 },
                 {
@@ -3598,6 +3999,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "maximum": 10000,
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
@@ -3728,6 +4130,7 @@
             "name": "slug_or_id",
             "required": true,
             "schema": {
+              "maxLength": 200,
               "title": "Slug Or Id",
               "type": "string"
             }
@@ -3893,6 +4296,7 @@
             "name": "engine_id",
             "required": true,
             "schema": {
+              "maxLength": 64,
               "title": "Engine Id",
               "type": "string"
             }
@@ -4238,6 +4642,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 60,
                   "type": "string"
                 },
                 {
@@ -4273,6 +4678,56 @@
           }
         },
         "summary": "Inspect Dream-RSI Replay World trajectories, UCB scores, and evolved domain policies",
+        "tags": [
+          "v1",
+          "llm"
+        ]
+      }
+    },
+    "/v1/llm/health": {
+      "get": {
+        "operationId": "get_llm_health_v1_llm_health_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "task",
+            "required": false,
+            "schema": {
+              "default": "answer",
+              "enum": [
+                "answer",
+                "report"
+              ],
+              "title": "Task",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Llm Health V1 Llm Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inspect OmniRoute multi-provider ranking, circuit breakers, and EWMA latency",
         "tags": [
           "v1",
           "llm"
@@ -4341,6 +4796,57 @@
           }
         },
         "summary": "Test connectivity and latency of an LLM endpoint",
+        "tags": [
+          "v1",
+          "llm"
+        ]
+      }
+    },
+    "/v1/llm/validate": {
+      "post": {
+        "operationId": "validate_llm_keys_v1_llm_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LLMValidateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Validate Llm Keys V1 Llm Validate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate API key formats and probe live auth/connectivity across configured providers",
         "tags": [
           "v1",
           "llm"
@@ -4463,8 +4969,31 @@
             "required": false,
             "schema": {
               "default": 100,
+              "maximum": 500,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "query",
+                    "feedback",
+                    "observation"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
             }
           }
         ],
@@ -4537,6 +5066,201 @@
         ]
       }
     },
+    "/v1/memory/observations": {
+      "post": {
+        "operationId": "fetch_memory_observations_v1_memory_observations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryObservationsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryObservationsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Layer 3 Progressive Disclosure: fetch full memory details for selected IDs",
+        "tags": [
+          "v1",
+          "memory"
+        ]
+      }
+    },
+    "/v1/memory/search": {
+      "get": {
+        "operationId": "search_memory_v1_memory_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 500,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "query",
+                    "feedback",
+                    "observation"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Layer 1 Progressive Disclosure: search compact memory index (~40 tokens/item)",
+        "tags": [
+          "v1",
+          "memory"
+        ]
+      }
+    },
+    "/v1/memory/timeline": {
+      "get": {
+        "operationId": "get_memory_timeline_v1_memory_timeline_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "anchor_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Anchor Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "default": 3,
+              "maximum": 20,
+              "minimum": 0,
+              "title": "Before",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 3,
+              "maximum": 20,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryTimelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Layer 2 Progressive Disclosure: chronological timeline around an anchor ID",
+        "tags": [
+          "v1",
+          "memory"
+        ]
+      }
+    },
     "/v1/memory/{memory_id}": {
       "delete": {
         "operationId": "remove_memory_v1_memory__memory_id__delete",
@@ -4546,6 +5270,7 @@
             "name": "memory_id",
             "required": true,
             "schema": {
+              "maxLength": 64,
               "title": "Memory Id",
               "type": "string"
             }
@@ -4650,6 +5375,30 @@
         "tags": [
           "v1",
           "ops"
+        ]
+      }
+    },
+    "/v1/ops/skills": {
+      "get": {
+        "operationId": "skill_telemetry_v1_ops_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Skill Telemetry V1 Ops Skills Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "TaskObserver execution & citation-friction telemetry per skill",
+        "tags": [
+          "v1",
+          "skills"
         ]
       }
     },
@@ -4896,6 +5645,7 @@
             "name": "rule_id",
             "required": true,
             "schema": {
+              "maxLength": 64,
               "title": "Rule Id",
               "type": "string"
             }
@@ -4998,6 +5748,7 @@
             "name": "query_id",
             "required": true,
             "schema": {
+              "maxLength": 64,
               "title": "Query Id",
               "type": "string"
             }
@@ -5087,6 +5838,7 @@
             "name": "research_id",
             "required": true,
             "schema": {
+              "maxLength": 64,
               "title": "Research Id",
               "type": "string"
             }
@@ -5132,6 +5884,7 @@
             "name": "research_id",
             "required": true,
             "schema": {
+              "maxLength": 64,
               "title": "Research Id",
               "type": "string"
             }
@@ -5252,6 +6005,80 @@
         ]
       }
     },
+    "/v1/skills": {
+      "get": {
+        "operationId": "discover_skills_v1_skills_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "domain",
+            "required": false,
+            "schema": {
+              "default": "auto",
+              "maxLength": 60,
+              "title": "Domain",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deep",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Deep",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Discover Skills V1 Skills Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List registered skills and optionally preview query routing",
+        "tags": [
+          "v1",
+          "skills"
+        ]
+      }
+    },
     "/v1/spaces": {
       "get": {
         "operationId": "list_spaces_v1_spaces_get",
@@ -5323,6 +6150,7 @@
             "name": "slug",
             "required": true,
             "schema": {
+              "maxLength": 120,
               "title": "Slug",
               "type": "string"
             }
@@ -5366,6 +6194,7 @@
             "name": "slug",
             "required": true,
             "schema": {
+              "maxLength": 120,
               "title": "Slug",
               "type": "string"
             }
@@ -5407,6 +6236,7 @@
             "name": "slug",
             "required": true,
             "schema": {
+              "maxLength": 120,
               "title": "Slug",
               "type": "string"
             }
@@ -5461,6 +6291,7 @@
             "name": "slug",
             "required": true,
             "schema": {
+              "maxLength": 120,
               "title": "Slug",
               "type": "string"
             }
@@ -5471,6 +6302,7 @@
             "required": false,
             "schema": {
               "default": 20,
+              "maximum": 100,
               "minimum": 1,
               "title": "Max Pages",
               "type": "integer"
@@ -5518,6 +6350,7 @@
             "name": "slug",
             "required": true,
             "schema": {
+              "maxLength": 120,
               "title": "Slug",
               "type": "string"
             }
@@ -5562,6 +6395,7 @@
             "name": "slug",
             "required": true,
             "schema": {
+              "maxLength": 120,
               "title": "Slug",
               "type": "string"
             }
@@ -5616,6 +6450,7 @@
             "name": "slug",
             "required": true,
             "schema": {
+              "maxLength": 120,
               "title": "Slug",
               "type": "string"
             }
@@ -5803,6 +6638,7 @@
             "name": "item_id",
             "required": true,
             "schema": {
+              "maxLength": 64,
               "title": "Item Id",
               "type": "string"
             }

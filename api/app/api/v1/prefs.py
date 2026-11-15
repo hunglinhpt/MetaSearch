@@ -17,7 +17,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Path
 from sqlalchemy import delete, select
 
 from app.api import deps
@@ -136,17 +136,7 @@ async def add_boost(request: BoostCreateRequest) -> BoostOut:
         raise MetaSearchError(ErrorCode.INTERNAL, "prefs storage unavailable", status_code=503)
     try:
         async with deps.get_session_factory()() as session, session.begin():
-            count = (
-                await session.execute(select(KeyBoost.id).where(KeyBoost.api_key_id == owner))
-            ).all()
-            if len(count) >= settings.boosts_max_per_key:
-                raise MetaSearchError(
-                    ErrorCode.INVALID_REQUEST,
-                    f"boosts full: {len(count)} >= cap {settings.boosts_max_per_key}",
-                    status_code=400,
-                    details={"cap": settings.boosts_max_per_key},
-                )
-            # One rule per (kind, target) per owner — update weight instead of duplicating.
+            # One rule per (kind, target) per owner — update weight even if at cap.
             existing = (
                 await session.execute(
                     select(KeyBoost).where(
@@ -160,6 +150,16 @@ async def add_boost(request: BoostCreateRequest) -> BoostOut:
                 existing.weight = float(request.weight)
                 invalidate(owner)
                 return _out(existing)
+            count = (
+                await session.execute(select(KeyBoost.id).where(KeyBoost.api_key_id == owner))
+            ).all()
+            if len(count) >= settings.boosts_max_per_key:
+                raise MetaSearchError(
+                    ErrorCode.INVALID_REQUEST,
+                    f"boosts full: {len(count)} >= cap {settings.boosts_max_per_key}",
+                    status_code=400,
+                    details={"cap": settings.boosts_max_per_key},
+                )
             row = KeyBoost(
                 id=uuid.uuid4(),
                 api_key_id=owner,
@@ -181,7 +181,7 @@ async def add_boost(request: BoostCreateRequest) -> BoostOut:
 
 
 @router.delete("/prefs/boosts/{rule_id}")
-async def remove_boost(rule_id: str) -> dict[str, Any]:
+async def remove_boost(rule_id: str = Path(max_length=64)) -> dict[str, Any]:
     try:
         uid = uuid.UUID(rule_id)
     except ValueError as exc:

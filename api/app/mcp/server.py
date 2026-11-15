@@ -112,6 +112,27 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
         raw = await mcp_client.research_status(research_id, max_chars=max_chars)
         return _loads(raw)
 
+    @mcp.tool()
+    async def memory_search(query: str, kind: str | None = None, limit: int = 10) -> dict[str, Any]:
+        """Layer 1 memory search: return compact matching memory stubs (~40 tokens/item).
+        Follow up with memory_timeline or memory_get_observations for full details."""
+        raw = await mcp_client.memory_search(query, kind=kind, limit=limit)
+        return _loads(raw)
+
+    @mcp.tool()
+    async def memory_timeline(
+        anchor_id: str | None = None, before: int = 3, after: int = 3
+    ) -> dict[str, Any]:
+        """Layer 2 memory timeline: return chronological memory items around anchor_id."""
+        raw = await mcp_client.memory_timeline(anchor_id=anchor_id, before=before, after=after)
+        return _loads(raw)
+
+    @mcp.tool()
+    async def memory_get_observations(ids: list[str], max_chars: int = 12000) -> dict[str, Any]:
+        """Layer 3 memory retrieval: fetch full observation summaries and facts for IDs."""
+        raw = await mcp_client.memory_get_observations(ids, max_chars=max_chars)
+        return _loads(raw)
+
     return mcp
 
 

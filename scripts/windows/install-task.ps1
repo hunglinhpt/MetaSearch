@@ -8,6 +8,7 @@
 #   MetaSearchLiteWatchdog  every 5 minutes and on wake from sleep runs "metasearch-lite.ps1 check",
 #                           which restarts the service when /readyz does not answer in 30 s.
 param(
+    [ValidateRange(1, 65535)]
     [int]$Port = 8000,
     [string]$EnvFile = "",
     [switch]$Remove
@@ -15,6 +16,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Manager = Join-Path $PSScriptRoot "metasearch-lite.ps1"
+if ($Manager -match '["\r\n]' -or $Manager.EndsWith('\')) {
+    throw "Unsafe path for manager script: $Manager"
+}
 $Names = @("MetaSearchLite", "MetaSearchLiteWatchdog")
 
 if ($Remove) {
@@ -28,7 +32,16 @@ if ($Remove) {
 }
 
 $envArg = ""
-if ($EnvFile) { $envArg = " -EnvFile `"$EnvFile`"" }
+if ($EnvFile) {
+    if ($EnvFile -match '["\r\n]' -or $EnvFile.EndsWith('\')) {
+        throw "Unsafe characters in EnvFile path"
+    }
+    $resolvedEnv = (Resolve-Path -LiteralPath $EnvFile).Path
+    if ($resolvedEnv -match '["\r\n]' -or $resolvedEnv.EndsWith('\')) {
+        throw "Unsafe characters in resolved EnvFile path"
+    }
+    $envArg = " -EnvFile `"$resolvedEnv`""
+}
 # -WindowStyle Hidden: the watchdog fires every 5 min and on every wake -
 # without this each firing pops a console window into the interactive session.
 $base = "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$Manager`""

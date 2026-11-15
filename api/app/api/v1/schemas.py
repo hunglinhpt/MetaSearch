@@ -66,10 +66,18 @@ class MarketOhlcvRequest(BaseModel):
     """POST /v1/market/ohlcv — daily candles for the chart (docs/18 B2)."""
 
     symbol: str = Field(min_length=1, max_length=15)
-    days: int | None = Field(default=None, ge=1)
-    # Upper bound is the server-side clamp to [market_ohlcv_min/max_days] —
-    # schema ge=1 only rejects nonsense negatives early (audit 9).
+    days: int | None = Field(default=None, ge=1, le=3650)
+    # The effective window is the server-side clamp to [market_ohlcv_min/max_days];
+    # le=3650 keeps the published contract bounded (review F-07) while clamping
+    # out-of-range integer inputs preserves the clamping contract.
     timeout_ms: int | None = Field(default=None, ge=500, le=30000)
+
+    @field_validator("days", mode="before")
+    @classmethod
+    def _clamp_days(cls, value: Any) -> Any:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return max(1, min(3650, value))
+        return value
 
 
 class OhlcvCandle(BaseModel):
@@ -211,16 +219,25 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     lang: str | None = Field(default=None, pattern=r"^[a-z]{2}(-[A-Z]{2})?$")
     k: int = Field(default=10, ge=1, le=50)
-    engines: list[str] | None = None
-    categories: list[str] = Field(default_factory=lambda: ["general"])
+    # Review F-07: bounded lists of bounded identifiers (engine ids / category names).
+    engines: list[Annotated[str, StringConstraints(max_length=64)]] | None = Field(
+        default=None, max_length=50
+    )
+    categories: list[Annotated[str, StringConstraints(max_length=64)]] = Field(
+        default_factory=lambda: ["general"], max_length=20
+    )
     freshness_days: int | None = Field(default=None, ge=1, le=3650)
     include_snippets: bool = True
     news: bool = False
     timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
     # Keep or drop results by host; "example.com" also matches its subdomains. A filter that
     # removes every result returns complete=false, not a confirmed empty answer.
-    include_domains: list[str] | None = Field(default=None, max_length=50)
-    exclude_domains: list[str] | None = Field(default=None, max_length=50)
+    include_domains: list[Annotated[str, StringConstraints(max_length=253)]] | None = Field(
+        default=None, max_length=50
+    )
+    exclude_domains: list[Annotated[str, StringConstraints(max_length=253)]] | None = Field(
+        default=None, max_length=50
+    )
     # docs/19 W4: deep=True fans out to ALL enabled engines (category filter is
     # ignored) so the answer is built from the widest possible result set.
     deep: bool = False
@@ -255,12 +272,16 @@ class AnswerRequest(SearchRequest):
     model: str | None = Field(default=None, max_length=150)
     llm: LLMOverride | None = None
     council_mode: bool = False
-    council_endpoints: list[LLMOverride | str] | None = None
+    council_endpoints: (
+        list[LLMOverride | Annotated[str, StringConstraints(max_length=150)]] | None
+    ) = Field(default=None, max_length=6)
     domain: str = Field(default="auto", max_length=60)
 
 
 class ScrapeRequest(BaseModel):
-    urls: list[str] = Field(min_length=1, max_length=10)
+    urls: list[Annotated[str, StringConstraints(max_length=2000)]] = Field(
+        min_length=1, max_length=10
+    )
     timeout_s: float = Field(default=8.0, ge=1, le=30)
     max_chars: int = Field(default=200_000, ge=1, le=1_000_000)
     timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
@@ -315,6 +336,8 @@ class AnswerResponse(BaseModel):
     cached: bool = False
     complete: bool = True
     council: dict[str, Any] | None = None
+    skill: dict[str, Any] | None = None
+    compression: dict[str, Any] | None = None
 
 
 def new_id() -> str:
@@ -325,13 +348,14 @@ def new_id() -> str:
 
 
 class MemoryCreateRequest(BaseModel):
-    """docs/20 P1-5: record a memory entry for the current key.
+    """docs/20 P1-5 + Claude-Mem: record a memory entry for the current key.
 
     kind="query" remembers a past query; kind="feedback" attaches a 👍/👎
-    (weight ±1) to a result URL and turns into a rerank boost.
+    (weight ±1) to a result URL and turns into a rerank boost;
+    kind="observation" stores a structured episodic memory payload.
     """
 
-    kind: Literal["query", "feedback"]
+    kind: Literal["query", "feedback", "observation"]
     text: str = Field(default="", max_length=4000)
     url: str | None = Field(default=None, max_length=2000)
     weight: float = Field(default=0.0, ge=-1.0, le=1.0)
@@ -363,12 +387,95 @@ class MemoryOut(BaseModel):
     text: str = ""
     url: str | None = None
     weight: float = 0.0
+    payload: dict[str, Any] | None = None
     created_at: str | None = None
 
 
 class MemoryListResponse(BaseModel):
     items: list[MemoryOut] = Field(default_factory=list)
     storage: str = "db"
+
+
+class MemoryIndexItem(BaseModel):
+    id: str
+    kind: str
+    title: str = ""
+    snippet: str = ""
+    score: float = 0.0
+    created_at: str | None = None
+
+
+class MemoryIndexResponse(BaseModel):
+    query: str = ""
+    items: list[MemoryIndexItem] = Field(default_factory=list)
+    storage: str = "db"
+
+
+class MemoryTimelineItem(BaseModel):
+    id: str
+    kind: str
+    title: str = ""
+    snippet: str = ""
+    is_anchor: bool = False
+    created_at: str | None = None
+
+
+class MemoryTimelineResponse(BaseModel):
+    anchor_id: str | None = None
+    anchor_found: bool = False
+    items: list[MemoryTimelineItem] = Field(default_factory=list)
+    storage: str = "db"
+
+
+class MemoryObservationsRequest(BaseModel):
+    ids: list[Annotated[str, StringConstraints(max_length=64)]] = Field(min_length=1, max_length=50)
+
+
+class MemoryObservationDetail(BaseModel):
+    id: str
+    kind: str
+    title: str = ""
+    summary: str = ""
+    facts: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    domain_id: str = ""
+    text: str = ""
+    url: str | None = None
+    weight: float = 0.0
+    payload: dict[str, Any] | None = None
+    created_at: str | None = None
+
+
+class MemoryObservationsResponse(BaseModel):
+    items: list[MemoryObservationDetail] = Field(default_factory=list)
+    storage: str = "db"
+
+
+def _validate_space_domains(value: list[str]) -> list[str]:
+    import re as _re
+
+    out = []
+    for d in value:
+        d = d.strip().lower().rstrip(".").removeprefix("www.")
+        if not d or not _re.fullmatch(r"[a-z0-9.-]+", d) or ".." in d:
+            raise ValueError(f"invalid domain: {d!r}")
+        out.append(d)
+    return out
+
+
+def _validate_space_pinned_urls(value: list[str]) -> list[str]:
+    from urllib.parse import urlsplit
+
+    for u in value:
+        parts = urlsplit(u.strip())
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise ValueError(f"pinned URL must be http(s): {u!r}")
+    return value
+
+
+_SpaceDomainStr = Annotated[str, StringConstraints(max_length=253)]
+_SpaceUrlStr = Annotated[str, StringConstraints(max_length=2000)]
+_SpaceTermStr = Annotated[str, StringConstraints(max_length=200)]
 
 
 class SpaceCreateRequest(BaseModel):
@@ -378,49 +485,39 @@ class SpaceCreateRequest(BaseModel):
     description: str = Field(default="", max_length=1000)
     # Pass 3 P2: per-item bounds + charset — a multi-MB "domain" was persisted
     # and echoed; good.com@evil.com would redirect the space crawl off-scope.
-    domains: list[Annotated[str, StringConstraints(max_length=253)]] = Field(
-        default_factory=list, max_length=50
-    )
-    pinned_urls: list[Annotated[str, StringConstraints(max_length=2000)]] = Field(
-        default_factory=list, max_length=100
-    )
-    query_terms: list[Annotated[str, StringConstraints(max_length=200)]] = Field(
-        default_factory=list, max_length=50
-    )
+    domains: list[_SpaceDomainStr] = Field(default_factory=list, max_length=50)
+    pinned_urls: list[_SpaceUrlStr] = Field(default_factory=list, max_length=100)
+    query_terms: list[_SpaceTermStr] = Field(default_factory=list, max_length=50)
     restrict: bool = True
 
     @field_validator("domains")
     @classmethod
     def _validate_domains(cls, value: list[str]) -> list[str]:
-        import re as _re
-
-        out = []
-        for d in value:
-            d = d.strip().lower().rstrip(".").removeprefix("www.")
-            if not d or not _re.fullmatch(r"[a-z0-9.-]+", d) or ".." in d:
-                raise ValueError(f"invalid domain: {d!r}")
-            out.append(d)
-        return out
+        return _validate_space_domains(value)
 
     @field_validator("pinned_urls")
     @classmethod
     def _validate_pinned_urls(cls, value: list[str]) -> list[str]:
-        from urllib.parse import urlsplit
-
-        for u in value:
-            parts = urlsplit(u.strip())
-            if parts.scheme not in ("http", "https") or not parts.hostname:
-                raise ValueError(f"pinned URL must be http(s): {u!r}")
-        return value
+        return _validate_space_pinned_urls(value)
 
 
 class SpaceUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=1000)
-    domains: list[str] | None = Field(default=None, max_length=50)
-    pinned_urls: list[str] | None = Field(default=None, max_length=100)
-    query_terms: list[str] | None = Field(default=None, max_length=50)
+    domains: list[_SpaceDomainStr] | None = Field(default=None, max_length=50)
+    pinned_urls: list[_SpaceUrlStr] | None = Field(default=None, max_length=100)
+    query_terms: list[_SpaceTermStr] | None = Field(default=None, max_length=50)
     restrict: bool | None = None
+
+    @field_validator("domains")
+    @classmethod
+    def _validate_domains(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else _validate_space_domains(value)
+
+    @field_validator("pinned_urls")
+    @classmethod
+    def _validate_pinned_urls(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else _validate_space_pinned_urls(value)
 
 
 class SpaceOut(BaseModel):

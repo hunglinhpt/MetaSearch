@@ -108,7 +108,7 @@ class SemanticScholarAdapter:
         except ValueError as exc:
             raise AdapterError("semanticscholar returned non-JSON body") from exc
 
-        items = payload.get("data") or []
+        items = payload.get("data") or [] if isinstance(payload, dict) else []
         results: list[RawResult] = []
 
         for item in items:

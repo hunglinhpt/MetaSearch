@@ -10,13 +10,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app import __version__
 from app.api import deps, ops
 from app.config import get_settings
+from app.core.auth import require_operator
 
-router = APIRouter(tags=["ops"])
+# Review F-05: deployment state and cross-tenant feedback aggregates are operator data.
+# AUTH_ENABLED=false (single-operator Lite) keeps them open; with auth on an admin key
+# is required instead of any key.
+router = APIRouter(tags=["ops"], dependencies=[Depends(require_operator)])
 
 
 @router.get("/ops/status")

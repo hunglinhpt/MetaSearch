@@ -13,7 +13,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Path
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -74,7 +74,7 @@ def _check_job_owner(job) -> None:
 
 
 @router.get("/research/{research_id}")
-async def get_research(research_id: str) -> dict[str, Any]:
+async def get_research(research_id: str = Path(max_length=64)) -> dict[str, Any]:
     job = await get_job_store().get(research_id)
     _check_job_owner(job)
     return {
@@ -90,7 +90,7 @@ async def get_research(research_id: str) -> dict[str, Any]:
 
 
 @router.get("/research/{research_id}/events")
-async def research_events(research_id: str) -> EventSourceResponse:
+async def research_events(research_id: str = Path(max_length=64)) -> EventSourceResponse:
     job = await get_job_store().get(research_id)
     _check_job_owner(job)
     return EventSourceResponse(_event_stream(job))

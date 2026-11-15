@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel, Field
 
 from app.api import deps
@@ -102,7 +102,9 @@ async def engines_health() -> list[dict[str, Any]]:
 
 
 @router.patch("/engines/{engine_id}", dependencies=[Depends(require_admin)])
-async def patch_engine(engine_id: str, request: EnginePatchRequest) -> dict[str, Any]:
+async def patch_engine(
+    request: EnginePatchRequest, engine_id: str = Path(max_length=64)
+) -> dict[str, Any]:
     store = deps.get_engine_store()
     snapshot = await store.snapshot()
     if engine_id not in snapshot:

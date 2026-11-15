@@ -118,7 +118,11 @@ class PubMedAdapter:
                     retryable=False,
                 )
             s_data = s_resp.json()
-            id_list = s_data.get("esearchresult", {}).get("idlist", [])
+            id_list = (
+                (s_data.get("esearchresult") or {}).get("idlist", [])
+                if isinstance(s_data, dict)
+                else []
+            )
             if not id_list:
                 return []
 

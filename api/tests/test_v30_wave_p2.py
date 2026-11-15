@@ -128,6 +128,7 @@ async def v30_db(tmp_path, monkeypatch):
     reset_rate_limit_windows()
     key, _ = await create_key("v30_user", role="user", rate_limit_rpm=6000)
     yield key
+    await dispose_engine()
     get_settings.cache_clear()
 
 
@@ -657,12 +658,14 @@ class TestPersonalPodcast:
 class TestEndpoints:
     @pytest.mark.asyncio
     async def test_ops_interleave(self, v30_db):
+        from app.core.auth import create_key
         from app.main import create_app
 
+        admin_key, _ = await create_key("v30_admin", role="admin", rate_limit_rpm=6000)
         app = create_app()
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-            r = await c.get("/v1/ops/interleave", headers=_h(v30_db))
+            r = await c.get("/v1/ops/interleave", headers=_h(admin_key))
             assert r.status_code == 200
             body = r.json()
             assert "variants" in body and "ratio" in body

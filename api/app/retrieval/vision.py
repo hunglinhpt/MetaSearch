@@ -45,7 +45,12 @@ async def embed_texts_via_vision_api(
     )
     resp.raise_for_status()
     payload = resp.json()
-    data = sorted(payload["data"], key=lambda item: item["index"])
+    raw_data = payload.get("data")
+    if not isinstance(raw_data, list) or not all(isinstance(it, dict) for it in raw_data):
+        raise ValueError("unexpected vision embedding response shape")
+    data = [
+        item for _, item in sorted(enumerate(raw_data), key=lambda p: int(p[1].get("index", p[0])))
+    ]
     vectors = [[float(x) for x in item["embedding"]] for item in data]
     # The chunks.embedding column is fixed-dim (EMBEDDING_DIM): a vision model
     # with another output dim must fail loudly here (caller fails open), never
