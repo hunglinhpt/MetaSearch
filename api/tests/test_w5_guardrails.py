@@ -574,3 +574,100 @@ def test_compression_profiles_preserve_citations_and_numeric_facts() -> None:
         assert "văn phòng đại diện" not in joined
         if profile == "preserve_code":
             assert "def calculate_roe" in joined
+
+
+async def test_concurrent_sqlite_writers_with_slow_commits_do_not_lock(
+    tmp_path, monkeypatch
+) -> None:
+    """Concurrent SQLite background writers (search, memory, answer) must serialize via
+    sqlite_write_lock instead of hitting SQLITE_BUSY / database-is-locked under slow commits."""
+    import asyncio
+    import uuid
+    from datetime import UTC, datetime
+
+    from sqlalchemy import func, select
+
+    import app.db.session as session_mod
+    from app.config import get_settings
+    from app.db.bootstrap import ensure_schema
+    from app.db.models import Answer, MemoryItem, Query
+    from app.extraction.scraper import PageContent
+    from app.orchestration import persist as persist_mod
+    from app.retrieval.memory import record_memory, record_observation
+
+    db_file = tmp_path / "concurrent.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
+    get_settings.cache_clear()
+    await session_mod.dispose_engine()
+    await ensure_schema()
+
+    real_maker = session_mod.get_sessionmaker
+
+    def slow_maker():
+        maker = real_maker()
+
+        def factory(*a, **k):
+            s = maker(*a, **k)
+            orig = s.commit
+
+            async def commit():
+                await asyncio.sleep(0.15)
+                return await orig()
+
+            s.commit = commit
+            return s
+
+        return factory
+
+    monkeypatch.setattr(session_mod, "get_sessionmaker", slow_maker)
+    monkeypatch.setattr(persist_mod, "get_sessionmaker", slow_maker)
+
+    try:
+        qid = uuid.uuid4()
+        aid = uuid.uuid4()
+        page = PageContent(
+            url="https://example.com/p1",
+            final_url="https://example.com/p1",
+            title="Test",
+            markdown="# Test\n\nContent",
+            extractor_used="trafilatura",
+            fetched_at=datetime.now(UTC),
+        )
+        ok_mem1, ok_mem2, _, _ = await asyncio.gather(
+            record_memory("anon", kind="query", text="concurrent test", timeout_s=5.0),
+            record_observation(
+                "anon",
+                title="Obs",
+                summary="Concurrent SQLite test summary",
+                timeout_s=5.0,
+            ),
+            persist_mod._persist_search_all(
+                qid, "concurrent test", "concurrent test", "en", {}, []
+            ),
+            persist_mod.persist_pages_async([page], []),
+        )
+        await persist_mod.persist_answer(
+            answer_id=aid,
+            query_id=qid,
+            content_md="Answer [1].",
+            model="test-model",
+            input_tokens=1,
+            output_tokens=1,
+            cost_usd=0.0,
+            latency_ms=10,
+            citations=[(1, "https://example.com/p1", "Test", None)],
+        )
+        assert ok_mem1 is True
+        assert ok_mem2 is True
+        async with real_maker()() as s:
+            assert (
+                int((await s.execute(select(func.count()).select_from(Answer))).scalar_one()) == 1
+            )
+            assert int((await s.execute(select(func.count()).select_from(Query))).scalar_one()) == 1
+            assert (
+                int((await s.execute(select(func.count()).select_from(MemoryItem))).scalar_one())
+                == 2
+            )
+    finally:
+        await session_mod.dispose_engine()
+        get_settings.cache_clear()

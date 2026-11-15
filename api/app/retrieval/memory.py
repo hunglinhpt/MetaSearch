@@ -63,6 +63,7 @@ async def record_memory(
     weight: float = 0.0,
     payload: dict[str, Any] | None = None,
     max_per_key: int = 500,
+    timeout_s: float = 2.0,
 ) -> bool:
     """Insert one memory row. Returns False (never raises) when memory is
     unavailable or the per-key cap is reached."""
@@ -72,10 +73,10 @@ async def record_memory(
         import uuid
 
         from app.db.models import MemoryItem
-        from app.db.session import get_sessionmaker
+        from app.db.session import get_sessionmaker, sqlite_write_lock
 
         async def _write() -> bool:
-            async with get_sessionmaker()() as session:
+            async with sqlite_write_lock(), get_sessionmaker()() as session:
                 count = (
                     await session.execute(
                         select(func.count())
@@ -129,7 +130,7 @@ async def record_memory(
                 await session.commit()
                 return True
 
-        ok = await asyncio.wait_for(_write(), timeout=0.5)
+        ok = await asyncio.wait_for(_write(), timeout=timeout_s)
         if ok and kind == "feedback":
             # Pass 4 P2: only feedback changes boosts — invalidating on every
             # recorded query defeated the 30s TTL on the hot path.
@@ -151,7 +152,7 @@ def record_query_fire_and_forget(owner: str, query: str, *, max_per_key: int = 5
 
         _persist.spawn_task(
             "memory_record",
-            record_memory(owner, kind="query", text=query, max_per_key=max_per_key),
+            record_memory(owner, kind="query", text=query, max_per_key=max_per_key, timeout_s=5.0),
         )
     except Exception:
         return
@@ -281,6 +282,7 @@ async def record_observation(
     skill_id: str = "",
     tags: list[str] | None = None,
     max_per_key: int = 500,
+    timeout_s: float = 2.0,
 ) -> bool:
     """Capture a distilled cross-session observation (Claude-Mem Layer 0)."""
     clean_title = " ".join((title or "").split())[:160]
@@ -306,6 +308,7 @@ async def record_observation(
         weight=1.0,
         payload=payload,
         max_per_key=max_per_key,
+        timeout_s=timeout_s,
     )
 
 
@@ -384,6 +387,7 @@ def record_observation_fire_and_forget(
                 skill_id=distilled["skill_id"],
                 tags=distilled["tags"],
                 max_per_key=max_per_key,
+                timeout_s=5.0,
             ),
         )
     except Exception:

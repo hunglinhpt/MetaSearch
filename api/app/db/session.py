@@ -9,7 +9,10 @@ every connect via an engine event listener (not just at creation).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
@@ -23,13 +26,33 @@ from app.config import get_settings
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+_sqlite_write_locks: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    WeakKeyDictionary()
+)
+
+
+@asynccontextmanager
+async def sqlite_write_lock() -> AsyncIterator[None]:
+    """Serialize SQLite write transactions per event loop to prevent SQLITE_BUSY
+    and read-to-write lock upgrade deadlocks across concurrent background writers.
+    No-op on Postgres."""
+    if not get_settings().database_url.startswith("sqlite"):
+        yield
+        return
+    loop = asyncio.get_running_loop()
+    lock = _sqlite_write_locks.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _sqlite_write_locks[loop] = lock
+    async with lock:
+        yield
 
 
 def _set_sqlite_pragma(dbapi_conn, _record) -> None:
     """WP-13: per-connection pragmas for SQLite reliability."""
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=3000")
+    cursor.execute("PRAGMA busy_timeout=5000")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 

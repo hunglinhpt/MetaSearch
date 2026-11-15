@@ -20,7 +20,7 @@ from app.core.auth import current_api_key_id
 from app.core.logging import get_logger
 from app.db.models import Answer, Citation, Document, Query, SearchResult
 from app.db.models import Chunk as ChunkRow
-from app.db.session import get_sessionmaker
+from app.db.session import get_sessionmaker, sqlite_write_lock
 from app.extraction.chunker import Chunk, segment_long_document
 from app.extraction.scraper import PageContent
 from app.retrieval.canonical import canonicalize
@@ -194,7 +194,7 @@ async def _persist_query(
     lang: str | None,
     params: dict[str, Any],
 ) -> None:
-    async with get_sessionmaker()() as session:
+    async with sqlite_write_lock(), get_sessionmaker()() as session:
         insert = _dialect_insert(session)
         await session.execute(
             insert(Query)
@@ -214,7 +214,7 @@ async def _persist_query(
 
 
 async def _persist_search_results(query_id: uuid.UUID, results: list[ScoredResult]) -> None:
-    async with get_sessionmaker()() as session:
+    async with sqlite_write_lock(), get_sessionmaker()() as session:
         for rank, item in enumerate(results, start=1):
             session.add(
                 SearchResult(
@@ -239,7 +239,7 @@ async def _persist_search_all(
     owner: str | None = None,
 ) -> None:
     """Persist Query + SearchResults atomically in one session to avoid FK races."""
-    async with get_sessionmaker()() as session:
+    async with sqlite_write_lock(), get_sessionmaker()() as session:
         insert = _dialect_insert(session)
         await session.execute(
             insert(Query)
@@ -270,7 +270,7 @@ async def _persist_search_all(
 
 async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> None:
     """Insert scraped documents + their chunks (skip URLs already stored)."""
-    async with get_sessionmaker()() as session:
+    async with sqlite_write_lock(), get_sessionmaker()() as session:
         insert = _dialect_insert(session)
         doc_ids: dict[str, uuid.UUID] = {}
         new_doc_ids: set[uuid.UUID] = set()
@@ -403,7 +403,7 @@ async def _persist_answer(
     status: str = "complete",
 ) -> None:
     """``citations``: (n, url, title, chunk_id-or-None)."""
-    async with get_sessionmaker()() as session:
+    async with sqlite_write_lock(), get_sessionmaker()() as session:
         existing_chunks = await _resolve_valid_chunk_ids(session, citations)
         session.add(
             Answer(
@@ -516,7 +516,7 @@ async def _persist_report(
 ) -> None:
     """Persist the research report as an Answer(kind="research") row."""
     answer_id = uuid.uuid4()
-    async with get_sessionmaker()() as session:
+    async with sqlite_write_lock(), get_sessionmaker()() as session:
         insert = _dialect_insert(session)
         await session.execute(
             insert(Query)
