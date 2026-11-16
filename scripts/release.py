@@ -273,7 +273,7 @@ def check_lockfile_version(root: Path) -> None:
     log(f"PASSED: uv.lock pins metasearch-api {lock_ver} (matches pyproject.toml)", level="SUCCESS")
 
 
-def run_pre_commit_gate(root: Path, python_bin: Path) -> None:
+def run_pre_commit_gate(root: Path, python_bin: Path, npm_bin: str | None = None) -> None:
     """Mandatory pre-commit gate: lockfile sync, Ruff, Bandit, E2E + Unit suites."""
     log(
         "Enforcing Mandatory Pre-Commit Gate (uv.lock, Ruff, Bandit, E2E + Unit)...",
@@ -355,30 +355,47 @@ def run_pre_commit_gate(root: Path, python_bin: Path) -> None:
         desc="Pytest Backend Full Test Suite",
     )
 
+    # 6. Frontend vitest + typecheck (audit round 3: the pre-commit hook
+    # previously ran ZERO frontend checks — a red frontend suite could land).
+    if npm_bin:
+        run_command(
+            [npm_bin, "run", "test"],
+            cwd=root / "frontend",
+            desc="Frontend Vitest Suite",
+        )
+        run_command(
+            [npm_bin, "run", "typecheck"],
+            cwd=root / "frontend",
+            desc="Frontend TypeScript Strict Typecheck",
+        )
+
     log("Pre-Commit Gate Passed: 100% Unit & E2E Tests Green!", level="SUCCESS")
 
 
 def run_quality_gates(root: Path, python_bin: Path, npm_bin: str) -> None:
     """Enforce formatting, linting, security scans, E2E tests, unit tests, and build."""
     log(
-        "Enforcing 7 Mandatory Quality Gates (Ruff, Bandit, E2E, Pytest, Next.js Build)...",
+        "Enforcing Quality Gates (Ruff, Bandit, mypy, E2E, Pytest,"
+        " Frontend vitest/typecheck, Build, Static Export)...",
         prefix=">>",
     )
 
-    run_pre_commit_gate(root, python_bin)
+    run_pre_commit_gate(root, python_bin, npm_bin)
 
-    # 6. Frontend Typecheck
-    run_command(
-        [npm_bin, "run", "typecheck"],
-        cwd=root / "frontend",
-        desc="Frontend TypeScript Strict Typecheck",
-    )
-
-    # 7. Frontend Build
+    # Frontend Build
     run_command(
         [npm_bin, "run", "build"],
         cwd=root / "frontend",
         desc="Next.js Production Build Validation",
+    )
+
+    # 8. Frontend Static Export (audit round 3: `frontend/out` is what the
+    # Lite deployment serves at `/` — it must be rebuilt on every frontend
+    # change or Lite silently serves a stale renderer).
+    run_command(
+        [npm_bin, "run", "build:export"],
+        cwd=root / "frontend",
+        desc="Next.js Static Export Refresh (Lite UI distribution)",
     )
 
     log("All 7 Quality & E2E Gates Passed with Zero Errors!", level="SUCCESS")
@@ -618,7 +635,7 @@ def main() -> None:
     ensure_git_pre_commit_hook(root)
 
     if args.pre_commit_gate:
-        run_pre_commit_gate(root, python_bin)
+        run_pre_commit_gate(root, python_bin, npm_bin)
         return
 
     # 1. Clean workspace

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseBlocks } from "./markdownBlocks";
+import { MAX_FENCE_CHARS, parseBlocks } from "./markdownBlocks";
 
 describe("parseBlocks", () => {
   it("keeps heading/table/list behavior unchanged", () => {
@@ -26,9 +26,11 @@ describe("parseBlocks", () => {
     ]);
   });
 
-  it("marks mermaid fences by language", () => {
-    const blocks = parseBlocks("```mermaid\ngraph TD; A-->B;\n```");
-    expect(blocks).toEqual([
+  it("marks mermaid fences by language (case-insensitive)", () => {
+    expect(parseBlocks("```mermaid\ngraph TD; A-->B;\n```")).toEqual([
+      { kind: "fence", lang: "mermaid", code: "graph TD; A-->B;", closed: true },
+    ]);
+    expect(parseBlocks("```Mermaid\ngraph TD; A-->B;\n```")).toEqual([
       { kind: "fence", lang: "mermaid", code: "graph TD; A-->B;", closed: true },
     ]);
   });
@@ -56,6 +58,44 @@ describe("parseBlocks", () => {
   it("parses single-line display math", () => {
     expect(parseBlocks("$$E=mc^2$$")).toEqual([
       { kind: "math-display", latex: "E=mc^2" },
+    ]);
+  });
+
+  it("caps runaway single-line display math (audit round 2)", () => {
+    const huge = "$$" + "x^".repeat(2000) + "$$"; // 4000+ chars of latex
+    expect(parseBlocks(huge)).toEqual([
+      { kind: "paragraph", text: huge },
+    ]);
+  });
+
+  it("does not swallow the line after a lone table row (audit round 1)", () => {
+    expect(parseBlocks("| a |\nXin chào")).toEqual([
+      { kind: "paragraph", text: "| a |" },
+      { kind: "paragraph", text: "Xin chào" },
+    ]);
+  });
+
+  it("truncates runaway fences with a notice (audit round 2)", () => {
+    const code = "x".repeat(MAX_FENCE_CHARS + 1000);
+    const blocks = parseBlocks("```\n" + code + "\n```");
+    expect(blocks).toHaveLength(1);
+    if (blocks[0].kind === "fence") {
+      expect(blocks[0].code.length).toBeLessThan(MAX_FENCE_CHARS + 100);
+      expect(blocks[0].code).toContain("đã cắt");
+    }
+  });
+
+  it("splits inline display math out of a prose paragraph (audit round 1)", () => {
+    expect(parseBlocks("số $$x^2$$ là kết quả")).toEqual([
+      { kind: "paragraph", text: "số " },
+      { kind: "math-display", latex: "x^2" },
+      { kind: "paragraph", text: " là kết quả" },
+    ]);
+  });
+
+  it("keeps plain prose as a single paragraph", () => {
+    expect(parseBlocks("chỉ là văn bản $1,234 thôi")).toEqual([
+      { kind: "paragraph", text: "chỉ là văn bản $1,234 thôi" },
     ]);
   });
 

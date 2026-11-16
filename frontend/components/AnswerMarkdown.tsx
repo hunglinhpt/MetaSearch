@@ -4,17 +4,33 @@
  *
  * Upgraded with cherry-picked patterns from deepseek-ai/chat-demo (MIT):
  * fenced code blocks (lazy Prism), KaTeX math (last-good-render fallback),
- * Mermaid diagrams (serial render queue, strict sandbox), inline
- * code/italic/blockquote, and an adaptive render-cost throttle so token
- * storms on long reports repaint at a bounded rate instead of O(n²).
- * Citations [n] stay clickable links via the same contract. */
+ * Mermaid diagrams (serial render queue, strict sanitize), inline
+ * code/italic/blockquote, and an adaptive render-cost throttle.
+ * Citations [n] stay clickable links via the same contract.
+ *
+ * Audit rounds 1-3 hardening:
+ * - the gate now gates the EXPENSIVE part too: parse + element build are
+ *   memoized on the throttled snapshot, so parent re-renders (per SSE
+ *   token, per keystroke) stop re-running the full document parse;
+ * - `gate.accept()` only fires when the shown snapshot actually advanced —
+ *   unrelated re-renders no longer re-anchor the pacing window;
+ * - blocks carry content-addressed keys (kind + content hash), so a fence
+ *   or math block closing mid-stream no longer remounts every downstream
+ *   KaTeX/Mermaid component via index churn;
+ * - CRLF is normalized once (mermaid and fences choke on \r);
+ * - tables cap rows/cells (adversarial-table DoS). */
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 
 import { safeHref, type Citation } from "../lib/api";
 import { parseInline, type InlineSeg } from "../lib/inlineMd";
-import { parseBlocks, type Block } from "../lib/markdownBlocks";
+import {
+  MAX_TABLE_CELLS,
+  MAX_TABLE_ROWS,
+  parseBlocks,
+  type Block,
+} from "../lib/markdownBlocks";
 import { AdaptiveRenderGate } from "../lib/renderThrottle";
 import CodeBlock from "./CodeBlock";
 import MathFormula from "./MathFormula";
@@ -31,9 +47,12 @@ export function useThrottledStreamText(
   const [shown, setShown] = useState(text);
   const latestRef = useRef(text);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Audit round 1: update the latest snapshot during render too — a timer
+  // firing between render and passive effect would otherwise paint
+  // one-token-stale text.
+  latestRef.current = text;
 
   useEffect(() => {
-    latestRef.current = text;
     const gate = gateRef.current;
     if (!gate) return;
     if (gate.accepts()) {
@@ -63,6 +82,25 @@ export function useThrottledStreamText(
   return shown;
 }
 
+/** Key strategy per audit rounds 1+3: STATEFUL blocks (fence, math — they
+ * own render state: KaTeX last-good, mermaid queue, Prism load) get
+ * content-addressed keys so mid-stream restructures don't remount them;
+ * cheap text blocks keep occurrence-per-kind keys (stable while the list is
+ * append-only, cheap to remount when a tail restructure shifts them). */
+function blockKey(block: Block, occurrence: number): string {
+  const stateful = block.kind === "fence" || block.kind === "math-display";
+  if (!stateful) return `${block.kind}-${occurrence}`;
+  const seed =
+    block.kind === "fence"
+      ? block.code.slice(0, 96) + (block.closed ? "1" : "0")
+      : block.latex;
+  let hash = 5381;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = ((hash << 5) + hash + seed.charCodeAt(i)) | 0;
+  }
+  return `${block.kind}-${(hash >>> 0).toString(36)}-${occurrence}`;
+}
+
 function renderSegments(
   segs: InlineSeg[],
   citationByUrl: Map<number, Citation>,
@@ -74,9 +112,17 @@ function renderSegments(
       case "code":
         return <code key={key}>{seg.s}</code>;
       case "bold":
-        return <strong key={key}>{seg.s}</strong>;
+        return (
+          <strong key={key}>
+            {renderSegments(seg.c, citationByUrl, `${key}b`)}
+          </strong>
+        );
       case "italic":
-        return <em key={key}>{seg.s}</em>;
+        return (
+          <em key={key}>
+            {renderSegments(seg.c, citationByUrl, `${key}i`)}
+          </em>
+        );
       case "math":
         return <MathFormula key={key} latex={seg.s} />;
       case "cite": {
@@ -111,15 +157,15 @@ function renderInline(
 
 function renderBlock(
   block: Block,
-  idx: number,
+  key: string,
   citationByUrl: Map<number, Citation>
 ): ReactNode {
   switch (block.kind) {
     case "heading": {
-      const inner = renderInline(block.text, citationByUrl, `h${idx}`);
-      if (block.level === 2) return <h2 key={idx}>{inner}</h2>;
-      if (block.level === 3) return <h3 key={idx}>{inner}</h3>;
-      return <h4 key={idx}>{inner}</h4>;
+      const inner = renderInline(block.text, citationByUrl, `${key}h`);
+      if (block.level === 2) return <h2 key={key}>{inner}</h2>;
+      if (block.level === 3) return <h3 key={key}>{inner}</h3>;
+      return <h4 key={key}>{inner}</h4>;
     }
     case "table": {
       const parseRow = (r: string) =>
@@ -131,14 +177,18 @@ function renderBlock(
       const bodyRows = block.lines
         .slice(1)
         .filter((r) => !/^\|[\s\-:|]+\|$/.test(r))
-        .map(parseRow);
+        .map(parseRow)
+        .map((row) => row.slice(0, MAX_TABLE_CELLS))
+        .slice(0, MAX_TABLE_ROWS);
       return (
-        <div key={idx} className="md-table-wrap">
+        <div key={key} className="md-table-wrap">
           <table className="md-table">
             <thead>
               <tr>
                 {headers.map((h, hIdx) => (
-                  <th key={hIdx}>{renderInline(h, citationByUrl, `th${idx}-${hIdx}`)}</th>
+                  <th key={hIdx}>
+                    {renderInline(h, citationByUrl, `${key}th${hIdx}`)}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -147,47 +197,52 @@ function renderBlock(
                 <tr key={rIdx}>
                   {row.map((cell, cIdx) => (
                     <td key={cIdx}>
-                      {renderInline(cell, citationByUrl, `td${idx}-${rIdx}-${cIdx}`)}
+                      {renderInline(cell, citationByUrl, `${key}td${rIdx}-${cIdx}`)}
                     </td>
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
+          {block.lines.length - 1 > MAX_TABLE_ROWS && (
+            <p className="small">
+              … bảng được rút gọn còn {MAX_TABLE_ROWS} hàng.
+            </p>
+          )}
         </div>
       );
     }
     case "fence":
       if (block.lang === "mermaid" && block.closed) {
-        return <MermaidDiagram key={idx} code={block.code} />;
+        return <MermaidDiagram key={key} code={block.code} />;
       }
-      return <CodeBlock key={idx} code={block.code} lang={block.lang} />;
+      return <CodeBlock key={key} code={block.code} lang={block.lang} closed={block.closed} />;
     case "math-display":
       return (
-        <div key={idx} className="md-math-display">
+        <div key={key} className="md-math-display">
           <MathFormula latex={block.latex} display />
         </div>
       );
     case "quote":
       return (
-        <blockquote key={idx} className="md-quote">
-          {renderInline(block.text, citationByUrl, `q${idx}`)}
+        <blockquote key={key} className="md-quote">
+          {renderInline(block.text, citationByUrl, `${key}q`)}
         </blockquote>
       );
     case "list-item":
       return (
-        <div key={idx} style={{ paddingLeft: "0.8rem", margin: "0.2rem 0" }}>
-          • {renderInline(block.text, citationByUrl, `li${idx}`)}
+        <div key={key} style={{ paddingLeft: "0.8rem", margin: "0.2rem 0" }}>
+          • {renderInline(block.text, citationByUrl, `${key}li`)}
         </div>
       );
     default:
-      return <p key={idx}>{renderInline(block.text, citationByUrl, `p${idx}`)}</p>;
+      return <p key={key}>{renderInline(block.text, citationByUrl, `${key}p`)}</p>;
   }
 }
 
 /** Render streaming markdown with headings, tables, lists, fenced code,
  * math, Mermaid, quotes, bold/italic/inline-code, and [n] citations. */
-export default function AnswerMarkdown({
+function AnswerMarkdownInner({
   text,
   citationByUrl,
 }: {
@@ -196,16 +251,46 @@ export default function AnswerMarkdown({
 }) {
   const gateRef = useRef<AdaptiveRenderGate | null>(null);
   if (gateRef.current === null) gateRef.current = new AdaptiveRenderGate();
-  const shown = useThrottledStreamText(text, gateRef);
+  const lastShownRef = useRef<string>("");
+  const lastCostRef = useRef(120);
+  // Normalize CRLF once — fences and mermaid mis-parse on \r.
+  const normalized = useMemo(() => text.replace(/\r\n?/g, "\n"), [text]);
+  const shown = useThrottledStreamText(normalized, gateRef);
 
-  // Measure this parse; the gate uses the cost to pace future snapshots.
-  const t0 = performance.now();
-  const blocks = parseBlocks(shown);
-  const parsed = blocks.map((b, bIdx) => renderBlock(b, bIdx, citationByUrl));
-  const cost = performance.now() - t0;
-  // Mutating a ref during render mirrors chat-demo's shipped pattern; the
-  // value is only consumed by the throttle effect after commit.
-  gateRef.current.accept(cost);
+  // The expensive part is memoized on the throttled snapshot: parent
+  // re-renders with unchanged `shown` no longer re-parse the document.
+  // The parse cost is measured exactly where it happens.
+  const blocks = useMemo(() => {
+    const t0 = performance.now();
+    const result = parseBlocks(shown);
+    lastCostRef.current = performance.now() - t0;
+    return result;
+  }, [shown]);
+  const parsed = useMemo(
+    () => {
+      const seen = new Map<string, number>();
+      return blocks.map((b) => {
+        const occ = seen.get(b.kind) ?? 0;
+        seen.set(b.kind, occ + 1);
+        return renderBlock(b, blockKey(b, occ), citationByUrl);
+      });
+    },
+    [blocks, citationByUrl]
+  );
+
+  // The gate paces future snapshots — but only when the shown snapshot
+  // actually advanced (audit round 1: unrelated re-renders must not
+  // re-anchor the pacing window).
+  if (shown !== lastShownRef.current) {
+    gateRef.current.accept(lastCostRef.current);
+    lastShownRef.current = shown;
+  }
 
   return <div className="answer-body">{parsed}</div>;
 }
+
+/** Memoized: identical props (throttled text unchanged, stable citation map)
+ * short-circuit the whole subtree when the parent re-renders for unrelated
+ * reasons (status events, keystrokes, engine updates). */
+const AnswerMarkdown = memo(AnswerMarkdownInner);
+export default AnswerMarkdown;

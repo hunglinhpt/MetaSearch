@@ -104,3 +104,59 @@ throttle hook dùng chung 1 gate với measurement), `frontend/app/globals.css`
   bounded bởi throttle gate; code fence dài (>100k chars) skip highlight.
 - KaTeX CSS (+~24KB) vào CSS bundle của page có `MathFormula` — hợp lý vì
   math xuất hiện ngay trong answer stream.
+
+## 6. 3 vòng audit đối kháng sau tích hợp (2026-11-16)
+
+Ba expert read-only song song (logic/correctness · security/resilience ·
+perf/integration), mỗi vòng trace bằng tay trên parser + đọc `node_modules`
+để verify claim (không tin docs). Kết quả: **4 P1, ~14 P2, ~10 P3** — đã fix
+toàn bộ P1/P2 và các P3 rẻ. Chi tiết:
+
+**P1 đã fix:**
+1. **Italic nuốt phép nhân** — `parseInline("2 * 3 * 4")` thành italic.
+   Fix: left-flanking guard CommonMark (opener/closer không kề space).
+2. **Tiền tệ có toán tử bị nuốt thành LaTeX** — `$revenue > $cost` thành
+   math. Fix: chỉ marker MẠNH (`\cmd`, `^`, `_`) mới mở math; `=<>{}`
+   không tự đủ; span kết-thúc-bằng-space bị từ chối.
+3. **Throttle không gate phần đắt nhất** (3 vòng cùng chốt) — `parseBlocks`
+   + dựng element chạy lại **mỗi token** (parent re-render per token),
+   O(n²) qua stream. Fix: `useMemo` blocks trên `shown`, memoize render
+   tree, `React.memo(AnswerMarkdown)` + `useMemo` citation map tại cả 4
+   call-site (2 site trong JSX được bọc thành `ArtifactMarkdown` /
+   `PostMarkdown` memoized).
+4. **`gate.accept()` bị re-anchor bởi re-render không liên quan** —
+   status event/keystroke đẩy cửa sổ pacing. Fix: chỉ accept khi snapshot
+   thực sự thay đổi (`lastShownRef`).
+
+**P2 đã fix:** cap `MAX_MATH_CHARS` cho đường `$$` single-line; scanner
+`extractInlineMath` viết lại index-based O(n) + bail-out sau 64 opener fail
+(chống `$`-dense DoS); lone-table rewind (dòng sau `| a |` không còn bị nuốt
+— bug di truyền từ renderer cũ, nay heal); `MathFormula` last-good chỉ áp
+cho cùng công thức (prefix check) + `maxSize: 20` chống layout DoS; block
+key hybrid (stateful=content-hash chống remount cascade KaTeX/Mermaid,
+text=occurrence); fence code cap 200k + truncation notice; table cap
+500 hàng × 20 cột; fence mở (đang stream) render plain — Prism chỉ chạy khi
+fence đóng; NaN-cost guard trong `gapForCost` (Infinity→cap, NaN→floor);
+`safeHref` cap 2048; dead code `extractDisplayMath` được **wire vào**
+paragraph path (hết drift parser↔renderer); depth cap `parseInline` thực
+chất; empty code span literal; CRLF normalize 1 lần.
+
+**P1 vận hành đã fix:** `frontend/out` (bản Lite serve tại `/`) **stale 2
+ngày** — không gate nào chạy `build:export`, Lite sẽ serve renderer cũ.
+Fix: `run_quality_gates` giờ chạy `build:export`; `run_pre_commit_gate`
+giờ chạy thêm frontend vitest + typecheck (trước đó 0 check frontend ở
+pre-commit); `out/` đã rebuild — verify `md-mermaid` có mặt trong chunks.
+
+**Verify an toàn (closed, không fix cần):** Prism `Token.stringify` escape
+toàn bộ — không sink HTML từ untrusted input; KaTeX `trust` default off →
+`\href`/`\includegraphics` throw → caught; mermaid strict = DOMPurify 3.4.18
+(scripts/handlers strip — comment "sandbox" sai đã sửa thành ghi chú đúng);
+prismjs 1.30.0 đã fix CVE-2024-53382; `npm audit`: 0 vulns / 235 deps.
+`npm ci` khớp lockfile. SSR/prerender: không window/document ở module/render
+scope, initial state server/client identical.
+
+**Cố ý giữ lại (có lý do):** inline `new Map` tại 2 call-site cold thay
+bằng wrapper memoized; mermaid queued render không cancel khi unmount
+(alive chỉ bỏ kết quả — cancel mid-flight không có API; tự-heal ≤2s);
+`3*4*5` (không space) theo CommonMark = italic — chấp nhận spec.
+

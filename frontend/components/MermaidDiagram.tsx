@@ -63,7 +63,11 @@ export default function MermaidDiagram({ code }: { code: string }) {
     return (
       <div
         className="md-mermaid"
-        // mermaid SVG comes from its own sandboxed renderer (securityLevel strict)
+        // mermaid strict mode runs DOMPurify over the SVG (scripts and
+        // event handlers stripped). strict is a sanitize pass, NOT a
+        // sandboxed iframe — foreignObject/<style> survive by design, so
+        // this stays defense-in-depth behind the parser caps, not the
+        // only line of defense (audit round 2).
         dangerouslySetInnerHTML={{ __html: svg }}
       />
     );

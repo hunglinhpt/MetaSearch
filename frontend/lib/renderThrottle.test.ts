@@ -10,6 +10,11 @@ describe("gapForCost", () => {
     expect(gapForCost(1500)).toBe(2000);
     expect(gapForCost(5000)).toBe(2000);
   });
+
+  it("treats a non-finite cost as the floor cost (no NaN busy loop, audit r2)", () => {
+    expect(gapForCost(Number.NaN)).toBe(32); // MIN_GAP cost → normal gap
+    expect(gapForCost(Number.POSITIVE_INFINITY)).toBe(2000);
+  });
 });
 
 describe("AdaptiveRenderGate", () => {

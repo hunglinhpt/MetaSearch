@@ -1,6 +1,14 @@
 "use client";
 
-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import {
+  ReactNode,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import NewsPanel from "../components/NewsPanel";
 import ResearchPanel from "../components/ResearchPanel";
@@ -60,6 +68,44 @@ import {
   updateCouncilEndpoints,
   updateLLMConfig,
 } from "../lib/api";
+
+/** Audit round 3: memoized markdown wrappers for the cold call-sites — the
+ * inline `new Map(...)` in JSX defeated AnswerMarkdown's React.memo, so
+ * typing in the search box re-parsed whole artifacts/posts per keystroke. */
+const ArtifactMarkdown = memo(function ArtifactMarkdown({
+  md,
+  citations,
+}: {
+  md: string;
+  citations?: Citation[];
+}) {
+  const map = useMemo(
+    () => new Map((citations ?? []).map((c) => [c.n, c])),
+    [citations]
+  );
+  return <AnswerMarkdown text={md} citationByUrl={map} />;
+});
+
+const PostMarkdown = memo(function PostMarkdown({
+  md,
+  sources,
+}: {
+  md: string;
+  sources?: { n: number; title: string; url: string; snippet?: string }[] | null;
+}) {
+  const map = useMemo(
+    () =>
+      new Map(
+        (sources ?? []).map((s) => [
+          s.n,
+          { n: s.n, url: s.url, title: s.title },
+        ])
+      ),
+    [sources]
+  );
+  return <AnswerMarkdown text={md} citationByUrl={map} />;
+});
+
 
 type Mode = "answer" | "raw";
 type AppTab = "search" | "news" | "research" | "compare" | "blog" | "superagent" | "llm";
@@ -685,7 +731,12 @@ export default function HomePage() {
     deepSearch,
   ]);
 
-  const citationByUrl = new Map(citations.map((c) => [c.n, c]));
+  // Audit round 3: memoized identity — AnswerMarkdown is React.memo'd, a
+  // fresh Map per render would defeat it on every keystroke/token.
+  const citationByUrl = useMemo(
+    () => new Map(citations.map((c) => [c.n, c])),
+    [citations]
+  );
   const selectedPresetObj = llmPresets.find((p) => p.id === llmProvider);
 
   return (
@@ -1976,13 +2027,9 @@ POST ${API_BASE_URL}/v1/citations/validate
                                 border: "1px solid var(--border)",
                               }}
                             >
-                              <AnswerMarkdown
-                                text={t.artifacts[0].content_md}
-                                citationByUrl={
-                                  new Map(
-                                    (t.artifacts[0].citations || []).map((c) => [c.n, c])
-                                  )
-                                }
+                              <ArtifactMarkdown
+                                md={t.artifacts[0].content_md}
+                                citations={t.artifacts[0].citations}
                               />
                             </div>
                           </div>
@@ -2019,17 +2066,7 @@ POST ${API_BASE_URL}/v1/citations/validate
               </span>
             </div>
 
-            <AnswerMarkdown
-              text={selectedPost.content_md}
-              citationByUrl={
-                new Map(
-                  (selectedPost.sources ?? []).map((s) => [
-                    s.n,
-                    { n: s.n, url: s.url, title: s.title },
-                  ])
-                )
-              }
-            />
+            <PostMarkdown md={selectedPost.content_md} sources={selectedPost.sources} />
 
             {selectedPost.sources && selectedPost.sources.length > 0 && (
               <div style={{ marginTop: "2rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>

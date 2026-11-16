@@ -11,7 +11,11 @@ const MIN_GAP_MS = 16;
 const MAX_GAP_MS = 2000;
 
 export function gapForCost(costMs: number): number {
-  return Math.min(Math.max(costMs * 2, MIN_GAP_MS), MAX_GAP_MS);
+  // Audit round 2: NaN must not produce a NaN gap (a NaN delay makes
+  // setTimeout fire immediately → busy repaint loop); Infinity clamps to
+  // the cap like any other huge cost.
+  const cost = Number.isNaN(costMs) ? MIN_GAP_MS : costMs;
+  return Math.min(Math.max(cost * 2, MIN_GAP_MS), MAX_GAP_MS);
 }
 
 export class AdaptiveRenderGate {

@@ -2,10 +2,12 @@
  * deepseek-ai/chat-demo `micromark-extension-llm-math` usage, adapted to the
  * line-based renderer with a conservative currency guard).
  *
- * Financial answers are full of "$1,234" / "US$500" — a naive `$...$` span
- * would mangle them into LaTeX. A `$...$` span is accepted as math ONLY when
- * the content carries at least one LaTeX-ish marker (\, ^, _, {, }, =, <, >)
- * or starts with a LaTeX command (\frac, \sum, ...). */
+ * Financial answers are full of "$1,234" / "US$500" / "$revenue > $cost" — a
+ * naive `$...$` span would mangle them into LaTeX. A span is accepted as
+ * math ONLY when it carries a STRONG LaTeX marker (a `\command`, `^`, `_`)
+ * — weak look-alikes (`=`, `<`, `>`, `{`, `}`) never qualify on their own.
+ * Audit round 2: the scanner is index-based and bails out of a piece after
+ * 64 failed openers, so a `$`-dense adversarial line stays O(n). */
 
 export type MathSegment = { kind: "display" | "inline"; latex: string };
 
@@ -13,10 +15,15 @@ export type MathSegment = { kind: "display" | "inline"; latex: string };
  * freeze KaTeX (bounded, mirrors the backend's cap philosophy). */
 export const MAX_MATH_CHARS = 2000;
 
-/** True when the span content carries at least one LaTeX-ish marker
- * (\cmd, ^, _, {, }, =, <, >). Shared by inline and display guards. */
+/** Max failed openers before the rest of a piece is left as plain text —
+ * bounds the rescan cost of `$`-dense adversarial input. */
+const MAX_FAILED_OPENERS = 64;
+
+/** True when content carries at least one strong LaTeX marker. Weak
+ * look-alikes (=, <, >, {}) deliberately do NOT count: "$revenue > $cost"
+ * must stay money, and "$E=mc^2$" still passes via the `^`. */
 export function hasMathMarkers(content: string): boolean {
-  return /[\\^_{}=<>\u2212]|\\[a-zA-Z]+\b/.test(content);
+  return /\\[a-zA-Z]+\b|[\^_]/.test(content);
 }
 
 /** True when the span content looks like LaTeX, not like money or plain text. */
@@ -26,6 +33,7 @@ export function isMathish(content: string): boolean {
   const c = content.charCodeAt(0);
   if (c >= 0x30 && c <= 0x39) return false; // leading digit → "$5 và $10" case
   if (content.startsWith(" ")) return false;
+  if (content.endsWith(" ")) return false; // "$revenue > " → comparison prose
   return hasMathMarkers(content);
 }
 
@@ -46,102 +54,89 @@ function findClose(line: string, from: number, delim: string): number {
   return -1;
 }
 
-/** Merge consecutive string pieces so callers get clean text segments. */
-function mergeStrings(parts: Array<string | MathSegment>): Array<string | MathSegment> {
-  const out: Array<string | MathSegment> = [];
-  for (const part of parts) {
-    if (
-      typeof part === "string" &&
-      out.length > 0 &&
-      typeof out[out.length - 1] === "string"
-    ) {
-      out[out.length - 1] = out[out.length - 1] + part;
-    } else {
-      out.push(part);
-    }
-  }
-  return out;
-}
-
-/** Extract display math from one line: `$$...$$` and `\[..., ...\]`.
- * Returns the leftover plain-text pieces and the math segments in order. */
-export function extractDisplayMath(
-  line: string
-): Array<string | MathSegment> {
-  const out: Array<string | MathSegment> = [];
-  let rest = line;
-  // Loop: each pass peels one display-math span off `rest`.
-  for (;;) {
-    const dd = rest.indexOf("$$");
-    const bd = rest.indexOf("\\[");
-    if (dd === -1 && bd === -1) break;
-    let openAt: number;
-    let delim: string;
-    let closeDelim: string;
-    if (dd !== -1 && (bd === -1 || dd < bd)) {
-      openAt = dd;
-      delim = "$$";
-      closeDelim = "$$";
-    } else {
-      openAt = bd;
-      delim = "\\[";
-      closeDelim = "\\]";
-    }
-    const closeAt = findClose(rest, openAt + delim.length, closeDelim);
-    if (closeAt === -1) break; // unterminated → stream still coming
-    const latex = rest.slice(openAt + delim.length, closeAt);
-    if (latex.trim().length > 0 && hasMathMarkers(latex) && latex.length <= MAX_MATH_CHARS) {
-      if (openAt > 0) out.push(rest.slice(0, openAt));
-      out.push({ kind: "display", latex: latex.trim() });
-      rest = rest.slice(closeAt + closeDelim.length);
-    } else {
-      // Looks like money ($$ 100 $$) or junk → leave untouched, stop here.
-      break;
-    }
-  }
-  if (rest.length > 0) out.push(rest);
-  return mergeStrings(out);
-}
-
 /** Extract inline math (`$...$`, `\\(...\\)`) from a plain-text piece.
- * Text pieces are returned unchanged; math becomes a MathSegment. */
+ * Index-based single pass: text runs are sliced once, math becomes a
+ * MathSegment; pieces stay in order. */
 export function extractInlineMath(text: string): Array<string | MathSegment> {
   const out: Array<string | MathSegment> = [];
-  let rest = text;
-  let carry = ""; // prefix held while scanning past non-math openers
-  for (;;) {
-    // Pick the earliest opener of either flavor.
-    let openAt = -1;
-    let delim = "";
+  let start = 0; // start of the pending plain-text run
+  let i = 0;
+  let failures = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    let delim: string | null = null;
     let closeDelim = "";
-    const firstDollar = rest.indexOf("$");
-    const firstParen = rest.indexOf("\\(");
-    if (firstDollar !== -1 && (firstParen === -1 || firstDollar < firstParen)) {
-      openAt = firstDollar;
+    if (ch === "$") {
       delim = "$";
       closeDelim = "$";
-    } else if (firstParen !== -1) {
-      openAt = firstParen;
+    } else if (ch === "\\" && text.startsWith("\\(", i)) {
       delim = "\\(";
       closeDelim = "\\)";
     }
-    if (openAt === -1) break;
-    const closeAt = findClose(rest, openAt + delim.length, closeDelim);
-    if (closeAt === -1) break; // unterminated → keep as text
-    const content = rest.slice(openAt + delim.length, closeAt);
-    if (isMathish(content)) {
-      carry += rest.slice(0, openAt);
-      if (carry.length > 0) out.push(carry);
-      carry = "";
-      out.push({ kind: "inline", latex: content });
-      rest = rest.slice(closeAt + closeDelim.length);
-    } else {
-      // Not math (e.g. "$100") → hold the opener in carry, scan past it.
-      carry += rest.slice(0, openAt + delim.length);
-      rest = rest.slice(openAt + delim.length);
+    if (delim !== null) {
+      const closeAt = findClose(text, i + delim.length, closeDelim);
+      const content =
+        closeAt === -1 ? null : text.slice(i + delim.length, closeAt);
+      if (content !== null && isMathish(content)) {
+        if (i > start) out.push(text.slice(start, i));
+        out.push({ kind: "inline", latex: content });
+        i = closeAt + closeDelim.length;
+        start = i;
+        continue;
+      }
+      failures += 1;
+      if (failures > MAX_FAILED_OPENERS) {
+        break; // adversarial $-dense piece — keep the remainder as text
+      }
+      i += delim.length; // skip the opener only (findClose may run again)
+      continue;
     }
+    i += 1;
   }
-  carry += rest;
-  if (carry.length > 0) out.push(carry);
-  return mergeStrings(out);
+  if (start < text.length) out.push(text.slice(start));
+  return out;
+}
+
+/** Extract display math spans (`$$…$$`, `\[…\]`) from one line — used by the
+ * block parser's paragraph path so display math inside a prose line follows
+ * the same strong-marker + length guards as the fenced `$$` block paths. */
+export function extractDisplayMathInline(
+  text: string
+): Array<string | MathSegment> {
+  const out: Array<string | MathSegment> = [];
+  let start = 0;
+  let i = 0;
+  while (i < text.length) {
+    let delim: string | null = null;
+    let closeDelim = "";
+    if (text.startsWith("$$", i)) {
+      delim = "$$";
+      closeDelim = "$$";
+    } else if (text.startsWith("\\[", i)) {
+      delim = "\\[";
+      closeDelim = "\\]";
+    }
+    if (delim !== null) {
+      const closeAt = findClose(text, i + delim.length, closeDelim);
+      const content =
+        closeAt === -1 ? null : text.slice(i + delim.length, closeAt).trim();
+      if (
+        content !== null &&
+        content.length > 0 &&
+        content.length <= MAX_MATH_CHARS &&
+        hasMathMarkers(content)
+      ) {
+        if (i > start) out.push(text.slice(start, i));
+        out.push({ kind: "display", latex: content });
+        i = closeAt + closeDelim.length;
+        start = i;
+        continue;
+      }
+      i += delim.length;
+      continue;
+    }
+    i += 1;
+  }
+  if (start < text.length) out.push(text.slice(start));
+  return out;
 }

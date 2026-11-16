@@ -27,6 +27,11 @@ describe("safeHref", () => {
     // userinfo cannot escalate the scheme; the https prefix wins
     expect(safeHref("https://user@example.com")).toBe("https://user@example.com");
   });
+
+  it("drops absurdly long URLs (audit round 2)", () => {
+    expect(safeHref(`https://x.example/${"a".repeat(3000)}`)).toBeUndefined();
+    expect(safeHref(`https://x.example/${"a".repeat(2000)}`)).toBeDefined();
+  });
 });
 
 describe("AI infra client helpers", () => {

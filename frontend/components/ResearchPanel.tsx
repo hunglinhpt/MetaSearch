@@ -8,7 +8,7 @@
  * engine (Web Speech default, VoiceStudio when configured — docs/17).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createResearch,
@@ -46,6 +46,12 @@ export default function ResearchPanel() {
   const [stage, setStage] = useState("");
   const [reportMd, setReportMd] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
+  // Audit round 3: stable identity so the memoized AnswerMarkdown actually
+  // short-circuits between report tokens.
+  const citationByUrl = useMemo(
+    () => buildCitationMap(citations),
+    [citations]
+  );
   const [learnings, setLearnings] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
@@ -401,7 +407,7 @@ export default function ResearchPanel() {
             </div>
           )}
 
-          <AnswerMarkdown text={reportMd} citationByUrl={buildCitationMap(citations)} />
+          <AnswerMarkdown text={reportMd} citationByUrl={citationByUrl} />
 
           {citations.length > 0 && (
             <div className="citations">

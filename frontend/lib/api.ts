@@ -338,8 +338,10 @@ export type SearchOptions = {
   extras?: ("contents" | "highlights" | "answer")[];
 };
 
-/** Only http(s) links become hrefs — defense against a misbehaving engine. */
+/** Only http(s) links become hrefs — defense against a misbehaving engine.
+ * Audit round 2: absurdly long URLs (>2048, browser limits) are dropped. */
 export function safeHref(url: string): string | undefined {
+  if (url.length > 2048) return undefined;
   return /^https?:\/\//i.test(url) ? url : undefined;
 }
 
