@@ -12,7 +12,7 @@ from app.core.logging import get_logger
 from app.retrieval.boosts import BoostRule, apply_boosts
 from app.retrieval.canonical import canonicalize
 from app.retrieval.models import EngineConfig, RawResult, ScoredResult
-from app.retrieval.scoring import apply_signals
+from app.retrieval.scoring import apply_signals, tokenize
 from app.retrieval.simhash import is_near_duplicate, simhash64
 
 logger = get_logger(__name__)
@@ -88,10 +88,13 @@ def merge(
     max_engines = max((item.consensus for item in merged), default=1)
     max_rrf = max(group_rrf.values(), default=0.0)
     rw = min(max(rrf_weight, 0.0), 1.0)
+    # docs/29 P3-2 (audit B#12): tokenize once for the whole merge loop.
+    query_terms = tokenize(query)
     for item in merged:
         base = apply_signals(
             item,
             query=query,
+            query_terms=query_terms,
             registry=registry,
             max_engines=max_engines,
             now=now,

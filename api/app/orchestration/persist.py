@@ -80,7 +80,10 @@ async def _doc_chunk_embeddings(
                     embed_texts_via_vision_api(settings, segments), timeout=15.0
                 )
             else:
-                vectors = await asyncio.wait_for(embedder.embed_many(segments), timeout=10.0)
+                embedder_ref = embedder
+                if embedder_ref is None:  # mypy: guarded by use_vision above
+                    return {}
+                vectors = await asyncio.wait_for(embedder_ref.embed_many(segments), timeout=10.0)
             out: dict[int, list[float]] = {}
             for chunk in doc_chunks[:64]:
                 probe = chunk.content[:200]
@@ -97,7 +100,10 @@ async def _doc_chunk_embeddings(
                 embed_texts_via_vision_api(settings, texts), timeout=15.0
             )
         else:
-            vectors = await asyncio.wait_for(embedder.embed_many(texts), timeout=10.0)
+            embedder_ref = embedder
+            if embedder_ref is None:  # mypy: guarded by use_vision above
+                return {}
+            vectors = await asyncio.wait_for(embedder_ref.embed_many(texts), timeout=10.0)
         return {c.position: v for c, v in zip(doc_chunks[:32], vectors, strict=True)}
     except Exception as exc:
         logger.warning("persist_embed_failed", url=page.url, error=type(exc).__name__)
@@ -176,7 +182,8 @@ def discard_background_tasks() -> None:
         coro = _pending_coros.pop(task, None)
         if not task.done():
             task.cancel()
-        if coro is not None and asyncio.iscoroutine(coro) and not coro.cr_running:
+        coro_live = coro is not None and asyncio.iscoroutine(coro)
+        if coro_live and not getattr(coro, "cr_running", False):
             with contextlib.suppress(RuntimeError):
                 coro.close()
     _background_tasks.clear()
@@ -269,103 +276,175 @@ async def _persist_search_all(
 
 
 async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> None:
-    """Insert scraped documents + their chunks (skip URLs already stored)."""
+    """Insert scraped documents + their chunks (skip URLs already stored).
+
+    docs/29 P1-4 (audit findings #4/#10): the embedding fan-out (up to
+    10-15 s of awaited HTTP per page) runs BEFORE the SQLite write lock —
+    the global write lock must never serialize every background writer
+    behind one page's embed calls. Chunk rows are written as one
+    executemany statement on SQLite (per-row round trips were the
+    persist-queue throughput ceiling); Postgres keeps per-row executes
+    because its tsv expression is not executemany-safe.
+    """
+    # Pre-plan: one entry per distinct canonical URL (duplicate canonicals
+    # would race the executemany conflict target).
+    plan: list[tuple[PageContent, str, str, str, uuid.UUID]] = []
+    seen_canons: set[str] = set()
+    for page in pages:
+        raw_target = page.final_url or page.url
+        # PASS 2 P2-5 (audit B#16 parity): canonicalize() raises on malformed
+        # urls — one bad URL must not abort the whole persist batch.
+        try:
+            canon = canonicalize(raw_target) or raw_target
+        except Exception:
+            canon = raw_target
+        if canon in seen_canons:
+            continue
+        seen_canons.add(canon)
+        domain = (urlsplit(canon).hostname or "").lower()
+        plan.append((page, raw_target, canon, domain, uuid.uuid4()))
+    hashes = {_url_hash(canon) for (_, _, canon, _, _) in plan}
+
+    # Read-only pre-pass (no write lock) to resolve already-stored docs.
+    existing_ids: dict[str, uuid.UUID] = {}
+    try:
+        async with get_sessionmaker()() as session:
+            rows = await session.execute(
+                select(Document.id, Document.url_hash).where(Document.url_hash.in_(hashes))
+            )
+            for found_id, found_hash in rows.all():
+                existing_ids[found_hash] = found_id
+    except Exception as exc:
+        logger.warning("persist_docs_prefetch_failed", error=type(exc).__name__)
+
+    doc_ids: dict[str, uuid.UUID] = {}
+    new_doc_ids: set[uuid.UUID] = set()
+    doc_values: list[dict[str, Any]] = []
+    for page, raw_target, canon, domain, fresh_id in plan:
+        url_hash = _url_hash(canon)
+        doc_id: uuid.UUID | None = existing_ids.get(url_hash)
+        if doc_id is None:
+            doc_id = fresh_id
+            new_doc_ids.add(doc_id)
+            doc_values.append(
+                {
+                    "id": doc_id,
+                    "canonical_url": canon,
+                    "url_hash": url_hash,
+                    "domain": domain,
+                    "title": page.title,
+                    "content_md": page.markdown,
+                    "content_hash": _url_hash(page.markdown),
+                    "fetched_at": page.fetched_at,
+                    "fetch_status": "ok",
+                    "extractor_used": page.extractor_used,
+                }
+            )
+        # Index under requested, final, and canonical URL so chunk lookup
+        # always matches even when redirects or tracking params existed.
+        doc_ids.setdefault(page.url, doc_id)
+        doc_ids.setdefault(raw_target, doc_id)
+        doc_ids.setdefault(canon, doc_id)
+
+    # Embedding fan-out OUTSIDE the write lock (audit finding #4).
+    embeddings_by_doc: dict[uuid.UUID, dict[int, list[float]]] = {}
+    from app.config import get_settings as _gs
+    from app.retrieval.vision import vision_embed_available as _vea
+
+    _can_embed = (_embedder is not None and getattr(_embedder, "enabled", False)) or _vea(_gs())
+    if _can_embed:
+        for page, _raw, _canon, _dom, _fresh in plan:
+            embed_doc_id: uuid.UUID | None = doc_ids.get(page.url)
+            if embed_doc_id is None or embed_doc_id not in new_doc_ids:
+                continue
+            doc_chunks = []
+            for c in chunks:
+                if c.document_url == page.url:
+                    doc_chunks.append(c)
+                    continue
+                try:
+                    if canonicalize(c.document_url) == canonicalize(page.url):
+                        doc_chunks.append(c)
+                except Exception:  # nosec B112 - skip malformed url, keep batch
+                    continue
+            embeddings_by_doc[embed_doc_id] = await _doc_chunk_embeddings(page, doc_chunks)
+
     async with sqlite_write_lock(), get_sessionmaker()() as session:
         insert = _dialect_insert(session)
-        doc_ids: dict[str, uuid.UUID] = {}
-        new_doc_ids: set[uuid.UUID] = set()
-        for page in pages:
-            raw_target = page.final_url or page.url
-            canon = canonicalize(raw_target) or raw_target
-            domain = (urlsplit(canon).hostname or "").lower()
-            row = (
-                await session.execute(
-                    insert(Document)
-                    .values(
-                        id=uuid.uuid4(),
-                        canonical_url=canon,
-                        url_hash=_url_hash(canon),
-                        domain=domain,
-                        title=page.title,
-                        content_md=page.markdown,
-                        content_hash=_url_hash(page.markdown),
-                        fetched_at=page.fetched_at,
-                        fetch_status="ok",
-                        extractor_used=page.extractor_used,
-                    )
-                    .on_conflict_do_nothing(index_elements=["canonical_url"])
-                    .returning(Document.id)
-                )
-            ).first()
-            if row is None:
-                # Already stored by an earlier request; reuse its id.
-                existing = (
-                    await session.execute(
-                        select(Document.id).where(Document.canonical_url == canon)
-                    )
-                ).first()
-                if existing is None:
-                    continue
-                doc_id: uuid.UUID | None = existing[0]
-            else:
-                doc_id = row[0]
-                if doc_id is not None:
-                    new_doc_ids.add(doc_id)
-            if doc_id is not None:
-                # Index under requested, final, and canonical URL so chunk lookup
-                # always matches even when redirects or tracking params existed.
-                doc_ids.setdefault(page.url, doc_id)
-                doc_ids.setdefault(raw_target, doc_id)
-                doc_ids.setdefault(canon, doc_id)
-
-        # docs/20 P1-3: per-document embeddings (late chunking for long docs).
-        # P2-1: the vision API path counts as an embedder source too.
-        embeddings_by_doc: dict[uuid.UUID, dict[int, list[float]]] = {}
-        from app.config import get_settings as _gs
-        from app.retrieval.vision import vision_embed_available as _vea
-
-        _can_embed = (_embedder is not None and getattr(_embedder, "enabled", False)) or _vea(_gs())
-        if _can_embed:
-            for page in pages:
-                doc_id = doc_ids.get(page.url)
-                if doc_id is None or doc_id not in new_doc_ids:
-                    continue
-                doc_chunks = [
-                    c
-                    for c in chunks
-                    if c.document_url == page.url
-                    or canonicalize(c.document_url) == canonicalize(page.url)
-                ]
-                embeddings_by_doc[doc_id] = await _doc_chunk_embeddings(page, doc_chunks)
-
-        is_pg = bool(session.bind) and session.bind.dialect.name == "postgresql"
-        for chunk in chunks:
-            doc_id = doc_ids.get(chunk.document_url) or doc_ids.get(
-                canonicalize(chunk.document_url)
+        if doc_values:
+            await session.execute(
+                insert(Document)
+                .values(doc_values)
+                .on_conflict_do_nothing(index_elements=["canonical_url"])
             )
-            if doc_id is None or doc_id not in new_doc_ids:
+        # docs/29 PASS 2 P1-1: the pre-read SELECT ran OUTSIDE the write lock
+        # (and may have failed open with an empty map) — a concurrent writer
+        # could own the canonical_url already. Re-resolve ownership from
+        # ACTUAL DB state inside the lock, remapping our planned fresh ids
+        # onto the stored row ids, before any chunk is written.
+        stored: dict[str, uuid.UUID] = {}
+        if hashes:
+            rows = await session.execute(
+                select(Document.id, Document.url_hash).where(Document.url_hash.in_(hashes))
+            )
+            for stored_id, stored_hash in rows.all():
+                stored[stored_hash] = stored_id
+        if stored:
+            for page, raw_target, canon, _domain, fresh_id in plan:
+                url_hash = _url_hash(canon)
+                real_id = stored.get(url_hash)
+                if real_id is None:
+                    # our executemany just landed this row under fresh_id
+                    real_id = fresh_id
+                else:
+                    # a concurrent writer owns it — abandon our fresh id and
+                    # attach chunks to the stored document instead
+                    new_doc_ids.discard(fresh_id)
+                    new_doc_ids.add(real_id)
+                doc_ids[page.url] = real_id
+                doc_ids[raw_target] = real_id
+                doc_ids[canon] = real_id
+        bind_dialect = session.bind.dialect.name if session.bind is not None else "sqlite"
+        is_pg = bind_dialect == "postgresql"
+        chunk_values: list[dict[str, Any]] = []
+        for chunk in chunks:
+            chunk_doc_id: uuid.UUID | None = doc_ids.get(chunk.document_url)
+            if chunk_doc_id is None:
+                try:
+                    chunk_doc_id = doc_ids.get(canonicalize(chunk.document_url))
+                except Exception:
+                    chunk_doc_id = None  # malformed chunk url — skip this chunk
+            if chunk_doc_id is None or chunk_doc_id not in new_doc_ids:
                 continue
             try:
                 chunk_uuid = uuid.UUID(chunk.id)
             except ValueError:
                 chunk_uuid = uuid.uuid4()
-            # docs/20 P1-4: sparse side of the hybrid index — real tsvector on
-            # Postgres, raw text on SQLite (scored in Python by retrieval/hybrid).
-            tsv_value = func.to_tsvector("simple", chunk.content) if is_pg else chunk.content
-            await session.execute(
-                insert(ChunkRow)
-                .values(
-                    id=chunk_uuid,
-                    document_id=doc_id,
-                    position=chunk.position,
-                    heading_path=chunk.heading_path,
-                    content=chunk.content,
-                    token_count=chunk.word_count,
-                    tsv=tsv_value,
-                    embedding=embeddings_by_doc.get(doc_id, {}).get(chunk.position),
-                )
-                .on_conflict_do_nothing(index_elements=["id"])
+            chunk_values.append(
+                {
+                    "id": chunk_uuid,
+                    "document_id": chunk_doc_id,
+                    "position": chunk.position,
+                    "heading_path": chunk.heading_path,
+                    "content": chunk.content,
+                    "token_count": chunk.word_count,
+                    # docs/20 P1-4: sparse side of the hybrid index — real
+                    # tsvector on Postgres, raw text on SQLite (scored in
+                    # Python by retrieval/hybrid).
+                    "tsv": func.to_tsvector("simple", chunk.content) if is_pg else chunk.content,
+                    "embedding": embeddings_by_doc.get(chunk_doc_id, {}).get(chunk.position),
+                }
             )
+        if chunk_values:
+            if is_pg:
+                chunk_stmt = insert(ChunkRow).on_conflict_do_nothing(index_elements=["id"])
+                for row_values in chunk_values:
+                    await session.execute(chunk_stmt.values(**row_values))
+            else:
+                await session.execute(
+                    insert(ChunkRow).on_conflict_do_nothing(index_elements=["id"]),
+                    chunk_values,
+                )
         await session.commit()
 
 

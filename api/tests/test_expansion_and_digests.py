@@ -243,7 +243,12 @@ class TestDigestsAndScanner:
 
         assert "ai_coding" in slug
         assert "AI Coding" in title
-        assert "Autonomous Coding Agent" in content_md
+        # docs/29 P0-1: extractive synthesis — empty results must NOT yield
+        # fabricated narrative (the old template asserted "Autonomous Coding
+        # Agent" unconditionally), only an honest no-data statement.
+        assert "Không có tin hợp lệ" in content_md
+        assert "Autonomous Coding Agent" not in content_md
+        assert "https://metasearch.ai" not in content_md
         assert len(content_md) > 200
         assert isinstance(citations, list)
 
@@ -399,9 +404,12 @@ class TestDeltaHighlighting:
             )
         ]
 
-        section = _build_delta_section(prev_post, current_results)
-        assert "Điểm Mới Trong 24 Giờ Qua" in section
-        assert "Phát Hiện Mới" in section
+        from app.orchestration.scheduler import _dedup_results
+
+        deduped = _dedup_results(current_results)
+        section = _build_delta_section(prev_post, deduped)
+        # docs/29 P0-1: fresh sources are listed with their real titles
+        assert "Nguồn Mới So Với Kỳ" in section
         assert "Ra mắt mô hình Coding Agent mới" in section
 
     def test_build_delta_section_with_no_delta(self):
@@ -426,6 +434,10 @@ class TestDeltaHighlighting:
             )
         ]
 
-        section = _build_delta_section(prev_post, current_results)
-        assert "Nhịp Vận Động" in section
-        assert "tiếp tục nhất quán" in section
+        from app.orchestration.scheduler import _dedup_results
+
+        deduped = _dedup_results(current_results)
+        section = _build_delta_section(prev_post, deduped)
+        # docs/29 P0-1: no fabricated continuity — only the provable statement
+        assert "Không ghi nhận nguồn mới nào" in section
+        assert "tiếp tục nhất quán" not in section

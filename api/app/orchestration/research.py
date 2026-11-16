@@ -31,7 +31,7 @@ from app.extraction.chunker import Chunk, chunk_markdown
 from app.extraction.scraper import PageContent, Scraper
 from app.llm.citations import validate_citations
 from app.llm.gateway import LLMError, LLMGateway, Usage
-from app.llm.prompts import SYSTEM_PROMPT
+from app.llm.prompts import SYSTEM_PROMPT, _random_delimiter
 from app.llm.providers import LLMOverride
 from app.orchestration import persist
 from app.orchestration.pipeline import (
@@ -570,9 +570,16 @@ def _extractor_messages(
 
 
 def _render_pack(chunks: list[Chunk], start: int = 1) -> str:
+    """Numbered source blocks wrapped in per-request random delimiters
+    (SEC-07 parity with prompts.render_context - docs/29 P1-1: web
+    content is untrusted and must never sit bare next to instructions)."""
     blocks = []
     for offset, chunk in enumerate(chunks):
-        blocks.append(f"[{start + offset}] {chunk.document_url}\n{chunk.content}")
+        header = f"[{start + offset}] {chunk.document_url}"
+        section = f"(section: {chunk.heading_path})" + ("\n" if chunk.heading_path else "")
+        begin, end_delim = _random_delimiter(start + offset), _random_delimiter(start + offset)
+        body = "\n<<<" + begin + ">>>\n" + section + chunk.content + "\n<<<" + end_delim + ">>>"
+        blocks.append(header + body)
     return "\n\n".join(blocks)
 
 
@@ -635,8 +642,15 @@ def _chunks_sync(
     for page in pages:
         scraped_urls.add(page.url)
         scraped_urls.add(page.final_url)
-        scraped_urls.add(canonicalize(page.url))
-        matched_res = res_by_url.get(page.url) or res_by_url.get(canonicalize(page.url))
+        # docs/29 P3-2 (audit B#16): canonicalize() raises on malformed URLs
+        # (e.g. bad IPv6 literals) — guard it like pipeline.py does so one
+        # malformed page cannot abort the whole research iteration.
+        try:
+            canon_url = canonicalize(page.url)
+        except Exception:
+            canon_url = page.url
+        scraped_urls.add(canon_url)
+        matched_res = res_by_url.get(page.url) or res_by_url.get(canon_url)
         result_score = matched_res.score if matched_res else 0.0
         md_body = page.markdown
         if (

@@ -34,11 +34,15 @@ RRF_K = 60
 _CANDIDATE_LIMIT = 1000
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
+def _cosine(a: list[float], b: list[float], *, na: float | None = None) -> float:
+    """Cosine similarity; ``na`` (‖a‖) may be precomputed by the caller when
+    the same vector is compared against many rows (audit B#24 — the query
+    norm was recomputed O(dim) per row over ≤1000 rows)."""
     if not a or not b or len(a) != len(b):
         return 0.0
     dot = sum(x * y for x, y in zip(a, b, strict=True))
-    na = math.sqrt(sum(x * x for x in a))
+    if na is None:
+        na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0.0 or nb == 0.0:
         return 0.0
@@ -218,8 +222,11 @@ def _score_rows_sync(
     sparse = bm25_scores(query, contents)
     dense: list[float] | None = None
     if embedding is not None:
+        query_norm = math.sqrt(sum(x * x for x in embedding))
         dense = [
-            _cosine(embedding, [float(x) for x in r.embedding]) if r.embedding else 0.0
+            _cosine(embedding, [float(x) for x in r.embedding], na=query_norm)
+            if r.embedding
+            else 0.0
             for r in rows
         ]
     fused = rrf_fuse(dense or [], sparse)

@@ -27,7 +27,9 @@ logger = get_logger(__name__)
 
 
 def sha1_key(*parts: Any) -> str:
-    joined = "|".join(str(p) for p in parts)
+    # docs/29 P3-2 (audit B#21): length-prefix each part so a "|" inside a
+    # user-controlled part cannot collide with a different tuple split.
+    joined = "|".join(f"{len(str(p))}:{p}" for p in parts)
     return hashlib.sha1(joined.encode("utf-8")).hexdigest()  # nosec B324 - cache key, not security
 
 
@@ -307,7 +309,7 @@ def answer_cache_key(
         deep,
         personalization,
     )
-    return f"an:v3:{h}"
+    return f"an:v4:{h}"  # v4: keys now fold domain (docs/29 P1-3)
 
 
 def page_cache_key(url: str) -> str:

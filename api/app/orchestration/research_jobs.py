@@ -373,5 +373,10 @@ async def run_job(job: ResearchJob, params) -> None:
         raise
     except Exception as exc:
         logger.warning("research_job_failed", error=type(exc).__name__)
-        job.push(("error", {"code": "internal", "message": f"{type(exc).__name__}: {exc}"[:200]}))
+        job.push(
+            (
+                "error",
+                {"code": "internal", "message": f"{type(exc).__name__} failed; check server logs"},
+            )
+        )
         job.notify_sync()

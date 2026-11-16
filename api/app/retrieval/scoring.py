@@ -306,9 +306,13 @@ def apply_signals(
     # docs/20 P1-8: configurable half-lives (days); None = legacy exp(-age/30).
     news_half_life_days: float | None = None,
     other_half_life_days: float | None = None,
+    # docs/29 P3-2 (audit B#12): merge() calls this per merged result —
+    # pass the tokenized query once instead of re-tokenizing per item.
+    query_terms: list[str] | None = None,
 ) -> float:
     """Fill the signal fields of ``item`` and return the combined score."""
-    query_terms = tokenize(query)
+    if query_terms is None:
+        query_terms = tokenize(query)
     kw = keyword_relevance(query_terms, item.title, item.snippet)
     cons = consensus_score(item.consensus, max_engines)
     ew = engine_weight_score(item.adapters, registry)

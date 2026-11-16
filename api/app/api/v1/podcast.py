@@ -393,9 +393,9 @@ def _personal_owner() -> str:
 
 
 def _personal_prefix(owner: str) -> str:
-    # Pass 1 P2#2: 32 bits collide at ~77k owners (birthday bound) and the
-    # prefix is the ONLY tenant isolation for personal audio — widen to 128
-    # bits so cross-owner reads/single-flight hijack are infeasible.
+    # Pass 1 P2#2 (docs/29 P1-7): 32 bits collide at ~77k owners; the
+    # current 16 hex chars = 64 bits — safe against guessing for internal
+    # UUID owners (owner ids are never caller-chosen), not a secret per se.
     return f"personal-{hashlib.sha256(owner.encode('utf-8')).hexdigest()[:16]}"
 
 

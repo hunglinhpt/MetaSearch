@@ -10,9 +10,9 @@ Languages: [English](#english) · [Tiếng Việt](#tiếng-việt)
 > A multi-source search & quantitative analysis system for AI: **Meta-Search (SearXNG 70+ engines + 14 Vertical Engines) → Crawl & Extract → Dedup/Consensus/Rerank → Synthesize with `[n]` citations**, packaged as REST API + SSE Streaming + MCP Server + Automated Daily Briefings Blog + Web UI.
 
 
-Status: **v3.2.0 — 4-Repo AI Infrastructure Integration & 5-Pass Audit (`OmniRoute`, `headroom`, `one-skill-to-rule-them-all`, `claude-mem`; [docs/25](docs/25-llm-integration-evaluation.md)): multi-provider API key validation & health-aware failover routing (`/v1/llm/validate`, `/v1/llm/health`), structural/extractive context compression + KV-cache prefix alignment, 9 unified skills + `TaskObserver` (`/v1/skills`, `/v1/ops/skills`), and per-key episodic observations with 3-layer progressive disclosure REST & MCP tools; below: v3.1.0 — Lite Web UI on the API port + no-popup job runner + 2 P3 fixes**:
+Status: **v3.2.0 — 4-Repo AI Infrastructure Integration & 5-Pass Audit (`OmniRoute`, `headroom`, `one-skill-to-rule-them-all`, `claude-mem`; [docs/25](docs/25-llm-integration-evaluation.md)): multi-provider API key validation & health-aware failover routing (`/v1/llm/validate`, `/v1/llm/health`), structural/extractive context compression + KV-cache prefix alignment, 10 unified skills + `TaskObserver` (`/v1/skills`, `/v1/ops/skills`), and per-key episodic observations with 3-layer progressive disclosure REST & MCP tools; below: v3.1.0 — Lite Web UI on the API port + no-popup job runner + 2 P3 fixes**:
 
-- **v3.2.0 4-Repo AI Infra Integration (docs/25)**: Native in-repo (Lite-safe) integration of `OmniRoute` (17 `KEY_FORMAT_SPECS`, SSRF-safe live key probing via shared HTTP pool, `ProviderHealthTracker` + EWMA/breaker failover routing, `LLM_ALLOW_KEYLESS_FALLBACK=false`), `headroom` (`ContentRouter` + `SmartCrusher` + verbatim `SearchCompressor` with 4 skill-driven compression profiles + `CacheAligner` memory delimiters), `one-skill-to-rule-them-all` (9 unified skills + bounded `TaskObserver` telemetry, `GET /v1/skills`, `GET /v1/ops/skills`), and `claude-mem` (per-key `kind="observation"` distillation, bounded recall, 3-layer progressive disclosure `/v1/memory/search|timeline|observations` + 3 MCP tools). Hardened across 5 audit passes + 13 tests in `tests/test_phase4_ai_infra.py`; OpenAPI snapshot regenerated.
+- **v3.2.0 4-Repo AI Infra Integration (docs/25)**: Native in-repo (Lite-safe) integration of `OmniRoute` (17 `KEY_FORMAT_SPECS`, SSRF-safe live key probing via shared HTTP pool, `ProviderHealthTracker` + EWMA/breaker failover routing, `LLM_ALLOW_KEYLESS_FALLBACK=false`), `headroom` (`ContentRouter` + `SmartCrusher` + verbatim `SearchCompressor` with 4 skill-driven compression profiles + `CacheAligner` memory delimiters), `one-skill-to-rule-them-all` (10 unified skills + bounded `TaskObserver` telemetry, `GET /v1/skills`, `GET /v1/ops/skills`), and `claude-mem` (per-key `kind="observation"` distillation, bounded recall, 3-layer progressive disclosure `/v1/memory/search|timeline|observations` + 3 MCP tools). Hardened across 5 audit passes + 13 tests in `tests/test_phase4_ai_infra.py`; OpenAPI snapshot regenerated.
 - **v3.1.0 Lite Web UI + no-popup jobs + P3 fixes (docs/08 §Lite, docs/24 §8)**: Web UI static export (`npm run build:export` → `frontend/out`) được API mount tại `/` trên cùng cổng khi `SERVE_UI=true` — Lite còn một tiến trình duy nhất, UI ở `http://127.0.0.1:8000/`; watchdog chạy `-WindowStyle Hidden` và manager có mutex theo port nên không popup cửa sổ console hay chạy chồng (đã có thì bỏ qua), thêm `metasearch-lite.ps1 open`; `POST /v1/spaces/{slug}/graph/build` chuyển sang job nền 202 single-flight + `GET .../graph/status` (admit tier `kg`); fix tokenize tiếng Việt: stopword so trên token gốc trước khi fold nên "cổ phiếu"/"thị trường" không bị nuốt. Test mới `tests/test_v31_lite_ui.py` + graph job test; OpenAPI snapshot regen.
 - **v3.0.0 Wave P2 (docs/24, from docs/20 §4)**: P2-1 PDF page-level retrieval — pypdf extracts per-page text into `## p.N` markdown (scraper hook after the challenge-page check) + optional vision-embed API (`VISION_EMBED_API_BASE_URL`, dim-guarded) writing to the same `chunks.embedding` column; P2-2 per-Space knowledge graph (LightRAG-lite: `kg_nodes`/`kg_edges` alembic 0009 with unique constraints, `POST /v1/spaces/{slug}/graph/build|query`, entity-centric 1-hop queries); P2-3 vi-first — diacritic folding in `tokenize()` (default on) + extended VI stopwords + `evals/golden_v3_vi.json` (25 queries); P2-4 online interleaving — deterministic hash-bucketed variant per (query, owner), variant in the search cache key, treatment RRF weight, `GET /v1/ops/interleave` stats from explicit 👍/👎; P2-5 personalized podcast from the caller's watchlist (`/v1/podcast/personal*`, `personal-<hash>-<date>.mp3`, same retention); P2-6 structured JSON output (`response_format={json_schema}`, jsonschema-validated, errors reported never fabricated); P2-7 domain reputation tiers (official→unknown) feeding `domain_authority` and exposed as `domain_tier` on every search result. 43 new tests; OpenAPI snapshot regenerated.
 - **v2.6.0 Deep Intelligence wave P1 (docs/22, from docs/20 §4)**: IRCoT research loop (reformulate each hop from gathered evidence + coverage gate over planner sub-questions, `coverage` in SSE events); adaptive complexity router (heuristic, auto `deep=true` for multi-hop/comparative/long queries); late chunking for long docs (segment windows + `embed_many`, chunks inherit their segment's vector at persist time); hybrid dense+sparse chunk index (`chunks.tsv` tsvector on Postgres, `POST /v1/hybrid` RRF-fused at chunk level); per-key memory (Mem0-lite: `/v1/memory` CRUD, 👍/👎 feedback aggregated into domain boosts, `DELETE` wipes all — privacy); Spaces (`/v1/spaces` + `space=<slug>` on search/answer, domain scope post-cache + pinned-URL boosts); `POST /v1/map` + `POST /v1/crawl` for agents (sitemap-first, same-host BFS through the guarded scraper, defusedxml, persisted into the index); configurable freshness half-lives (news unchanged, non-news 45d). 38 new tests; OpenAPI snapshot regenerated.
@@ -56,7 +56,7 @@ Status: **v3.2.0 — 4-Repo AI Infrastructure Integration & 5-Pass Audit (`OmniR
 - **Universal Multi-Domain Deep Intelligence**: deep domain assessment across verticals with **Finance & Financial-Statement Forensics (`financial`)** as the **flagship pilot** plus 7 packs (`biomedical_health`, `technology_ai`, `academic_research`, `legal_macro_policy`, `eastern_metaphysics`, `news_geopolitics`, `general_discovery`).
 - **Industry-Specific Financial Forensics (`financial_forensics.py`)**: branch by industry — **Banking (CAMELS / Basel II-III: CAR, NPL, Group-2 loans, LLR, NIM, CASA, LDR, CIR)**, **Brokerage (Margin/collateral vs 200% cap, FVTPL/HTM/AFS, capital adequacy)**, **Real Estate & Industrial Parks (advances from buyers / unbilled, inventory/assets)**, **Manufacturing (debt structure, DSO, CFO/Net Income)** plus **Altman Z-Score**, **Beneish M-Score**, **Piotroski F-Score (9 criteria)**.
 - **Quantitative Technical Analysis (`technical_analysis.py`)**: **Fibonacci Retracement & Golden Pocket (`61.8%–65.0%`) + Extensions (`127.2%`, `261.8%`)**, **Ichimoku Kinko Hyo (Tenkan/Kijun/Senkou A-B/Chikou Span)**, **true EMA-based MACD**, **Wilder's RSI & 2x ATR Trailing Stop**, **Stochastic (`%K`, `%D`)**, **Multi-EMA Ribbon (`20/50/200`)**, **linear regression channel ±2σ ($R^2$)**, **8 chart patterns**, and a **Custom Indicator Query Parser** (`RSI 9`, `MACD 8 21 5`, `Bollinger 15 2.5`...).
-- **Strict Pre-Commit & Release Process**: the mandatory `.githooks/pre-commit` hook blocks any commit that fails a gate (lockfile check runs first); **881 backend tests + 49 frontend tests (vitest) PASS**, `ruff` 0 issues, `bandit` 0 security issues, clean Next.js 15 build, CI 13/13 jobs green across 3 OS. Full design in [docs/](docs/), detailed plan in [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
+- **Strict Pre-Commit & Release Process**: the mandatory `.githooks/pre-commit` hook blocks any commit that fails a gate (lockfile check runs first); **1095 backend tests + 107 frontend tests (vitest) PASS**, `ruff` 0 issues, `bandit` 0 security issues, clean Next.js 15 build, CI 13/13 jobs green across 3 OS. Full design in [docs/](docs/), detailed plan in [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
 
 ---
 
@@ -69,7 +69,7 @@ Status: **v3.2.0 — 4-Repo AI Infrastructure Integration & 5-Pass Audit (`OmniR
 | Stock analysis that only reads raw ratios (P/E, ROE) | **Industry-specific financial forensics** (banking CAMELS, brokerage margin/FVTPL, real-estate unbilled bookings, Altman Z, Beneish M, Piotroski F) combined with **quantitative technicals** (Fibonacci Golden Pocket, Ichimoku Cloud, true EMA MACD, Wilder's RSI/ATR, ±2σ regression channel, 8 chart patterns) |
 | Web content full of HTML/JS/ads/CAPTCHA junk | Extraction pipeline (`trafilatura` → `crawl4ai` → `Jina Reader`) with SSRF IP-pinning & anti-challenge escalation turns any URL into **clean LLM-ready Markdown** |
 | Duplicated, irrelevant results | Canonical URL + 64-bit SimHash dedup → consensus scoring + curated domain authority → **heuristic-first rerank (0 ms)**, optional int8 ONNX or API rerank |
-| AI agents need a search tool | **MCP Server** with 4 tools: `web_search`, `web_scrape`, `web_search_and_scrape`, `deep_research` (stdio + HTTP) |
+| AI agents need a search tool | **MCP Server** with 9 tools: `web_search`, `web_scrape`, `web_search_and_scrape`, `deep_research`, `research_status`, `memory_search`, `memory_timeline`, `memory_get_observations`, `equity_sentiment` (stdio + HTTP) |
 | Monthly search API costs | Self-host SearXNG or run the **Lite Profile** (keyless DuckDuckGo + SQLite + keyless Jina) = **$0 for search**, API ~100 MB RAM |
 
 ## 2. Architecture on one page
@@ -84,7 +84,7 @@ flowchart LR
 
     subgraph Interface["Interface Layer"]
         API[FastAPI Gateway<br/>REST + SSE + RBAC]
-        MCP[MCP Server<br/>FastMCP 4 Tools]
+        MCP[MCP Server<br/>FastMCP 9 Tools]
     end
 
     subgraph Orchestration["Orchestration Layer"]
@@ -96,7 +96,7 @@ flowchart LR
     end
 
     subgraph Retrieval["Retrieval & Quantitative Layer"]
-        SA[19 Search Adapters<br/>SearXNG · DDG · Tavily · Serper · Brave<br/>VietStock · Stooq · YahooFin · SEC<br/>arXiv · PubMed · S2 · GitHub · HF · SO · Reddit · Wiki · News · FengShui]
+        SA[26 Search Adapters<br/>SearXNG · DDG · Tavily · Serper · Brave<br/>VietStock · Stooq · YahooFin · SEC<br/>arXiv · PubMed · S2 · GitHub · HF · SO · Reddit · Wiki · News · FengShui]
         QUANT[Financial Forensics & Technicals<br/>CAMELS · Altman Z · Beneish M · Piotroski F<br/>Fibonacci · Ichimoku · MACD · Wilder RSI/ATR]
         MG[Merger<br/>dedup · SimHash · consensus · diversity]
         SC[Scraper Pool<br/>trafilatura · crawl4ai · Jina]
@@ -144,17 +144,21 @@ cp ../deploy/.env.lite.example .env   # DuckDuckGo keyless + SQLite + Jina keyle
 ```bash
 git clone https://github.com/hunglinhpt/MetaSearch.git
 cd MetaSearch
-cp deploy/.env.example .env          # fill in LLM_API_KEY
+cp deploy/.env.example deploy/.env   # compose reads .env from deploy/ (NOT repo root)
 docker compose -f deploy/docker-compose.yml up -d
 # SearXNG   : http://localhost:8080
 # API       : http://localhost:8000/docs
 # Web UI    : http://localhost:3000
 
+# compose enforces AUTH_ENABLED=true - create a key first (from api/ after `uv sync`):
+.venv/Scripts/metasearch keys create   # prints an msk_... key
+
 curl -X POST http://localhost:8000/v1/search \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer msk_YOUR_NEW_KEY" \
   -d '{"query": "Phan tich BCCT phap y va ky thuat Fibonacci Ichimoku co phieu FPT RSI 9", "lang": "vi"}'
 
-# CLI
+# CLI (from api/ with the venv active)
 metasearch search "Phan tich co phieu FPT va VCB"
 metasearch answer "Phan tich co phieu FPT va VCB" --stream
 ```
@@ -167,7 +171,7 @@ Web UI: open `http://localhost:3000` — pick a category (Finance & Stocks, News
 MetaSearch/
 ├── README.md                  ← this file — bilingual (English + Tiếng Việt in one file)
 ├── AGENTS.md                  ← agent onboarding guide (status, conventions, checklist)
-├── CHANGELOG.md               ← version history (Keep a Changelog — current v2.4.0)
+├── CHANGELOG.md               ← version history (Keep a Changelog — current v3.2.0)
 ├── CONTRIBUTING.md            ← setup + workflow + gates guideline
 ├── docs/                      ← detailed design (16 documents + ADRs)
 │   ├── 01-product-requirements.md
@@ -202,12 +206,12 @@ MetaSearch/
 │   │   ├── retrieval/         ← 26 adapters, financial_forensics.py, technical_analysis.py, registry, merger, scoring, simhash, reranker
 │   │   ├── extraction/        ← ssrf, pinning, robots, scraper (trafilatura→crawl4ai→jina), chunker
 │   │   ├── orchestration/     ← pipeline (search+answer), research (Harness² 8 profiles), research_jobs, scheduler (Daily Briefings), persist, engine_store
-│   │   ├── mcp/               ← FastMCP server + REST client (4 tools, stdio + HTTP)
+│   │   ├── mcp/               ← FastMCP server + REST client (9 tools, stdio + HTTP)
 │   │   └── llm/               ← gateway streaming, prompts, citations, embeddings, tokens, langfuse
 │   ├── alembic/versions/      ← migrations (Postgres + pgvector / SQLite auto-bootstrap)
-│   ├── evals/golden.json      ← 40 golden evaluation queries across domains (EN + VI)
+│   ├── evals/golden.json      ← 46 golden evaluation queries across domains (EN + VI)
 │   ├── scripts/               ← eval_run.py (--judge-faithfulness) + perf_load.py
-│   ├── tests/                 ← 881 tests (integration gated by METASEARCH_INTEGRATION=1)
+│   ├── tests/                 ← 1095 tests (integration gated by METASEARCH_INTEGRATION=1)
 │   └── pyproject.toml
 ├── frontend/                  ← Next.js 15 + React 19 (streaming Web UI + category chips + News tab + TTS + blog reader)
 │   ├── app/ · lib/api.ts      ← SSE client + ApiError + Digests API + safeHref
@@ -324,7 +328,7 @@ Trạng thái: **v3.2.0 — Tích hợp 4-Repo AI Infra & 5-pass audit (`OmniRou
 - **Kiến Trúc Universal Multi-Domain Deep Intelligence**: Khả năng thẩm định bản chất chuyên sâu đa lĩnh vực với **Tài chính & Pháp y BCTC (`financial`)** giữ vai trò **Flagship Pilot** cùng 7 gói chuyên sâu (`biomedical_health`, `technology_ai`, `academic_research`, `legal_macro_policy`, `eastern_metaphysics`, `news_geopolitics`, `general_discovery`).
 - **Thẩm Định Pháp Y BCTC Chuyên Sâu (`financial_forensics.py`)**: Phân nhánh theo đặc thù ngành — **Ngân hàng (CAMELS / Basel II-III: CAR, NPL, Nợ nhóm 2, LLR, NIM, CASA, LDR, CIR)**, **Chứng khoán (Margin/VCSH so với trần 200%, FVTPL/HTM/AFS, Tỷ lệ an toàn tài chính)**, **Bất động sản & KCN (Người mua trả tiền trước / Của để dành, Tồn kho/Tài sản)**, **Sản xuất (Cấu trúc nợ, DSO, CFO/Net Income)** kèm **Altman Z-Score**, **Beneish M-Score**, **Piotroski F-Score (9 tiêu chí)**.
 - **Phân Tích Kỹ Thuật Định Lượng (`technical_analysis.py`)**: **Fibonacci Retracement & Golden Pocket (`61.8%–65.0%`) + Extensions (`127.2%`, `261.8%`)**, **Ichimoku Kinko Hyo (Tenkan/Kijun/Senkou A-B/Chikou Span)**, **True EMA-based MACD**, **Wilder's RSI & 2x ATR Trailing Stop**, **Stochastic (`%K`, `%D`)**, **Multi-EMA Ribbon (`20/50/200`)**, **Kênh hồi quy tuyến tính $\pm 2\sigma$ ($R^2$)**, **8 mẫu hình giá/nến**, và **Custom Indicator Query Parser** (`RSI 9`, `MACD 8 21 5`, `Bollinger 15 2.5`...).
-- **Quy Trình Pre-Commit & Release Nghiêm Ngặt**: Cưỡng chế bắt buộc hook `.githooks/pre-commit` chặn mọi commit nếu trượt bất kỳ kiểm định nào (kiểm tra `uv.lock` trước tiên); **881 backend tests + 49 frontend tests (vitest) PASS**, `ruff` 0 lỗi, `bandit` 0 lỗi bảo mật, Next.js 15 build sạch, CI 13/13 jobs xanh trên 3 OS. Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
+- **Quy Trình Pre-Commit & Release Nghiêm Ngặt**: Cưỡng chế bắt buộc hook `.githooks/pre-commit` chặn mọi commit nếu trượt bất kỳ kiểm định nào (kiểm tra `uv.lock` trước tiên); **1095 backend tests + 107 frontend tests (vitest) PASS**, `ruff` 0 lỗi, `bandit` 0 lỗi bảo mật, Next.js 15 build sạch, CI 13/13 jobs xanh trên 3 OS. Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
 
 ---
 
@@ -352,7 +356,7 @@ flowchart LR
 
     subgraph Interface["Interface Layer"]
         API[FastAPI Gateway<br/>REST + SSE + RBAC]
-        MCP[MCP Server<br/>FastMCP 4 Tools]
+        MCP[MCP Server<br/>FastMCP 9 Tools]
     end
 
     subgraph Orchestration["Orchestration Layer"]
@@ -364,7 +368,7 @@ flowchart LR
     end
 
     subgraph Retrieval["Retrieval & Quantitative Layer"]
-        SA[19 Search Adapters<br/>SearXNG · DDG · Tavily · Serper · Brave<br/>VietStock · Stooq · YahooFin · SEC<br/>arXiv · PubMed · S2 · GitHub · HF · SO · Reddit · Wiki · News · FengShui]
+        SA[26 Search Adapters<br/>SearXNG · DDG · Tavily · Serper · Brave<br/>VietStock · Stooq · YahooFin · SEC<br/>arXiv · PubMed · S2 · GitHub · HF · SO · Reddit · Wiki · News · FengShui]
         QUANT[Financial Forensics & Technicals<br/>CAMELS · Altman Z · Beneish M · Piotroski F<br/>Fibonacci · Ichimoku · MACD · Wilder RSI/ATR]
         MG[Merger<br/>dedup · SimHash · consensus · diversity]
         SC[Scraper Pool<br/>trafilatura · crawl4ai · Jina]
@@ -412,14 +416,18 @@ cp ../deploy/.env.lite.example .env   # DuckDuckGo keyless + SQLite + Jina keyle
 ```bash
 git clone https://github.com/hunglinhpt/MetaSearch.git
 cd MetaSearch
-cp deploy/.env.example .env          # điền LLM_API_KEY
+cp deploy/.env.example deploy/.env   # compose đọc .env trong deploy/ (KHÔNG phải root repo)
 docker compose -f deploy/docker-compose.yml up -d
 # SearXNG   : http://localhost:8080
 # API       : http://localhost:8000/docs
 # Web UI    : http://localhost:3000
 
+# compose ép AUTH_ENABLED=true - tạo key trước (từ api/ sau `uv sync`):
+.venv/Scripts/metasearch keys create   # in ra key msk_...
+
 curl -X POST http://localhost:8000/v1/search \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer msk_KEY_MOI_TAO" \
   -d '{"query": "Phân tích BCTC pháp y và kỹ thuật Fibonacci Ichimoku cổ phiếu FPT RSI 9", "lang": "vi"}'
 
 # CLI
@@ -435,7 +443,7 @@ Web UI: mở `http://localhost:3000` — chọn chuyên mục (Tài chính & C�
 MetaSearch/
 ├── README.md                  ← bạn đang ở đây
 ├── AGENTS.md                  ← hướng dẫn AI agent nhận việc (trạng thái, quy ước, checklist)
-├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — hiện tại v2.2.0)
+├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — hiện tại v3.2.0)
 ├── CONTRIBUTING.md            ← guideline setup + workflow + gate
 ├── docs/                      ← thiết kế chi tiết (16 tài liệu + ADR)
 │   ├── 01-product-requirements.md
@@ -470,12 +478,12 @@ MetaSearch/
 │   │   ├── retrieval/         ← 26 adapters, financial_forensics.py, technical_analysis.py, registry, merger, scoring, simhash, reranker
 │   │   ├── extraction/        ← ssrf, pinning, robots, scraper (trafilatura→crawl4ai→jina), chunker
 │   │   ├── orchestration/     ← pipeline (search+answer), research (Harness² 8 profiles), research_jobs, scheduler (Daily Briefings), persist, engine_store
-│   │   ├── mcp/               ← FastMCP server + REST client (4 tools, stdio + HTTP)
+│   │   ├── mcp/               ← FastMCP server + REST client (9 tools, stdio + HTTP)
 │   │   └── llm/               ← gateway streaming, prompts, citations, embeddings, tokens, langfuse
 │   ├── alembic/versions/      ← migrations (Postgres + pgvector / SQLite auto-bootstrap)
-│   ├── evals/golden.json      ← 40 golden evaluation queries đa miền (EN + VI)
+│   ├── evals/golden.json      ← 46 golden evaluation queries đa miền (EN + VI)
 │   ├── scripts/               ← eval_run.py (--judge-faithfulness) + perf_load.py
-│   ├── tests/                 ← 881 tests (integration gated bằng METASEARCH_INTEGRATION=1)
+│   ├── tests/                 ← 1095 tests (integration gated bằng METASEARCH_INTEGRATION=1)
 │   └── pyproject.toml
 ├── frontend/                  ← Next.js 15 + React 19 (Web UI streaming + Category Chips + News tab + TTS + Blog Reader)
 │   ├── app/ · lib/api.ts      ← SSE client + ApiError + Digests API + safeHref
@@ -505,7 +513,7 @@ MetaSearch/
 | [08 Deployment](docs/08-deployment.md) | Lite profile (không Docker) vs Docker Compose dev 16GB / prod VPS? |
 | [09 Observability & Eval](docs/09-observability-eval.md) | Trace/metrics/log, eval 40 golden queries + faithfulness judge? |
 | [10 Security & Compliance](docs/10-security-compliance.md) | SSRF IP-pinning, RBAC admin, robots.txt, rate limit, secrets? |
-| [11 Testing Strategy](docs/11-testing-strategy.md) | Test strategy, 900+ backend + 49 frontend tests, golden set, đo citation accuracy? |
+| [11 Testing Strategy](docs/11-testing-strategy.md) | Test strategy, 1095 backend + 107 frontend tests, golden set, đo citation accuracy? |
 | [12 Roadmap & Plan](docs/12-roadmap-plan.md) | **Plan chi tiết Phase 0–5, KPI, rủi ro & mitigation, trạng thái các version sau v2.0.0** |
 | [13 Versioning & Release](docs/13-versioning-and-release.md) | **Quy chuẩn SemVer, Quality Gates, script release tự động & CI/CD** |
 | [15 FA Sources Plan](docs/15-fa-sources-plan.md) | 21 nguồn dữ liệu tài chính VN đã thẩm định; adapter trực tiếp SSI/TCBS/FireAnt, `FAAggregator` cross-validate (v2.1.0)? |

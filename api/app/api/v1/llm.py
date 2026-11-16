@@ -481,7 +481,9 @@ async def test_llm_connection(request: LLMTestRequest, raw_request: Request) -> 
             "provider": target.provider,
             "model": model,
             "base_url": target.base_url,
-            "error": str(exc),
+            # docs/29 P1-6: LLMError can embed provider response bodies and
+            # base URLs - surface the class, keep detail in logs.
+            "error": type(exc).__name__,
             "latency_ms": latency_ms,
         }
 

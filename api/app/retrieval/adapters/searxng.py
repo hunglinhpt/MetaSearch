@@ -7,6 +7,8 @@ transport errors (per docs/12-roadmap-plan.md Phase 1).
 
 from __future__ import annotations
 
+import asyncio
+import random
 from datetime import UTC, datetime
 from typing import Any
 
@@ -149,7 +151,10 @@ class SearXNGAdapter:
         except AdapterError as first:
             if not first.retryable:
                 raise
-            # Roadmap Phase 1: exactly one retry on transient failures.
+            # Roadmap Phase 1: exactly one retry on transient failures —
+            # with a short jittered pause (docs/29 P3-1, audit B#14) so a
+            # struggling SearXNG is not hit again instantly.
+            await asyncio.sleep(random.uniform(0.15, 0.4))  # nosec B311 - backoff timing
             try:
                 payload = await self._fetch(params, timeout_s)
             except AdapterError:

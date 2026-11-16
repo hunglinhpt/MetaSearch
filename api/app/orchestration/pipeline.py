@@ -1139,7 +1139,7 @@ class AnswerPipeline:
         use_council = council_mode or bool(council_endpoints) or self.settings.llm_council_enabled
 
         replay = (
-            await self._cache_hit(params, effective_model)
+            await self._cache_hit(params, effective_model, domain=domain)
             if (llm_override is None and not use_council)
             else None
         )
@@ -1586,6 +1586,7 @@ class AnswerPipeline:
                     citations_payload,
                     sources,
                     follow_ups=follow_ups,
+                    domain=domain,
                 )
             except Exception as exc:
                 logger.warning("answer_cache_store_failed", error=type(exc).__name__)
@@ -1869,7 +1870,9 @@ class AnswerPipeline:
 
     # -- answer cache (L1 + L2) ---------------------------------------------
 
-    async def _cache_hit(self, params: SearchParams, model: str) -> AsyncIterator[Event] | None:
+    async def _cache_hit(
+        self, params: SearchParams, model: str, *, domain: str = "auto"
+    ) -> AsyncIterator[Event] | None:
         """Return a replay generator when L1 or L2 has a fresh answer."""
         if _has_domain_filter(params):
             return None  # the answer cache is keyed without domain filters
@@ -1892,6 +1895,10 @@ class AnswerPipeline:
                     news=params.news,
                     deep=params.deep,
                     personalization=pers,
+                    # docs/29 P1-3 (audit B#5): domain changes the system
+                    # prompt + compression profile — a domain-less key would
+                    # replay a finance-rubric answer for a legal query.
+                    domain=domain,
                 )
             )
             if payload and payload.get("answer_md"):
@@ -1958,6 +1965,7 @@ class AnswerPipeline:
         citations: list[dict],
         sources: list[dict],
         follow_ups: list[str] | None = None,
+        domain: str = "auto",
     ) -> None:
         if self.cache is None or not answer_md or _has_domain_filter(params):
             return
@@ -1992,6 +2000,7 @@ class AnswerPipeline:
                 news=params.news,
                 deep=params.deep,
                 personalization=pers,
+                domain=domain,
             ),
             {
                 "answer_id": str(answer_id),

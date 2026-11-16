@@ -996,10 +996,12 @@ async def test_answer_cache_looked_up_once_per_miss(monkeypatch):
     calls = 0
     real = AnswerPipeline._cache_hit
 
-    async def counting(self, params, model):
+    async def counting(self, params, model, **kwargs):
+        # docs/29 P1-3: _cache_hit now takes keyword ``domain`` — the double
+        # must accept it to keep stubbing the real signature.
         nonlocal calls
         calls += 1
-        return await real(self, params, model)
+        return await real(self, params, model, **kwargs)
 
     monkeypatch.setattr(AnswerPipeline, "_cache_hit", counting)
     async for _ in deps.get_answer_pipeline().run(SP(query="postgres once")):

@@ -236,9 +236,17 @@ async def _sse(
             raise
         except MetaSearchError as exc:
             await queue.put(("error", {"code": exc.code.value, "message": exc.message}))
-        except Exception as exc:
+        except Exception:
+            # docs/29 P1-6: raw exception text can embed driver/URL detail -
+            # clients get the stable envelope, the detail stays in logs.
             await queue.put(
-                ("error", {"code": ErrorCode.INTERNAL.value, "message": str(exc)[:200]})
+                (
+                    "error",
+                    {
+                        "code": ErrorCode.INTERNAL.value,
+                        "message": "Internal error while streaming the answer.",
+                    },
+                )
             )
         finally:
             await queue.put(None)

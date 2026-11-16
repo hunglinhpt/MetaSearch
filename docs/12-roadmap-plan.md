@@ -63,7 +63,7 @@
 > Ghi chú triển khai: LLM gateway streaming qua httpx thuần (OpenAI-compatible + Anthropic), không thêm SDK; persist best-effort fire-and-forget (không bao giờ fail request); rerank heuristic-first để sẵn trong `scoring.heuristic_chunk_score`.
 
 ### Phase 2 — Quality & UI (tuần 3–4) — ✅ HOÀN TẤT
-- [x] Rerank heuristic-first (0ms) + tuỳ chọn int8 ONNX (`RERANKER=onnx`, lazy-load, `RERANKER_ONNX_DIR`) + tuỳ chọn Jina API (`RERANKER=api`) + fallback giữ thứ tự heuristic khi lỗi/thiếu dependency
+- [x] Rerank heuristic-first (0ms) + tuỳ chọn int8 ONNX (`RERANKER=onnx`, lazy-load, `ONNX_RERANKER_DIR`) + tuỳ chọn Jina API (`RERANKER=api`) + fallback giữ thứ tự heuristic khi lỗi/thiếu dependency
 - [x] Cache L1 Redis (exact): `sr:` search 30m (news 15m), `an:` answer 2h, `pg:` page 12h + L2 semantic (pgvector, cosine > 0.92, chỉ answer, replay có citation) + negative cache Redis (fallback in-memory khi Redis chết)
 - [x] Engine health tracking (window/phút) + auto-disable sau 3 lỗi liên tiếp + recovery probe mỗi 5 phút (worker) + `PATCH /v1/engines/{id}` hot config (Postgres-backed, fallback in-memory khi DB chết) + `GET /v1/engines/health`
 - [x] SSE events đầy đủ (`status`, `engine_done`, `sources`, `token`, `citations`, `done`) — có từ Phase 1, kiểm chứng thêm event `cached`

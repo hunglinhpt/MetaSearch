@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -482,7 +483,12 @@ class LLMGateway:
                     seen_pairs.discard(pair)  # allow the same pair again
                     candidates.appendleft((cand_target, cand_model))
                 if candidates and attempts < max_attempts:
-                    sleep_s = min(exc.retry_after_s or 0.5, 30.0)
+                    # docs/29 P3-1 (audit B#13): exponential growth with
+                    # uniform jitter so a fleet of 429s does not wake in
+                    # lockstep; Retry-After stays the floor.
+                    backoff = 0.5 * (2**attempts)
+                    jitter = random.uniform(0.8, 1.2)  # nosec B311 - backoff timing, not crypto
+                    sleep_s = min(exc.retry_after_s or (backoff * jitter), 30.0)
                     if req_budget is not None:
                         sleep_s = min(sleep_s, max(0.0, req_budget.remaining()))
                     if sleep_s > 0:
