@@ -212,7 +212,13 @@ def test_stealth_accumulation_and_insufficient_data_grounding() -> None:
     assert empty_out["sentiment_summary"]["confidence"] < 0.2
     assert empty_out["sentiment_summary"]["market_regime"] == "LOW_SIGNAL_NOISE"
     assert empty_out["top_verified_drivers"] == []
-    assert empty_out["risk_circuit_breakers"] == ["INSUFFICIENT_DATA"]
+    # docs/29 ISSUE-4: the zero-evidence payload now flags itself explicitly
+    assert empty_out["risk_circuit_breakers"] == [
+        "INSUFFICIENT_DATA",
+        "ZERO_EVIDENCE_DEFAULT_PAYLOAD",
+    ]
+    assert empty_out["hits_retrieved"] == 0
+    assert empty_out["hits_after_collision_filter"] == 0
 
     # Stealth accumulation: Tier 1/2 institutional buying + quiet/skeptical social
     stealth_hits = [
