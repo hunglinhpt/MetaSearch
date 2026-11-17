@@ -865,7 +865,9 @@ class SearchPipeline:
                     outcome = Outcome.TIMEOUT
 
                 self.health_registry.record(cfg.id, outcome, retry_after_s=retry_after_s)
-                await self.registry.store.record_result(cfg.id, ok=False, latency_ms=ms)
+                await self.registry.store.record_result(
+                    cfg.id, ok=False, latency_ms=ms, outcome=str(outcome.value)
+                )
                 if self.health_writer:
                     self.health_writer.record(cfg.id, ok=False, latency_ms=ms)
                 if on_event:
@@ -880,7 +882,11 @@ class SearchPipeline:
 
             outcome = Outcome.EMPTY if len(results) == 0 else Outcome.OK
             self.health_registry.record(cfg.id, outcome)
-            await self.registry.store.record_result(cfg.id, ok=True, latency_ms=ms)
+            # docs/29 ISSUE-2: the sliding window needs the outcome kind
+            # (SUCCESS/EMPTY/TIMEOUT/ERROR/...) not just the ok boolean.
+            await self.registry.store.record_result(
+                cfg.id, ok=True, latency_ms=ms, outcome=str(outcome.value)
+            )
             if self.health_writer:
                 self.health_writer.record(cfg.id, ok=True, latency_ms=ms)
 

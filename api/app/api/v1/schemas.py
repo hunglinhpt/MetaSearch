@@ -56,6 +56,9 @@ class FaSymbolResult(BaseModel):
     source_urls: list[str] = Field(default_factory=list)
     as_of: str | None = None
     published_at: str | None = None
+    # docs/29 ISSUE-3: True when every fundamentals source was dead/disabled
+    # so the empty payload is an infrastructure signal, not a ticker fact.
+    all_sources_unavailable: bool = False
 
 
 class FaCompareResponse(BaseModel):
@@ -415,6 +418,11 @@ class MarketSentimentResponse(BaseModel):
     social_integrity_audit: SocialIntegrityAuditOut
     top_verified_drivers: list[VerifiedDriverOut] = Field(default_factory=list)
     risk_circuit_breakers: list[str] = Field(default_factory=list)
+    # docs/29 ISSUE-4: cross-ticker isolation telemetry — lets operators tell
+    # "search dead / collision-filtered" (identical degenerate payloads) from
+    # "genuinely neutral" per-ticker measurements.
+    hits_retrieved: int = 0
+    hits_after_collision_filter: int = 0
 
 
 # --- v2.3.0 watchlist (docs/18 C) ----------------------------------------------

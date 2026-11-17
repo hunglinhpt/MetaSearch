@@ -1508,6 +1508,11 @@
       },
       "FaSymbolResult": {
         "properties": {
+          "all_sources_unavailable": {
+            "default": false,
+            "title": "All Sources Unavailable",
+            "type": "boolean"
+          },
           "as_of": {
             "anyOf": [
               {
@@ -3410,6 +3415,16 @@
           },
           "entity": {
             "$ref": "#/components/schemas/SentimentEntityOut"
+          },
+          "hits_after_collision_filter": {
+            "default": 0,
+            "title": "Hits After Collision Filter",
+            "type": "integer"
+          },
+          "hits_retrieved": {
+            "default": 0,
+            "title": "Hits Retrieved",
+            "type": "integer"
           },
           "module": {
             "const": "omni_channel_equity_sentiment_v2",

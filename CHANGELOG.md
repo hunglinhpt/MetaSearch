@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed — 4 Production Defects (ddg degradation, sliding-window alerting, empty fa/compare, cross-ticker sentiment bleed)
+
+- **ddg engine degradation (`api/app/retrieval/adapters/ddg.py`)**: per-call User-Agent rotation from a realistic desktop pool; ONE jittered retry on transient failures (transport/timeout/5xx) with bot-blocks (202/403/429/challenge) never retried; tolerant snippet regex so a DOM change degrades snippets instead of silently zeroing whole result rows; a 200-with-zero-parsable-rows now logs `ddg_parse_zero_rows_dom_changed`.
+- **Sliding-window engine health alerting (`api/app/orchestration/engine_store.py`, `api/app/api/v1/engines.py`, `api/app/orchestration/pipeline.py`)**: per-engine ring buffer (`deque(maxlen=10)`) recording (ts, ok, outcome) for every dispatch — `record_result` now carries the outcome kind (`ok`/`empty`/`timeout`/`upstream_error`/`blocked`/`rate_limited`); `GET /v1/engines/health` exposes `recent_window` per engine with `degraded` alerting (consecutive failures >= 3, or failure_rate >= 0.5 over >= 5 dispatches) and automatic recovery as fresh successes slide old failures out.
+- **`fa/compare` empty payloads for valid tickers (`api/app/retrieval/fa_sources/simplize.py`, `api/app/retrieval/fa_sources/__init__.py`, `api/app/api/v1/market.py`, `api/app/api/v1/schemas.py`)**: registered a new `SimplizeFASource` (keyless VN fundamentals — pe/pb/roe/market_cap; the only fundamentals source live from project egress per docs/15 §10) so HQC/FPT merge real ratios again; an empty payload with zero sources now carries `all_sources_unavailable: true` + a WARNING log instead of a silent 200.
+- **`market/sentiment` identical metrics across tickers (`api/app/retrieval/sentiment.py`, `api/app/api/v1/market.py`)**: the zero-evidence terminal payload now flags itself (`ZERO_EVIDENCE_DEFAULT_PAYLOAD` breaker) and carries `hits_retrieved` / `hits_after_collision_filter` telemetry on every payload shape; VN tickers default to per-ticker VNDIRECT quant (`fetch_market_data` server-side ORs `entity.is_vietnam`) so HQC vs FPT diverge on real per-ticker OHLCV instead of converging on a shared market-wide template.
+- **15 verification tests** (`api/tests/test_v29_production_defects.py`) — window slide/recovery, outcome-kind cap, UA rotation, bot-block no-retry, transient retry, Simplize per-symbol fields, registration, honest empty flag, fan-out/cache-key per-ticker divergence, zero-evidence self-flagging, distinct per-ticker scores.
+
 ## [3.3.0] - 2026-11-17
 
 ### Added & Hardened — 5-Proposal Feature & CI Convergence + 3-Round Adversarial Audit

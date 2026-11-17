@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -32,6 +33,13 @@ from app.db.session import get_sessionmaker, sqlite_write_lock
 from app.retrieval.models import EngineConfig
 
 logger = get_logger(__name__)
+
+# docs/29 ISSUE-2: sliding-window health alerting — the last N dispatched
+# requests per engine drive "degraded" alerts (fresh failures trigger
+# promptly; recovery is automatic as new successes push old ones out).
+_SLIDING_WINDOW_SIZE = 10
+_SLIDING_ALERT_CONSECUTIVE = 3
+_SLIDING_ALERT_RATE = 0.5
 
 # import path stored in the engines.adapter column (docs/03 §2)
 ADAPTER_PATHS = {
@@ -79,9 +87,17 @@ class EngineHealthSummary:
 class EngineStore(Protocol):
     async def snapshot(self) -> dict[str, EngineConfig]: ...
     async def update(self, engine_id: str, fields: dict[str, Any]) -> EngineConfig | None: ...
-    async def record_result(self, engine_id: str, *, ok: bool, latency_ms: int) -> None: ...
+    async def record_result(
+        self,
+        engine_id: str,
+        *,
+        ok: bool,
+        latency_ms: int,
+        outcome: str | None = None,
+    ) -> None: ...
     async def health(self) -> dict[str, EngineHealthSummary]: ...
     async def auto_disabled(self) -> list[str]: ...
+    async def recent_windows(self) -> dict[str, dict[str, Any]]: ...
 
 
 def default_configs(settings: Settings) -> dict[str, EngineConfig]:
@@ -406,6 +422,9 @@ class InMemoryEngineStore:
         self._configs: dict[str, EngineConfig] = dict(configs)
         self._failures: dict[str, int] = {}
         self._windows: dict[str, dict[str, int]] = {}
+        # docs/29 ISSUE-2: sliding window of the last 10 dispatched requests
+        # per engine — (timestamp, ok, outcome) ring buffer for alerting.
+        self._recent: dict[str, deque[tuple[float, bool, str | None]]] = {}
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> InMemoryEngineStore:
@@ -435,13 +454,60 @@ class InMemoryEngineStore:
         self._configs[engine_id] = updated
         return updated
 
-    async def record_result(self, engine_id: str, *, ok: bool, latency_ms: int) -> None:
+    async def record_result(
+        self,
+        engine_id: str,
+        *,
+        ok: bool,
+        latency_ms: int,
+        outcome: str | None = None,
+    ) -> None:
         window = self._windows.setdefault(engine_id, {"calls": 0, "successes": 0, "failures": 0})
         window["calls"] += 1
         window["successes" if ok else "failures"] += 1
 
         consecutive = 0 if ok else self._failures.get(engine_id, 0) + 1
         self._failures[engine_id] = consecutive
+
+        # docs/29 ISSUE-2: sliding window of the last 10 dispatched requests
+        # per engine (async-safe — single event loop, deque appends are
+        # atomic enough; maxlen auto-drops the oldest entry).
+        recent = self._recent.setdefault(engine_id, deque(maxlen=_SLIDING_WINDOW_SIZE))
+        recent.append((time.time(), ok, outcome))
+
+    async def recent_windows(self) -> dict[str, dict[str, Any]]:
+        """Rolling last-10 telemetry per engine with an alert flag.
+
+        ``degraded`` fires on consecutive_failures >= 3 within the window,
+        or failure_rate >= 0.5 once at least 5 requests are in the window —
+        recovery is automatic: 10 fresh successes push the failures out.
+        """
+        out: dict[str, dict[str, Any]] = {}
+        for engine_id, recent in self._recent.items():
+            entries = list(recent)
+            total = len(entries)
+            failures = sum(1 for _ts, ok, _o in entries if not ok)
+            consecutive = 0
+            for _ts, ok, _o in reversed(entries):
+                if ok:
+                    break
+                consecutive += 1
+            empty_count = sum(1 for _ts, _ok, outcome in entries if outcome == "empty")
+            failure_rate = round(failures / total, 4) if total else 0.0
+            degraded = consecutive >= _SLIDING_ALERT_CONSECUTIVE or (
+                total >= 5 and failure_rate >= _SLIDING_ALERT_RATE
+            )
+            out[engine_id] = {
+                "window_size": _SLIDING_WINDOW_SIZE,
+                "total": total,
+                "failures": failures,
+                "consecutive_failures": consecutive,
+                "failure_rate": failure_rate,
+                "empty_count": empty_count,
+                "degraded": degraded,
+                "outcomes": [{"ok": ok, "outcome": outcome} for _ts, ok, outcome in entries],
+            }
+        return out
 
     async def health(self) -> dict[str, EngineHealthSummary]:
         out: dict[str, EngineHealthSummary] = {}
@@ -664,10 +730,21 @@ class DbEngineStore:
         base.update(changes)
         return base
 
-    async def record_result(self, engine_id: str, *, ok: bool, latency_ms: int) -> None:
+    async def record_result(
+        self,
+        engine_id: str,
+        *,
+        ok: bool,
+        latency_ms: int,
+        outcome: str | None = None,
+    ) -> None:
         # Hot path (WP-03, verified by test_search_hot_path_issues_no_sql): keep
         # per-request result accounting in memory so searches issue 0 SQL.
-        await self._fallback.record_result(engine_id, ok=ok, latency_ms=latency_ms)
+        await self._fallback.record_result(engine_id, ok=ok, latency_ms=latency_ms, outcome=outcome)
+
+    async def recent_windows(self) -> dict[str, dict[str, Any]]:
+        # The sliding window lives in the in-memory fallback (hot path).
+        return await self._fallback.recent_windows()
 
     async def _record_db(self, engine_id: str, *, ok: bool) -> bool:
         window_start = _window_start()

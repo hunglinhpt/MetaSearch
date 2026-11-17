@@ -42,6 +42,7 @@ def build_default_aggregator(
     """
     from app.config import get_settings
     from app.retrieval.fa_sources.fireant import FireAntFASource
+    from app.retrieval.fa_sources.simplize import SimplizeFASource
     from app.retrieval.fa_sources.ssi import SSIFASource
     from app.retrieval.fa_sources.tcbs import TCBSFASource
 
@@ -54,6 +55,10 @@ def build_default_aggregator(
             SSIFASource(client=client),
             TCBSFASource(client=client),
             FireAntFASource(client=client),
+            # docs/29 ISSUE-3: TCBS is DNS-dead from project egress and
+            # FireAnt is token-disabled by default — the keyless Simplize
+            # summary feed is the live fundamentals source for fa/compare.
+            SimplizeFASource(client=client),
         ],
         registry=owned,
     )

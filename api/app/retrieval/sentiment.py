@@ -1231,7 +1231,11 @@ def analyze_omni_channel_sentiment(
                 proxy_metrics=proxy_metrics,
                 fundamentals=fundamentals_dict,
             )
-        return _insufficient_data_payload(entity)
+        return _insufficient_data_payload(
+            entity,
+            hits_retrieved=len(hits),
+            hits_after_filter=len(valid_hits),
+        )
 
     # First pass: classify domains/tiers so we know whether Layer 1/2 corroborates claims
     prelim: list[
@@ -1370,7 +1374,11 @@ def analyze_omni_channel_sentiment(
                 unverified_rumor_count=unverified_rumor_count,
                 all_hits=scored_hits,
             )
-        return _insufficient_data_payload(entity)
+        return _insufficient_data_payload(
+            entity,
+            hits_retrieved=len(hits),
+            hits_after_filter=len(valid_hits),
+        )
 
     def _weighted_avg(items: list[ScoredSentimentHit]) -> float:
         total_w = sum(i.effective_weight for i in items)
@@ -1578,6 +1586,10 @@ def analyze_omni_channel_sentiment(
         },
         "top_verified_drivers": top_drivers,
         "risk_circuit_breakers": breakers,
+        # docs/29 ISSUE-4: per-ticker isolation telemetry (present on EVERY
+        # payload shape so degenerate and measured responses are comparable).
+        "hits_retrieved": len(hits),
+        "hits_after_collision_filter": len(valid_hits),
     }
 
 
@@ -2270,7 +2282,12 @@ def _quant_only_payload(
     }
 
 
-def _insufficient_data_payload(entity: EquityEntity) -> dict[str, Any]:
+def _insufficient_data_payload(
+    entity: EquityEntity,
+    *,
+    hits_retrieved: int = 0,
+    hits_after_filter: int = 0,
+) -> dict[str, Any]:
     return {
         "module": "omni_channel_equity_sentiment_v2",
         "entity": {
@@ -2321,5 +2338,10 @@ def _insufficient_data_payload(entity: EquityEntity) -> dict[str, Any]:
             ),
         },
         "top_verified_drivers": [],
-        "risk_circuit_breakers": ["INSUFFICIENT_DATA"],
+        "risk_circuit_breakers": ["INSUFFICIENT_DATA", "ZERO_EVIDENCE_DEFAULT_PAYLOAD"],
+        # docs/29 ISSUE-4: operators must be able to tell "search dead /
+        # collision-filtered" from "genuinely neutral" — identical 0.0
+        # payloads across tickers are this flag, not real measurements.
+        "hits_retrieved": hits_retrieved,
+        "hits_after_collision_filter": hits_after_filter,
     }

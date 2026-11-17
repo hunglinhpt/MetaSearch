@@ -83,6 +83,7 @@ async def engines() -> list[dict[str, Any]]:
 @router.get("/engines/health")
 async def engines_health() -> list[dict[str, Any]]:
     store = deps.get_engine_store()
+    recent = await store.recent_windows()
     out = []
     for summary in (await store.health()).values():
         success_rate = summary.successes / summary.calls if summary.calls > 0 else None
@@ -96,6 +97,11 @@ async def engines_health() -> list[dict[str, Any]]:
                 "success_rate": round(success_rate, 4) if success_rate is not None else None,
                 "consecutive_failures": summary.consecutive_failures,
                 "disabled_reason": summary.disabled_reason,
+                # docs/29 ISSUE-2: rolling last-10 window telemetry + alert.
+                "recent_window": recent.get(
+                    summary.engine_id,
+                    {"window_size": 10, "total": 0, "degraded": False},
+                ),
             }
         )
     return out

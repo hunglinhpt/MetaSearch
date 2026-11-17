@@ -192,6 +192,9 @@ async def fa_compare(request: FaCompareRequest) -> FaCompareResponse | Response:
                     source_urls=[],
                     as_of=None,
                     published_at=None,
+                    # docs/29 ISSUE-3: distinguish "all sources dead/disabled"
+                    # (infrastructure) from "ticker unknown / no coverage".
+                    all_sources_unavailable=True,
                 )
 
             # All symbols fan out CONCURRENTLY (each with its own per-source
@@ -214,6 +217,12 @@ async def fa_compare(request: FaCompareRequest) -> FaCompareResponse | Response:
                 if isinstance(res, BaseException):
                     logger.warning("fa_compare_symbol_failed", symbol=sym, error=type(res).__name__)
                     results.append(empty(sym, type(res).__name__))
+                elif res.fields == {} and not res.sources_used:
+                    # docs/29 ISSUE-3: a 200 with zero fields and zero sources
+                    # means every fundamentals source was dead/disabled — say
+                    # so instead of silently handing over an empty table.
+                    logger.warning("fa_compare_symbol_all_sources_unavailable", symbol=sym)
+                    results.append(res.model_copy(update={"all_sources_unavailable": True}))
                 else:
                     results.append(res)
 
@@ -557,7 +566,12 @@ async def market_sentiment(request: MarketSentimentRequest) -> MarketSentimentRe
 
             fundamentals: FundamentalSnapshotInput | None = None
             quant_skipped_budget = False
-            if request.fetch_market_data:
+            # docs/29 ISSUE-4: per-ticker isolation — VN tickers get their own
+            # VNDIRECT OHLCV/quant by default (proven live, keyless), so two
+            # different tickers never converge on the same market-wide
+            # payload. Callers still opt out with fetch_market_data=false.
+            effective_fetch = request.fetch_market_data or entity.is_vietnam
+            if effective_fetch:
                 rem = budget.remaining() if budget else 4.0
                 if rem >= 0.8:
                     need_vix = not entity.is_vietnam and (
