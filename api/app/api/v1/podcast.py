@@ -85,9 +85,15 @@ def _prune_jobs(retention_days: int) -> None:
     # v3.0 P2-5: personal job keys ("personal-<hash>:<date>") are not plain
     # dates - they never match the horizon sweep and are bounded by the LRU cap.
     for key in [k for k in _jobs if not k.startswith("personal-") and k < horizon]:
-        del _jobs[key]
-    while len(_jobs) > _JOBS_MAX:
-        _jobs.popitem(last=False)
+        if _jobs[key].get("status") not in ("pending", "running"):
+            del _jobs[key]
+    if len(_jobs) > _JOBS_MAX:
+        # docs/29 DEFER-B (audit B#18): never evict active in-flight jobs.
+        for key in list(_jobs.keys()):
+            if len(_jobs) <= _JOBS_MAX:
+                break
+            if _jobs[key].get("status") not in ("pending", "running"):
+                _jobs.pop(key, None)
 
 
 def _latest_day() -> date | None:
@@ -159,42 +165,45 @@ def _require_voicestudio() -> None:
 async def _gather_sections(
     pipeline, presets: tuple[tuple[str, str, int], ...]
 ) -> tuple[list[BriefingSection], bool]:
-    """Run one search per preset; each preset degrades independently (empty
-    section on failure). Returns (sections, any_ok)."""
+    """Run one search per preset bounded in parallel (Semaphore(3)); each preset
+    degrades independently (empty section on failure). Returns (sections, any_ok)."""
     settings = get_settings()
-    sections: list[BriefingSection] = []
-    any_ok = False
-    for label, query, freshness in presets:
-        try:
-            outcome = await pipeline.run(
-                SearchParams(
-                    query=query,
-                    engines=["google_news"],
-                    news=True,
-                    k=settings.podcast_items_per_category,
-                    freshness_days=freshness,
-                    timeout_ms=settings.podcast_search_timeout_ms,
+    sem = asyncio.Semaphore(3)
+
+    async def _one(label: str, query: str, freshness: int) -> tuple[BriefingSection, bool]:
+        async with sem:
+            try:
+                outcome = await pipeline.run(
+                    SearchParams(
+                        query=query,
+                        engines=["google_news"],
+                        news=True,
+                        k=settings.podcast_items_per_category,
+                        freshness_days=freshness,
+                        timeout_ms=settings.podcast_search_timeout_ms,
+                    )
                 )
-            )
-            items = [
-                {
-                    "title": r.title,
-                    "url": r.url,
-                    "published_at": r.published_at.isoformat() if r.published_at else "",
-                }
-                for r in outcome.results
-            ]
-            if items:
-                any_ok = True
-            sections.append(BriefingSection(label=label, items=items))
-        except Exception as exc:
-            logger.warning(
-                "podcast_preset_failed",
-                label=label,
-                error=type(exc).__name__,
-                detail=str(exc)[:200],
-            )
-            sections.append(BriefingSection(label=label, items=[]))
+                items = [
+                    {
+                        "title": r.title,
+                        "url": r.url,
+                        "published_at": r.published_at.isoformat() if r.published_at else "",
+                    }
+                    for r in outcome.results
+                ]
+                return BriefingSection(label=label, items=items), bool(items)
+            except Exception as exc:
+                logger.warning(
+                    "podcast_preset_failed",
+                    label=label,
+                    error=type(exc).__name__,
+                    detail=str(exc)[:200],
+                )
+                return BriefingSection(label=label, items=[]), False
+
+    gathered = await asyncio.gather(*(_one(lbl, q, f) for lbl, q, f in presets))
+    sections = [sec for sec, _ in gathered]
+    any_ok = any(ok for _, ok in gathered)
     return sections, any_ok
 
 
@@ -213,7 +222,7 @@ async def _run_briefing(day: date) -> None:
         script = build_briefing_script(sections, max_chars=settings.podcast_max_chars, today=day)
         if not any_ok or not script.strip():
             raise MetaSearchError(ErrorCode.NO_RESULTS, "no news results to brief", status_code=503)
-        _jobs[key]["chars"] = len(script)
+        _jobs.setdefault(key, {"status": "running"})["chars"] = len(script)
         client = deps.get_tts_client()
         async with asyncio.timeout(settings.podcast_timeout_s):
             audio, _media_type = await client.synthesize(script, response_format="mp3")
@@ -227,7 +236,9 @@ async def _run_briefing(day: date) -> None:
         )
         if removed:
             logger.info("podcast_retention_removed", count=removed, date=key)
-        _jobs[key].update(
+        _jobs.setdefault(
+            key, {"status": "running", "created_at": datetime.now(UTC).isoformat()}
+        ).update(
             status="ready",
             audio_bytes=len(audio),
             file=str(path),
@@ -493,7 +504,7 @@ async def _run_personal_briefing(owner: str, day: date) -> None:
             raise MetaSearchError(
                 ErrorCode.NO_RESULTS, "no watchlist results to brief", status_code=503
             )
-        _jobs[key]["chars"] = len(script)
+        _jobs.setdefault(key, {"status": "running"})["chars"] = len(script)
         client = deps.get_tts_client()
         async with asyncio.timeout(settings.podcast_timeout_s):
             audio, _media_type = await client.synthesize(script, response_format="mp3")
@@ -507,7 +518,9 @@ async def _run_personal_briefing(owner: str, day: date) -> None:
         )
         if removed:
             logger.info("podcast_retention_removed", count=removed, date=key)
-        _jobs[key].update(status="ready", audio_bytes=len(audio), file=str(path))
+        _jobs.setdefault(
+            key, {"status": "running", "created_at": datetime.now(UTC).isoformat()}
+        ).update(status="ready", audio_bytes=len(audio), file=str(path))
         logger.info(
             "podcast_personal_ready",
             owner_hash=_personal_prefix(owner),

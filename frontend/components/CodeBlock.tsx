@@ -27,8 +27,12 @@ export default function CodeBlock({
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!closed) return; // plain text while streaming — no per-snapshot Prism
+    if (!closed) {
+      setHtml("");
+      return; // plain text while streaming — no per-snapshot Prism
+    }
     let alive = true;
+    setHtml("");
     highlightCode(code, lang).then((h) => {
       if (alive) setHtml(h);
     });

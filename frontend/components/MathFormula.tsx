@@ -42,6 +42,7 @@ export default function MathFormula({
             displayMode: display,
             throwOnError: true,
             strict: false,
+            trust: false,
             maxSize: 20,
           });
           lastGoodRef.current = rendered;

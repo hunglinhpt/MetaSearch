@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
 
@@ -262,6 +263,22 @@ class VerifiedDriverOut(BaseModel):
     polarity: Literal["POSITIVE", "NEGATIVE", "NEUTRAL"]
     evidence_quote: str
     url: str | None = None
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _validate_http_url(cls, v: Any) -> str | None:
+        if not isinstance(v, str):
+            return None
+        cleaned = v.strip()
+        if not cleaned:
+            return None
+        try:
+            parsed = urlsplit(cleaned)
+        except ValueError:
+            return None
+        if parsed.scheme.lower() in ("http", "https") and parsed.netloc:
+            return cleaned
+        return None
 
 
 class SentimentPillarChecklistItemOut(BaseModel):

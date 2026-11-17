@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import heapq
 import json
 import time
 from collections import OrderedDict
@@ -93,6 +94,9 @@ class _LocalTTLCache:
 
     def __init__(self, max_bytes: int = 64 * 1024 * 1024) -> None:
         self._data: OrderedDict[str, tuple[float, int, Any]] = OrderedDict()
+        # docs/29 DEFER-B (audit B#9): min-heap of (expires_at, key) turns per-write
+        # full-dict expiry sweeps from O(n) into amortized O(log n).
+        self._expiry_heap: list[tuple[float, str]] = []
         self._max_bytes = max_bytes
         self._curr_bytes = 0
 
@@ -108,6 +112,17 @@ class _LocalTTLCache:
             except Exception:
                 size += 512
         return size
+
+    def _evict_expired_heap(self, now: float) -> None:
+        while self._expiry_heap and self._expiry_heap[0][0] <= now:
+            exp, key = heapq.heappop(self._expiry_heap)
+            entry = self._data.get(key)
+            if entry is not None and entry[0] == exp:
+                self._curr_bytes -= entry[1]
+                self._data.pop(key, None)
+        if len(self._expiry_heap) > max(256, 2 * len(self._data)):
+            self._expiry_heap = [(entry[0], k) for k, entry in self._data.items()]
+            heapq.heapify(self._expiry_heap)
 
     def get(self, key: str) -> Any | None:
         entry = self._data.get(key)
@@ -131,23 +146,23 @@ class _LocalTTLCache:
             return
 
         now = time.monotonic()
-        expired_keys = [k for k, (exp, size, _) in self._data.items() if now > exp]
-        for k in expired_keys:
-            _, sz, _ = self._data.pop(k)
-            self._curr_bytes -= sz
+        self._evict_expired_heap(now)
 
         while self._data and (self._curr_bytes + entry_size > self._max_bytes):
             _, (_, sz, _) = self._data.popitem(last=False)
             self._curr_bytes -= sz
 
-        self._data[key] = (now + ttl_s, entry_size, value)
+        expires_at = now + ttl_s
+        self._data[key] = (expires_at, entry_size, value)
         self._curr_bytes += entry_size
+        heapq.heappush(self._expiry_heap, (expires_at, key))
 
     def exists(self, key: str) -> bool:
         return self.get(key) is not None
 
     def clear(self) -> None:
         self._data.clear()
+        self._expiry_heap.clear()
         self._curr_bytes = 0
 
 

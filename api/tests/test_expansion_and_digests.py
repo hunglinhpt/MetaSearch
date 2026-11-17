@@ -262,47 +262,52 @@ class TestDigestsAndScanner:
 
         monkeypatch.setattr(get_settings(), "database_url", f"sqlite+aiosqlite:///{db_path}")
         await dispose_engine()
-        deps.reset_pipelines()
-        await ensure_schema()
+        try:
+            deps.reset_pipelines()
+            await ensure_schema()
 
-        client = TestClient(create_app())
+            client = TestClient(create_app())
 
-        # 1. Get topics
-        resp = client.get("/v1/digests/topics")
-        assert resp.status_code == 200
-        topics = resp.json()
-        assert len(topics) >= 5
-        topic_ids = [t["id"] for t in topics]
-        assert "ai_coding" in topic_ids
-        assert "viet_finance" in topic_ids
+            # 1. Get topics
+            resp = client.get("/v1/digests/topics")
+            assert resp.status_code == 200
+            topics = resp.json()
+            assert len(topics) >= 5
+            topic_ids = [t["id"] for t in topics]
+            assert "ai_coding" in topic_ids
+            assert "viet_finance" in topic_ids
 
-        # 2. Trigger scan on-demand for 'ai_coding'
-        scan_resp = client.post("/v1/digests/scan", json={"topic": "ai_coding"})
-        assert scan_resp.status_code == 200
-        created = scan_resp.json()
-        assert len(created) == 1
-        post_slug = created[0]["slug"]
-        post_id = created[0]["id"]
+            # 2. Trigger scan on-demand for 'ai_coding'
+            scan_resp = client.post("/v1/digests/scan", json={"topic": "ai_coding"})
+            assert scan_resp.status_code == 200
+            created = scan_resp.json()
+            assert len(created) == 1
+            post_slug = created[0]["slug"]
+            post_id = created[0]["id"]
 
-        # 3. List digests
-        list_resp = client.get("/v1/digests")
-        assert list_resp.status_code == 200
-        items = list_resp.json()
-        assert len(items) >= 1
-        assert any(i["slug"] == post_slug for i in items)
+            # 3. List digests
+            list_resp = client.get("/v1/digests")
+            assert list_resp.status_code == 200
+            items = list_resp.json()
+            assert len(items) >= 1
+            assert any(i["slug"] == post_slug for i in items)
 
-        # 4. Get digest detail by slug
-        detail_resp = client.get(f"/v1/digests/{post_slug}")
-        assert detail_resp.status_code == 200
-        detail = detail_resp.json()
-        assert detail["slug"] == post_slug
-        assert "content_md" in detail
-        assert len(detail["content_md"]) > 100
+            # 4. Get digest detail by slug
+            detail_resp = client.get(f"/v1/digests/{post_slug}")
+            assert detail_resp.status_code == 200
+            detail = detail_resp.json()
+            assert detail["slug"] == post_slug
+            assert "content_md" in detail
+            assert len(detail["content_md"]) > 100
 
-        # 5. Get digest detail by ID
-        id_resp = client.get(f"/v1/digests/{post_id}")
-        assert id_resp.status_code == 200
-        assert id_resp.json()["id"] == post_id
+            # 5. Get digest detail by ID
+            id_resp = client.get(f"/v1/digests/{post_id}")
+            assert id_resp.status_code == 200
+            assert id_resp.json()["id"] == post_id
+        finally:
+            monkeypatch.undo()
+            await dispose_engine()
+            deps.reset_pipelines()
 
 
 class TestNotificationDispatcher:

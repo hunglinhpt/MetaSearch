@@ -278,13 +278,15 @@ function AnswerMarkdownInner({
     [blocks, citationByUrl]
   );
 
-  // The gate paces future snapshots — but only when the shown snapshot
+  // The gate paces future snapshots — only when the shown snapshot
   // actually advanced (audit round 1: unrelated re-renders must not
-  // re-anchor the pacing window).
-  if (shown !== lastShownRef.current) {
-    gateRef.current.accept(lastCostRef.current);
-    lastShownRef.current = shown;
-  }
+  // re-anchor the pacing window). Executed in useEffect for React StrictMode purity.
+  useEffect(() => {
+    if (shown !== lastShownRef.current) {
+      gateRef.current?.accept(lastCostRef.current);
+      lastShownRef.current = shown;
+    }
+  }, [shown]);
 
   return <div className="answer-body">{parsed}</div>;
 }

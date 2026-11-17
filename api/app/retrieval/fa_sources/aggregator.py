@@ -275,21 +275,27 @@ class FAAggregator:
     async def fetch_ohlcv(
         self, symbol: str, *, timeout_s: float | None = None
     ) -> SourceOHLCV | None:
-        """First successful OHLCV in priority order (candles are canonical — no merge)."""
-        timeout = self._timeout_s if timeout_s is None else timeout_s
+        """First successful OHLCV in priority order (candles are canonical — short-circuit)."""
+        import time
 
+        timeout = self._timeout_s if timeout_s is None else timeout_s
         eligible = self._capable("can_ohlcv")
-        winner: SourceOHLCV | None = None
-        if eligible:
-            results = await asyncio.gather(
-                *(self._fetch_one_ohlcv(source, symbol, timeout) for source in eligible),
-                return_exceptions=False,
+        if not eligible:
+            return None
+        # docs/29 DEFER-B (audit B#15): probe in descending priority order and
+        # short-circuit on the first valid feed instead of burning all legs.
+        deadline = time.monotonic() + max(timeout, 0.2) * min(len(eligible), 2)
+        for source in eligible:
+            rem = deadline - time.monotonic()
+            if rem <= 0.05:
+                break
+            payload, breaker_outcome = await self._fetch_one_ohlcv(
+                source, symbol, min(timeout, rem)
             )
-            for source, (payload, breaker_outcome) in zip(eligible, results, strict=True):
-                self._record(source, breaker_outcome)
-                if payload is not None and winner is None:
-                    winner = payload
-        return winner
+            self._record(source, breaker_outcome)
+            if payload is not None:
+                return payload
+        return None
 
 
 def _priority_of(sources: list[FASource], source_id: str) -> float:

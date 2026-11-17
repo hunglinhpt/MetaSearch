@@ -34,7 +34,7 @@ from app.core.json_utils import extract_json_object
 from app.core.logging import get_logger
 from app.extraction.chunker import Chunk
 from app.llm.citations import validate_citations
-from app.llm.gateway import LLMError, LLMGateway
+from app.llm.gateway import LLMError, LLMGateway, Usage
 from app.llm.prompts import SYSTEM_PROMPT, render_context
 from app.llm.providers import LLMOverride, get_runtime_llm_store, parse_council_endpoint_specs
 from app.retrieval.domain_intelligence import (
@@ -357,7 +357,10 @@ class DreamRSICouncilEngine:
         ]
 
         # Stage 1: Concurrent Independent Generation across Free LLM Panelists
-        drafts = await self._generate_panel_drafts(panel, messages, included, total_sources)
+        usage_records: list[Usage] = []
+        drafts = await self._generate_panel_drafts(
+            panel, messages, included, total_sources, usage_sink=usage_records
+        )
         ok_drafts = [d for d in drafts if d.status == "ok" and d.answer_md.strip()]
 
         if not ok_drafts:
@@ -368,7 +371,7 @@ class DreamRSICouncilEngine:
         cross_reviews: list[dict[str, Any]] = []
         if enable_cross_review and len(ok_drafts) >= 2:
             cross_reviews = await self._run_anonymous_cross_review(
-                question, context_text, ok_drafts, panel, pack
+                question, context_text, ok_drafts, panel, pack, usage_sink=usage_records
             )
         else:
             for d in ok_drafts:
@@ -385,7 +388,7 @@ class DreamRSICouncilEngine:
         winner = ok_drafts[0]
         if len(ok_drafts) >= 2:
             verdict_raw, chairman_label = await self._synthesize_chairman_verdict(
-                question, context_text, ok_drafts, panel[0], winner, pack
+                question, context_text, ok_drafts, panel[0], winner, pack, usage_sink=usage_records
             )
         else:
             verdict_raw = winner.answer_md
@@ -461,6 +464,10 @@ class DreamRSICouncilEngine:
             },
             "total_latency_ms": latency_ms,
             "latency_ms": latency_ms,
+            "usage": {
+                "input_tokens": sum(u.input_tokens for u in usage_records),
+                "output_tokens": sum(u.output_tokens for u in usage_records),
+            },
         }
 
     async def _generate_panel_drafts(
@@ -469,6 +476,8 @@ class DreamRSICouncilEngine:
         messages: list[dict[str, str]],
         included: list[tuple[int, Chunk]],
         total_sources: int,
+        *,
+        usage_sink: list[Usage] | None = None,
     ) -> list[PanelistDraft]:
         async def _call_one(idx: int, ov: LLMOverride) -> PanelistDraft:
             cand_id = f"Candidate {chr(ord('A') + idx)}"
@@ -489,6 +498,8 @@ class DreamRSICouncilEngine:
                 async for delta in gw.stream(messages, model=mod):
                     if delta.text:
                         parts.append(delta.text)
+                    if delta.usage is not None and usage_sink is not None:
+                        usage_sink.append(delta.usage)
                 raw_text = "".join(parts).strip()
                 ms = int((time.perf_counter() - t0) * 1000)
                 if not raw_text:
@@ -601,6 +612,8 @@ class DreamRSICouncilEngine:
         ok_drafts: list[PanelistDraft],
         panel: list[LLMOverride],
         pack: DomainIntelligencePack,
+        *,
+        usage_sink: list[Usage] | None = None,
     ) -> list[dict[str, Any]]:
         """Conduct blind anonymous cross-review where candidates are labeled only as
         Candidate A, Candidate B, etc.
@@ -651,6 +664,8 @@ class DreamRSICouncilEngine:
             async for delta in gw.stream(review_messages, model=reviewer_model):
                 if delta.text:
                     parts.append(delta.text)
+                if delta.usage is not None and usage_sink is not None:
+                    usage_sink.append(delta.usage)
             raw_review = "".join(parts)
             parsed = extract_json_object(raw_review)
             if parsed:
@@ -737,6 +752,8 @@ class DreamRSICouncilEngine:
         chairman_ov: LLMOverride,
         winner: PanelistDraft,
         pack: DomainIntelligencePack,
+        *,
+        usage_sink: list[Usage] | None = None,
     ) -> tuple[str, str]:
         candidates_summary = "\n\n".join(
             f"### {d.candidate_id} (Composite Score: {d.composite_score}/10 | "
@@ -781,6 +798,8 @@ class DreamRSICouncilEngine:
             async for delta in gw.stream(chairman_messages, model=chairman_model, task="report"):
                 if delta.text:
                     parts.append(delta.text)
+                if delta.usage is not None and usage_sink is not None:
+                    usage_sink.append(delta.usage)
             verdict = "".join(parts).strip()
             if verdict:
                 return verdict, f"{chairman_prov}:{chairman_model}"

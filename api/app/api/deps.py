@@ -130,7 +130,7 @@ def get_answer_pipeline() -> AnswerPipeline:
 def get_scanner():
     from app.orchestration.scheduler import AutomatedScanner
 
-    return AutomatedScanner(get_registry())
+    return AutomatedScanner(get_registry(), gateway=get_gateway())
 
 
 def reset_pipelines() -> None:

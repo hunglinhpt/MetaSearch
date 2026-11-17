@@ -97,7 +97,7 @@ Tài liệu này tổng hợp kết quả thẩm định từ **20+ nguồn chu�
 - **CBOE SKEW Index**: `110–130` bình thường, $\ge 140$ cảnh báo tổ chức phòng hộ rủi ro đuôi (*tail-risk hedging*).
 
 ### 1.11 Công thức Kỹ thuật & Độ rộng Thị trường Định lượng (`sentiment_quant.py`)
-- **Arms Index (`TRIN`)**: $\text{TRIN} = \frac{\text{Advancing} / \text{Declining}}{\text{AdvVol} / \text{DecVol}}$ (`< 0.80` tích lũy mạnh, `> 1.50` phân phối).
+- **Arms Index (`TRIN`)**: $\text{TRIN} = \frac{\text{Advancing} / \text{Declining}}{\text{AdvVol} / \text{DecVol}}$ (`< 0.70` tích lũy mạnh / bullish, `> 1.80` áp lực bán nặng / heavy selling; thang chuẩn hóa tuyến tính trong `[0.50, 2.00]` đảo chiều về `0..100`).
 - **McClellan Ratio-Adjusted Net Advances (`RANA`) & Oscillator (`NYMO`)**:
   $$\text{RANA} = \frac{\text{Adv} - \text{Dec}}{\text{Adv} + \text{Dec}} \times 1000, \qquad \text{NYMO} = \text{EMA}_{19}(\text{RANA}, \alpha=0.10) - \text{EMA}_{39}(\text{RANA}, \alpha=0.05)$$
 - **High-Low Breadth %**: $\frac{\text{NewHigh}_{52W}}{\text{NewHigh}_{52W} + \text{NewLow}_{52W}} \times 100$.
@@ -129,7 +129,7 @@ Mỗi phản hồi từ `POST /v1/market/sentiment` (và MCP tool `equity_sentim
 
 | # | `pillar_id` | Tên trụ cột | Nguồn chuẩn tham chiếu | Nội dung đo lường & công thức |
 |---|---|---|---|---|
-| 1 | `filings_earnings_insider` | Official Filings, Earnings Call & Insider (MSPR) | Finnhub Filings/Transcripts/Insider, Form 4 & SEC/HOSE | CBTT, BCTC, Earnings Call guidance, MSPR giao dịch nội bộ, kết hợp FA thật (`pe`, `pb`, `roe_pct`). |
+| 1 | `filings_earnings_insider` | Official Filings, Earnings Call & Insider (MSPR) | Finnhub Filings/Transcripts/Insider, Form 4 & SEC/HOSE | CBTT, BCTC, Earnings Call guidance, MSPR giao dịch nội bộ, kết hợp FA thật (`pe`, `pb`, `roe`, hỗ trợ nguồn `roe_pct`). |
 | 2 | `institutional_smart_money` | Institutional Research & Smart Money Flow | SentimenTrader, SqueezeMetrics DIX/GEX & VN Foreign/Prop Flow | Báo cáo CTCK, DIX/GEX dark pool, dòng tiền ròng khối ngoại & tự doanh (`TIER_2`). |
 | 3 | `momentum_and_moving_averages` | Price Momentum & Moving Averages (MA50/MA125/MA200/RSI-14) | Investopedia & CNN Fear & Greed Momentum | Vượt/thủng `MA50`/`MA125`/`MA200`, `RSI(14)` Wilder, tỷ suất sinh lời 20 phiên. |
 | 4 | `breadth_strength_and_liquidity` | Market Breadth (TRIN/McClellan/52W H-L) & Flow (MFI-14/CMF-21) | Vietstock/FiinTrade Psychology & CNN Breadth | Vị thế 52W High/Low, `TRIN`, `McClellan RANA/NYMO`, `MFI(14)`, `CMF(21)`, `volume_ratio_20d`. |

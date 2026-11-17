@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.core.logging import get_logger
 
@@ -123,9 +123,9 @@ async def load_boosts(owner: str, *, max_per_key: int = 50) -> list[BoostRule]:
 
         # Bounded: a partitioned DB must never sit in the search critical path
         # (perf lesson from the engine store). Timeout -> no boosts this round.
-        async def _read() -> list:
+        async def _read() -> list[Any]:
             async with get_sessionmaker()() as session:
-                return (
+                return list(
                     (
                         await session.execute(
                             select(KeyBoost)

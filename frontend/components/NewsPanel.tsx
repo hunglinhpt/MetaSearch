@@ -21,8 +21,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   addWatchlist,
+  createPersonalPodcast,
   createPodcastBriefing,
   listWatchlist,
+  personalPodcastLatestUrl,
+  personalPodcastStatus,
   podcastBriefingStatus,
   podcastFeedUrl,
   podcastLatestUrl,
@@ -178,11 +181,14 @@ export default function NewsPanel() {
   const [alerts, setAlerts] = useState<WatchlistAlertsResponse | null>(null);
   const [checkingAlerts, setCheckingAlerts] = useState(false);
   const [watchError, setWatchError] = useState("");
-  // Podcast briefing (docs/18 D) — VoiceStudio-only, 503 otherwise.
+  // Podcast briefing (docs/18 D + v3.0 P2-5 personalized watchlist) — VoiceStudio-only.
   const [podcast, setPodcast] = useState<PodcastBriefingStatus | null>(null);
+  const [podcastMode, setPodcastMode] = useState<"global" | "personal">("global");
   const [podcastBusy, setPodcastBusy] = useState(false);
   const [podcastError, setPodcastError] = useState("");
   const podcastPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const podcastReqIdRef = useRef(0);
+  const podcastAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     // Voices/SpeechSynthesis exist only client-side — gate after mount to
@@ -218,6 +224,7 @@ export default function NewsPanel() {
       ttsStop();
       ttsHandleRef.current?.cancel();
       abortRef.current?.abort();
+      podcastAbortRef.current?.abort();
       micHandleRef.current?.stop();
       if (podcastPollRef.current) clearInterval(podcastPollRef.current);
     };
@@ -332,23 +339,37 @@ export default function NewsPanel() {
     });
   };
 
-  // --- podcast handlers (docs/18 D) ------------------------------------------
-  const startPodcast = useCallback(async () => {
+  // --- podcast handlers (docs/18 D + v3.0 personal watchlist) ---------------
+  const startPodcast = useCallback(async (kind: "global" | "personal" = "global") => {
+    const reqId = ++podcastReqIdRef.current;
+    podcastAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    podcastAbortRef.current = ctrl;
+    if (podcastPollRef.current) {
+      clearInterval(podcastPollRef.current);
+      podcastPollRef.current = null;
+    }
     setPodcastBusy(true);
+    setPodcastMode(kind);
+    setPodcast(null);
     setPodcastError("");
     try {
-      const st = await createPodcastBriefing();
+      const createFn = kind === "personal" ? createPersonalPodcast : createPodcastBriefing;
+      const statusFn = kind === "personal" ? personalPodcastStatus : podcastBriefingStatus;
+      const st = await createFn(ctrl.signal);
+      if (ctrl.signal.aborted || podcastReqIdRef.current !== reqId) return;
       setPodcast(st);
       if (st.status === "ready") return;
-      if (podcastPollRef.current) clearInterval(podcastPollRef.current);
       let consecutiveErrors = 0;
       let pollAttempts = 0;
       podcastPollRef.current = setInterval(async () => {
-        // Audit round 9: a job can also end "cancelled" (backend shutdown),
-        // and any stuck job must not be polled forever (2s x infinity).
+        if (ctrl.signal.aborted || podcastReqIdRef.current !== reqId) {
+          if (podcastPollRef.current) clearInterval(podcastPollRef.current);
+          podcastPollRef.current = null;
+          return;
+        }
         pollAttempts += 1;
         if (pollAttempts > 150) {
-          // ~5 minutes at 2s — beyond any legitimate synthesis window.
           if (podcastPollRef.current) clearInterval(podcastPollRef.current);
           podcastPollRef.current = null;
           setPodcastError("Hết thời gian chờ bản tin audio — thử tạo lại.");
@@ -356,7 +377,8 @@ export default function NewsPanel() {
         }
         try {
           consecutiveErrors = 0;
-          const s = await podcastBriefingStatus();
+          const s = await statusFn(ctrl.signal);
+          if (ctrl.signal.aborted || podcastReqIdRef.current !== reqId) return;
           setPodcast(s);
           if (s.status === "ready" || s.status === "error" || s.status === "cancelled") {
             if (podcastPollRef.current) clearInterval(podcastPollRef.current);
@@ -366,8 +388,7 @@ export default function NewsPanel() {
             }
           }
         } catch {
-          // Backend down mid-poll: stop after 5 consecutive failures instead
-          // of polling every 2s forever.
+          if (ctrl.signal.aborted || podcastReqIdRef.current !== reqId) return;
           consecutiveErrors += 1;
           if (consecutiveErrors >= 5) {
             if (podcastPollRef.current) clearInterval(podcastPollRef.current);
@@ -377,9 +398,10 @@ export default function NewsPanel() {
         }
       }, 2000);
     } catch (e) {
+      if (ctrl.signal.aborted || podcastReqIdRef.current !== reqId) return;
       setPodcastError(e instanceof Error ? e.message : String(e));
     } finally {
-      setPodcastBusy(false);
+      if (!ctrl.signal.aborted && podcastReqIdRef.current === reqId) setPodcastBusy(false);
     }
   }, []);
 
@@ -573,7 +595,7 @@ export default function NewsPanel() {
         <button
           type="button"
           className="tts-btn"
-          onClick={startPodcast}
+          onClick={() => void startPodcast("global")}
           disabled={podcastBusy}
           title={
             vsEnabled
@@ -581,7 +603,16 @@ export default function NewsPanel() {
               : "Cần cấu hình VOICESTUDIO_URL ở backend (docs/17) — hiện tại đang dùng đọc bằng trình duyệt."
           }
         >
-          {podcastBusy ? "Đang tạo bản tin..." : "🎙️ Bản tin audio"}
+          {podcastBusy && podcastMode === "global" ? "Đang tạo bản tin..." : "🎙️ Bản tin audio"}
+        </button>
+        <button
+          type="button"
+          className="tts-btn"
+          onClick={() => void startPodcast("personal")}
+          disabled={podcastBusy}
+          title="Tạo podcast cá nhân hoá dựa trên danh sách Watchlist (cần PODCAST_PERSONAL_ENABLED=true và VOICESTUDIO_URL)."
+        >
+          {podcastBusy && podcastMode === "personal" ? "Đang tạo..." : "🎧 Podcast Watchlist"}
         </button>
         <label className="news-tts-engine">
           Giọng đọc:{" "}
@@ -665,18 +696,24 @@ export default function NewsPanel() {
       {podcast && podcast.status === "ready" && (
         <div className="podcast-player">
           <audio
+            key={`${podcastMode}-${podcast.date}-${podcast.audio_bytes}`}
             controls
             preload="none"
-            src={podcastLatestUrl()}
+            src={podcastMode === "personal" ? personalPodcastLatestUrl() : podcastLatestUrl()}
             style={{ width: "100%" }}
             onError={() => setPodcastError("Không tải được audio (401 nếu AUTH_ENABLED=true — trình duyệt không gửi API key qua <audio>; hoặc file chưa sẵn sàng).")}
           >
             Trình duyệt không hỗ trợ audio.
           </audio>
           <span className="muted small">
-            Bản tin ngày {podcast.date} · {podcast.audio_bytes} byte ·{" "}
-            <a href={podcastFeedUrl()} target="_blank" rel="noreferrer">RSS feed</a>
-            {""}{' '}
+            {podcastMode === "personal" ? "Podcast Watchlist" : "Bản tin"} ngày {podcast.date} ·{" "}
+            {podcast.audio_bytes} byte
+            {podcastMode === "global" && (
+              <>
+                {" "}
+                · <a href={podcastFeedUrl()} target="_blank" rel="noreferrer">RSS feed</a>
+              </>
+            )}{" "}
             <span className="muted small">(RSS/audio cần API key qua header khi bật auth — dùng client MCP/REST)</span>
           </span>
         </div>

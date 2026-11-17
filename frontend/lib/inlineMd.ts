@@ -21,6 +21,8 @@ export type InlineSeg =
 
 /** Max emphasis nesting depth — bounds recursion on malformed input. */
 const MAX_EMPHASIS_DEPTH = 2;
+/** Cap failed emphasis scans per line to prevent O(n^2) on pathological `*` runs. */
+const MAX_FAILED_EMPHASIS = 64;
 
 function findSpanClose(s: string, from: number, delim: string): number {
   let i = from;
@@ -45,6 +47,7 @@ export function parseInline(line: string, depth = 0): InlineSeg[] {
   const out: InlineSeg[] = [];
   let plain = "";
   let i = 0;
+  let failedEmphasis = 0;
 
   const flushPlain = (): void => {
     if (plain.length === 0) return;
@@ -72,7 +75,7 @@ export function parseInline(line: string, depth = 0): InlineSeg[] {
         continue;
       }
     }
-    if (ch === "*" && line.startsWith("**", i)) {
+    if (ch === "*" && line.startsWith("**", i) && failedEmphasis < MAX_FAILED_EMPHASIS) {
       const close = findSpanClose(line, i + 2, "**");
       if (close !== -1) {
         const inner = line.slice(i + 2, close);
@@ -83,8 +86,14 @@ export function parseInline(line: string, depth = 0): InlineSeg[] {
           continue;
         }
       }
+      failedEmphasis += 1;
     }
-    if (ch === "*") {
+    if (
+      ch === "*" &&
+      failedEmphasis < MAX_FAILED_EMPHASIS &&
+      i + 1 < line.length &&
+      !/\s/.test(line[i + 1])
+    ) {
       const close = findSpanClose(line, i + 1, "*");
       // CommonMark left-flanking rule: no whitespace right after the
       // opener, none right before the closer — "2 * 3 * 4" stays literal.
@@ -100,6 +109,7 @@ export function parseInline(line: string, depth = 0): InlineSeg[] {
         i = close + 1;
         continue;
       }
+      failedEmphasis += 1;
     }
     if (ch === "[") {
       const m = CITE_RE.exec(line.slice(i, i + 6));

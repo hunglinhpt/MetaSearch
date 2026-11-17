@@ -326,12 +326,11 @@ def run_pre_commit_gate(root: Path, python_bin: Path, npm_bin: str | None = None
         desc="Ruff Static Analysis & Linting",
     )
 
-    # 3. Mypy Type Check (audit round 11: local gates drifted from CI, which
-    # already ran mypy on app/core + app/api — mirror it here)
+    # 3. Mypy Type Check (enforced across all app/ packages via pyproject.toml)
     run_command(
         [str(python_bin), "-m", "mypy"],
         cwd=root / "api",
-        desc="Mypy Type Check (app/core + app/api)",
+        desc="Mypy Type Check (all app/)",
     )
 
     # 4. Bandit Security Scan
@@ -454,8 +453,36 @@ def calculate_bump(current_version: str, bump_type: str) -> str:
     raise ValueError(f"Unknown bump type: {bump_type}")
 
 
-def update_version_files(root: Path, new_version: str, *, dry_run: bool = False) -> None:
-    """Atomically rewrite version in all three component configuration files."""
+def find_uv_executable(root: Path, python_bin: Path | None = None) -> Path | None:
+    """Locate uv executable near the active venv, PATH, or ~/.local/bin."""
+    exe_names = ("uv.exe", "uv") if sys.platform == "win32" else ("uv",)
+    candidates: list[Path] = []
+    if python_bin is not None:
+        for name in exe_names:
+            candidates.append(python_bin.parent / name)
+    for name in exe_names:
+        candidates.append(
+            root / "api" / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / name
+        )
+        found = shutil.which(name)
+        if found:
+            candidates.append(Path(found))
+        candidates.append(Path.home() / ".local" / "bin" / name)
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    return None
+
+
+def update_version_files(
+    root: Path,
+    new_version: str,
+    *,
+    dry_run: bool = False,
+    python_bin: Path | None = None,
+    npm_bin: str | None = None,
+) -> None:
+    """Atomically rewrite version in component configs and sync lockfiles."""
     log(f"Synchronizing version {new_version} across codebase...", prefix=">>")
 
     # 1. api/app/__init__.py
@@ -487,6 +514,52 @@ def update_version_files(root: Path, new_version: str, *, dry_run: bool = False)
     if not dry_run:
         pkg_file.write_text(new_content, encoding="utf-8")
     log(f"Updated {pkg_file.relative_to(root)}")
+
+    # 4. Sync api/uv.lock & frontend/package-lock.json so CI --locked / npm ci match
+    if not dry_run:
+        uv_bin = find_uv_executable(root, python_bin)
+        if uv_bin is not None:
+            proc = subprocess.run(  # nosec B603
+                [str(uv_bin), "lock", "--offline"],
+                cwd=root / "api",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                proc = subprocess.run(  # nosec B603
+                    [str(uv_bin), "lock"],
+                    cwd=root / "api",
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            if proc.returncode != 0:
+                log(f"uv lock failed: {proc.stderr or proc.stdout}", level="ERROR")
+                sys.exit(1)
+            log("Updated api/uv.lock")
+        if npm_bin and (root / "frontend" / "package-lock.json").is_file():
+            proc = subprocess.run(  # nosec B603
+                [
+                    npm_bin,
+                    "install",
+                    "--package-lock-only",
+                    "--ignore-scripts",
+                    "--no-audit",
+                    "--no-fund",
+                ],
+                cwd=root / "frontend",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                log(
+                    f"frontend package-lock.json sync warning: {proc.stderr or proc.stdout}",
+                    level="WARN",
+                )
+            else:
+                log("Updated frontend/package-lock.json")
 
 
 def verify_changelog(root: Path, version: str) -> tuple[bool, str]:
@@ -692,7 +765,13 @@ def main() -> None:
 
     # 4. Apply version updates if bumping (before running tests so exact bumped code is verified)
     if target_version != cur_ver and not args.check:
-        update_version_files(root, target_version, dry_run=args.dry_run)
+        update_version_files(
+            root,
+            target_version,
+            dry_run=args.dry_run,
+            python_bin=python_bin,
+            npm_bin=npm_bin,
+        )
 
     # 5. Mandatory Quality & E2E Gates (Strict: commit is NEVER allowed if tests are skipped)
     if args.skip_tests:

@@ -1,6 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getLLMHealth, listSkills, safeHref, searchMemoryIndex, validateLLMKeys } from "./api";
+import {
+  buildSpaceGraph,
+  createPersonalPodcast,
+  getLLMHealth,
+  hybridSearch,
+  listSkills,
+  listSpaces,
+  marketSentiment,
+  personalPodcastLatestUrl,
+  personalPodcastStatus,
+  querySpaceGraph,
+  safeHref,
+  searchMemoryIndex,
+  spaceGraphStatus,
+  validateLLMKeys,
+} from "./api";
 
 describe("safeHref", () => {
   it("allows http and https (any case)", () => {
@@ -89,5 +104,33 @@ describe("AI infra client helpers", () => {
     expect(String(mockFetch.mock.calls[0][0])).toContain("/v1/llm/health?task=answer");
     expect(String(mockFetch.mock.calls[1][0])).toContain("/v1/skills?q=fpt");
     expect(String(mockFetch.mock.calls[2][0])).toContain("/v1/memory/search?q=vcb&limit=5&kind=observation");
+  });
+
+  it("marketSentiment, spaces, hybrid, and personal podcast hit expected endpoints", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [], chunks: [] }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await marketSentiment({ ticker: "FPT", fetch_market_data: true });
+    await listSpaces();
+    await buildSpaceGraph("my-space");
+    await spaceGraphStatus("my-space");
+    await querySpaceGraph("my-space", { query: "FPT AI", answer: true });
+    await hybridSearch({ query: "FPT revenue", space: "my-space", k: 5 });
+    await createPersonalPodcast();
+    await personalPodcastStatus();
+
+    const urls = mockFetch.mock.calls.map((c) => String(c[0]));
+    expect(urls[0]).toMatch(/\/v1\/market\/sentiment$/);
+    expect(urls[1]).toMatch(/\/v1\/spaces$/);
+    expect(urls[2]).toMatch(/\/v1\/spaces\/my-space\/graph\/build$/);
+    expect(urls[3]).toMatch(/\/v1\/spaces\/my-space\/graph\/status$/);
+    expect(urls[4]).toMatch(/\/v1\/spaces\/my-space\/graph\/query$/);
+    expect(urls[5]).toMatch(/\/v1\/hybrid$/);
+    expect(urls[6]).toMatch(/\/v1\/podcast\/personal$/);
+    expect(urls[7]).toMatch(/\/v1\/podcast\/personal\/status$/);
+    expect(personalPodcastLatestUrl()).toMatch(/\/v1\/podcast\/personal\/latest$/);
   });
 });

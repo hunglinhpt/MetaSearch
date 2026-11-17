@@ -1304,3 +1304,351 @@ export function podcastLatestUrl(): string {
 export function podcastFeedUrl(): string {
   return `${API_BASE_URL}/v1/podcast/briefing/feed.xml`;
 }
+
+// --- Personalized Watchlist Podcast (/v1/podcast/personal*) ------------------
+
+export async function createPersonalPodcast(signal?: AbortSignal): Promise<PodcastBriefingStatus> {
+  const resp = await fetch(`${API_BASE_URL}/v1/podcast/personal`, {
+    method: "POST",
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function personalPodcastStatus(
+  signal?: AbortSignal
+): Promise<PodcastBriefingStatus> {
+  const resp = await fetch(`${API_BASE_URL}/v1/podcast/personal/status`, { signal });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export function personalPodcastLatestUrl(): string {
+  return `${API_BASE_URL}/v1/podcast/personal/latest`;
+}
+
+// --- Omni-Channel Bilingual Equity Sentiment Engine (/v1/market/sentiment) ---
+
+export type MarketSentimentRequest = {
+  ticker: string;
+  company_name?: string;
+  exchange?: "HOSE" | "HSX" | "HNX" | "UPCOM" | "NASDAQ" | "NYSE" | "OTHER";
+  k?: number;
+  max_queries?: number;
+  fetch_market_data?: boolean;
+  timeout_ms?: number;
+};
+
+export type SentimentPillarItem = {
+  pillar_id: string;
+  name: string;
+  standard_ref: string;
+  score_0_100: number;
+  status: "BULLISH" | "BEARISH" | "NEUTRAL" | "WARNING" | "INSUFFICIENT_DATA";
+  evidence_count: number;
+};
+
+export type VerifiedSentimentDriver = {
+  rank: number;
+  headline_or_post_summary: string;
+  lang: "VI" | "EN";
+  platform_or_domain: string;
+  tier: "TIER_1" | "TIER_2" | "TIER_3" | "TIER_4";
+  freshness: "BREAKING_6H" | "INTRADAY_24H" | "SHORT_3D" | "WEEKLY_7D" | "STALE";
+  effective_weight: number;
+  polarity: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
+  evidence_quote: string;
+  url: string | null;
+};
+
+export type MarketSentimentResponse = {
+  module: string;
+  entity: {
+    ticker: string;
+    resolved_name: string;
+    exchange: string;
+    timestamp_utc: string;
+  };
+  sentiment_summary: {
+    composite_score: number;
+    institutional_vs_retail_spread: number;
+    label: "STRONG_BULLISH" | "BULLISH" | "NEUTRAL" | "BEARISH" | "STRONG_BEARISH";
+    confidence: number;
+    market_regime: string;
+    momentum_24h: string;
+  };
+  benchmark_standards: {
+    fear_greed_index: number | null;
+    fear_greed_zone: string;
+    vietstock_psychology_state: string;
+    smart_money_confidence: number | null;
+    dumb_money_confidence: number | null;
+    smart_dumb_spread: number | null;
+    contrarian_signal: string;
+    buzz_velocity: string;
+    insider_signal: string;
+    uncertainty_and_litigation_score: number;
+    nlp_telemetry: {
+      tfidf_corpus_weighting: boolean;
+      corpus_doc_count: number;
+      tetlock_media_pessimism: number;
+      consensus_polarization: number;
+      source_diversity_entropy: number;
+    } | null;
+    quantitative_telemetry: {
+      ohlcv: {
+        available: boolean;
+        bars_count: number;
+        source_name: string | null;
+        source_url: string | null;
+        as_of: string | null;
+        last_close: number | null;
+        return_1d_pct: number | null;
+        return_20d_pct: number | null;
+        rsi_14: number | null;
+        mfi_14: number | null;
+        cmf_21: number | null;
+      } | null;
+      market_proxies: {
+        available: boolean;
+        vix_term_ratio: number | null;
+        vix_term_regime: string | null;
+        cboe_put_call_ratio: number | null;
+        dix_pct: number | null;
+        social_s_score: number | null;
+        insider_mspr: number | null;
+        arms_trin: number | null;
+        aaii_bull_bear_spread: number | null;
+        source_note: string | null;
+      } | null;
+      fundamentals: {
+        pe: number | null;
+        pb: number | null;
+        roe: number | null;
+        market_cap: number | null;
+        source: string | null;
+        source_url: string | null;
+        as_of: string | null;
+      } | null;
+    } | null;
+    seven_pillar_checklist: SentimentPillarItem[];
+  };
+  network_telemetry: {
+    official_and_media: {
+      weighted_score: number;
+      hit_count: number;
+      key_catalysts: string[];
+    };
+    vn_social_ecosystem: {
+      weighted_score: number;
+      platforms_covered: string[];
+      hit_count: number;
+      crowd_narrative_vi: string;
+      trending_slang_vi: string[];
+    };
+    global_social_ecosystem: {
+      weighted_score: number;
+      platforms_covered: string[];
+      hit_count: number;
+      crowd_narrative_en: string;
+      trending_tags_en: string[];
+    };
+  };
+  social_integrity_audit: {
+    manipulation_or_seeding_detected: boolean;
+    unverified_rumor_count: number;
+    audit_notes: string;
+  };
+  top_verified_drivers: VerifiedSentimentDriver[];
+  risk_circuit_breakers: string[];
+};
+
+export async function marketSentiment(
+  req: MarketSentimentRequest,
+  signal?: AbortSignal
+): Promise<MarketSentimentResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/market/sentiment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+// --- Spaces, Knowledge Graph & Hybrid Search (/v1/spaces*, /v1/hybrid) ------
+
+export type SpaceItem = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  domains: string[];
+  pinned_urls: string[];
+  query_terms: string[];
+  restrict: boolean;
+  last_crawl_at: string | null;
+  created_at: string | null;
+};
+
+export type SpaceListResponse = {
+  items: SpaceItem[];
+  storage: string;
+};
+
+export type SpaceCreateRequest = {
+  name: string;
+  description?: string;
+  domains?: string[];
+  pinned_urls?: string[];
+  query_terms?: string[];
+  restrict?: boolean;
+};
+
+export type SpaceCrawlResponse = {
+  space: string;
+  targets: number;
+  pages: { url: string; status: string; title?: string; error?: string }[];
+  capped: number;
+};
+
+export type GraphBuildStatus = {
+  space: string;
+  status: string;
+  docs: number;
+  nodes: number;
+  edges: number;
+  error: string | null;
+  created_at: string | null;
+};
+
+export type GraphQueryResponse = {
+  space: string;
+  matched_labels: string[];
+  nodes: { label: string; type: string; description: string }[];
+  edges: { source: string; target: string; relation: string }[];
+  answer: string | null;
+};
+
+export type HybridChunkItem = {
+  chunk_id: string;
+  url: string;
+  title: string;
+  domain: string;
+  position: number;
+  heading_path: string;
+  content: string;
+  score: number;
+  dense: number | null;
+  sparse: number;
+};
+
+export type HybridSearchResponse = {
+  query: string;
+  k: number;
+  dense_used: boolean;
+  chunks: HybridChunkItem[];
+};
+
+export async function listSpaces(signal?: AbortSignal): Promise<SpaceListResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/spaces`, { signal });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function createSpace(
+  req: SpaceCreateRequest,
+  signal?: AbortSignal
+): Promise<SpaceItem> {
+  const resp = await fetch(`${API_BASE_URL}/v1/spaces`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function deleteSpace(
+  slug: string,
+  signal?: AbortSignal
+): Promise<{ deleted: boolean; slug: string }> {
+  const resp = await fetch(`${API_BASE_URL}/v1/spaces/${encodeURIComponent(slug)}`, {
+    method: "DELETE",
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function crawlSpace(
+  slug: string,
+  maxPages = 20,
+  signal?: AbortSignal
+): Promise<SpaceCrawlResponse> {
+  const resp = await fetch(
+    `${API_BASE_URL}/v1/spaces/${encodeURIComponent(slug)}/crawl?max_pages=${encodeURIComponent(String(maxPages))}`,
+    { method: "POST", signal }
+  );
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function buildSpaceGraph(
+  slug: string,
+  signal?: AbortSignal
+): Promise<GraphBuildStatus> {
+  const resp = await fetch(
+    `${API_BASE_URL}/v1/spaces/${encodeURIComponent(slug)}/graph/build`,
+    { method: "POST", signal }
+  );
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function spaceGraphStatus(
+  slug: string,
+  signal?: AbortSignal
+): Promise<GraphBuildStatus> {
+  const resp = await fetch(
+    `${API_BASE_URL}/v1/spaces/${encodeURIComponent(slug)}/graph/status`,
+    { signal }
+  );
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function querySpaceGraph(
+  slug: string,
+  req: { query: string; answer?: boolean },
+  signal?: AbortSignal
+): Promise<GraphQueryResponse> {
+  const resp = await fetch(
+    `${API_BASE_URL}/v1/spaces/${encodeURIComponent(slug)}/graph/query`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+      signal,
+    }
+  );
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function hybridSearch(
+  req: { query: string; k?: number; space?: string; dense?: boolean },
+  signal?: AbortSignal
+): Promise<HybridSearchResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/hybrid`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}

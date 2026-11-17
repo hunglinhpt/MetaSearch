@@ -44,7 +44,7 @@ jobs:
       - name: Static Analysis & Linting (Ruff Check)
         run: uv run --locked python -m ruff check app tests scripts
 
-      - name: Type check (mypy, app/core and app/api)
+      - name: Type check (mypy, all app/)
         run: uv run --locked python -m mypy
 
       - name: Security AST Audit (Bandit)

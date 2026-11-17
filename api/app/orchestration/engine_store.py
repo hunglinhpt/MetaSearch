@@ -28,7 +28,7 @@ from app.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.db.models import Engine as EngineRow
 from app.db.models import EngineHealth as EngineHealthRow
-from app.db.session import get_sessionmaker
+from app.db.session import get_sessionmaker, sqlite_write_lock
 from app.retrieval.models import EngineConfig
 
 logger = get_logger(__name__)
@@ -489,6 +489,10 @@ class DbEngineStore:
         self._db_timeout_s = self._settings.engine_store_db_timeout_s
         self._cache: dict[str, EngineConfig] | None = None
         self._cache_at = 0.0
+        # docs/29 DEFER-A (audit B#6): generation counter for the
+        # stale-while-revalidate TOCTOU — a revalidator that read rows BEFORE
+        # an update() committed must not publish them over the fresh cache.
+        self._cache_gen = 0
         self._db_warned = False
         self._session_factory = session_factory
         self._db_error_until = 0.0
@@ -554,9 +558,10 @@ class DbEngineStore:
         return dict(self._cache)
 
     async def _revalidate_background(self) -> None:
+        gen = self._cache_gen  # captured BEFORE the await (TOCTOU guard)
         try:
             rows = await self._guarded(self._load_rows())
-            if rows:
+            if rows and gen == self._cache_gen:
                 self._cache = rows
                 self._cache_at = time.monotonic()
                 self._db_error_until = 0.0
@@ -634,7 +639,12 @@ class DbEngineStore:
             await self._guarded(_do_update())
         except Exception as exc:
             logger.warning("engine_update_db_failed", error=type(exc).__name__)
+            self._cache_gen += 1
+            self._cache = None
             return await self._fallback.update(engine_id, changes)
+        # docs/29 DEFER-A (audit B#6): bump the generation so any in-flight
+        # revalidator cannot publish pre-update rows over the fresh cache.
+        self._cache_gen += 1
         self._cache = None
         return (await self.snapshot()).get(engine_id)
 
@@ -655,12 +665,13 @@ class DbEngineStore:
         return base
 
     async def record_result(self, engine_id: str, *, ok: bool, latency_ms: int) -> None:
+        # Hot path (WP-03, verified by test_search_hot_path_issues_no_sql): keep
+        # per-request result accounting in memory so searches issue 0 SQL.
         await self._fallback.record_result(engine_id, ok=ok, latency_ms=latency_ms)
 
     async def _record_db(self, engine_id: str, *, ok: bool) -> bool:
         window_start = _window_start()
-        state_changed = False
-        async with self._get_sm()() as session:
+        async with sqlite_write_lock(), self._get_sm()() as session:
             row = (
                 await session.execute(
                     select(EngineRow.consecutive_failures, EngineRow.enabled).where(
@@ -720,7 +731,7 @@ class DbEngineStore:
                     .values(consecutive_failures=consecutive)
                 )
             await session.commit()
-        return state_changed
+        return consecutive != prev_consecutive
 
     async def _load_health(self):
         async with self._get_sm()() as session:

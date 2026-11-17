@@ -76,13 +76,17 @@ def _drop_implausible_vnd_bil(fields: dict[str, float], sym: str) -> None:
         if not (low_bound <= val <= hi):
             logger.warning("fa_suspect_unit: %s %s=%s outside %s", sym, name, val, (low_bound, hi))
             del fields[name]
-    for name in ("revenue_growth_pct", "profit_growth_pct"):
-        val = fields.get(name)
-        if val is not None and abs(val) > _GROWTH_PCT_BOUND:
+    for pct_name in ("revenue_growth_pct", "profit_growth_pct"):
+        pct_val: float | None = fields.get(pct_name)
+        if pct_val is not None and abs(pct_val) > _GROWTH_PCT_BOUND:
             logger.warning(
-                "fa_suspect_unit: %s %s=%s beyond ±%s", sym, name, val, _GROWTH_PCT_BOUND
+                "fa_suspect_unit: %s %s=%s beyond ±%s",
+                sym,
+                pct_name,
+                pct_val,
+                _GROWTH_PCT_BOUND,
             )
-            del fields[name]
+            del fields[pct_name]
 
 
 def _parse_grounded_date(value: Any) -> datetime | None:

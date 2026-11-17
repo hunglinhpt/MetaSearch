@@ -21,6 +21,7 @@ import hashlib
 import secrets
 import time
 from collections import deque
+from collections.abc import Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -239,7 +240,20 @@ def _local_rate_limit(
     raw_hits.append((now, cost))
     remaining = max(limit - (current_weight + cost), 0)
     if len(_local_windows) > _LOCAL_WINDOW_MAX:
-        _local_windows.clear()
+        # docs/29 DEFER-A (audit B#20): clear() reset EVERY caller's quota
+        # at once — drop already-expired windows first, then evict oldest.
+        def _last_ts(entries: Sequence[Any]) -> float:
+            last = entries[-1] if entries else now
+            return float(last[0] if isinstance(last, tuple) else last)
+
+        expired = [k for k, entries in _local_windows.items() if _last_ts(entries) < cutoff]
+        for stale_key in expired:
+            _local_windows.pop(stale_key, None)
+        if len(_local_windows) > _LOCAL_WINDOW_MAX:
+            overflow = len(_local_windows) - _LOCAL_WINDOW_MAX
+            oldest = sorted(_local_windows.items(), key=lambda kv: _last_ts(kv[1]))[:overflow]
+            for stale_key, _ in oldest:
+                _local_windows.pop(stale_key, None)
     return True, remaining, 0
 
 
@@ -386,6 +400,7 @@ _STATIC_ROUTE_COSTS: tuple[tuple[str, str | None, int], ...] = (
     ("/graph/query", "POST", 2),  # optional LLM answer over the subgraph
     ("/market/ohlcv", "POST", 2),  # one upstream feed call + possible SSI fallback
     ("/market/sentiment", "POST", 8),  # PASS-2 P1-3: up to 22 pipeline sub-searches/fan-out
+    ("/hybrid", "POST", 2),  # F5: embeds query via upstream API when EMBEDDING_L2 != off
     ("/crawl", "POST", 8),  # crawl fans out to dozens of guarded fetches (also Spaces crawl)
     ("/map", "POST", 3),  # sitemap/HTML discovery
 )
@@ -410,8 +425,11 @@ async def _route_cost(request: Request) -> int:
         # 3 units - 10-40 upstream fetches.
         return 3 + min(await _request_item_count(request), 20)
     if path.endswith("/watchlist/alerts"):
-        # Each alert runs a full pipeline search per watched item.
-        return 1 + min(await _request_item_count(request), 100) // 4
+        # docs/29 DEFER-A (AppSec F4): this GET has no body, so the old
+        # payload-proportional formula always charged 1 unit while the
+        # handler fans out one full pipeline search per watched item
+        # (cap 20). Flat weight covers the worst case.
+        return 6
     return static_route_cost(method, path) or 1
 
 

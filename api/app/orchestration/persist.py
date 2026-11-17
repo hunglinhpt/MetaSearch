@@ -390,20 +390,34 @@ async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> N
             for stored_id, stored_hash in rows.all():
                 stored[stored_hash] = stored_id
         if stored:
+            remapped_candidates: set[uuid.UUID] = set()
             for page, raw_target, canon, _domain, fresh_id in plan:
                 url_hash = _url_hash(canon)
                 real_id = stored.get(url_hash)
                 if real_id is None:
                     # our executemany just landed this row under fresh_id
                     real_id = fresh_id
-                else:
-                    # a concurrent writer owns it — abandon our fresh id and
-                    # attach chunks to the stored document instead
+                elif fresh_id in new_doc_ids and real_id != fresh_id:
+                    # a concurrent writer (or prefetch miss) owns it — abandon fresh_id
                     new_doc_ids.discard(fresh_id)
-                    new_doc_ids.add(real_id)
+                    remapped_candidates.add(real_id)
+                    if fresh_id in embeddings_by_doc and real_id not in embeddings_by_doc:
+                        embeddings_by_doc[real_id] = embeddings_by_doc.pop(fresh_id)
+                    else:
+                        embeddings_by_doc.pop(fresh_id, None)
                 doc_ids[page.url] = real_id
                 doc_ids[raw_target] = real_id
                 doc_ids[canon] = real_id
+            if remapped_candidates:
+                existing_chunk_docs = await session.execute(
+                    select(ChunkRow.document_id)
+                    .where(ChunkRow.document_id.in_(remapped_candidates))
+                    .distinct()
+                )
+                already_has_chunks = {row[0] for row in existing_chunk_docs.all()}
+                for cand_id in remapped_candidates:
+                    if cand_id not in already_has_chunks:
+                        new_doc_ids.add(cand_id)
         bind_dialect = session.bind.dialect.name if session.bind is not None else "sqlite"
         is_pg = bind_dialect == "postgresql"
         chunk_values: list[dict[str, Any]] = []

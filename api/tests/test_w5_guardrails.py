@@ -45,6 +45,7 @@ COSTED_POST = {
     "/v1/market/sentiment": 8,
     "/v1/crawl": 8,
     "/v1/map": 3,
+    "/v1/hybrid": 2,
     "/v1/spaces/{slug}/crawl": 8,
     "/v1/spaces/{slug}/graph/build": 10,
     "/v1/spaces/{slug}/graph/query": 2,
@@ -66,7 +67,6 @@ UNIT_COST_POST = {
     "/v1/prefs/boosts",
     "/v1/memory",
     "/v1/memory/observations",
-    "/v1/hybrid",  # DB only, admit("hybrid")
     "/v1/spaces",
 }
 
@@ -96,7 +96,7 @@ def test_expensive_routes_bill_their_weight(template: str, expected: int) -> Non
 
 
 def test_cheap_routes_are_not_accidentally_weighted() -> None:
-    for path in ("/v1/search", "/v1/hybrid", "/v1/memory", "/v1/spaces", "/v1/watchlist"):
+    for path in ("/v1/search", "/v1/memory", "/v1/spaces", "/v1/watchlist"):
         assert static_route_cost("POST", path) is None
 
 

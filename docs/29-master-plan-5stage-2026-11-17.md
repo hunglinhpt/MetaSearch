@@ -46,7 +46,9 @@ toàn đợt**; không dedup cross-engine; citation placeholder
 |---|---|---|
 | P2-1 | Env example drift: thêm `TELEGRAM_BOT_TOKEN/CHAT_ID, WEBHOOK_URL, DISCORD_WEBHOOK_URL, FA_FIREANT_TOKEN`; đổi `RERANKER_ONNX_DIR`→`ONNX_RERANKER_DIR` (phantom); thêm biến đọc-mà-không-doc (`SCHEDULER_*`, `MAX_BODY_BYTES`, `RATE_LIMIT_RPM`, `DEV_ANON_ADMIN`, `RETENTION_*`, `MCP_ENABLED`, `OTEL_ENABLED`, `SUPERAGENT_ENABLED`) | `deploy/.env.example`, `docs/12-roadmap-plan.md` |
 | P2-2 | Sync số liệu thật: 1087 backend / 107 frontend tests; MCP **9** tools; skills **10**; adapters **26**; golden **46**; version 3.2.0 | `README.md` |
-| P2-3 | Repo map + status update | `AGENTS.md`, `CHANGELOG.md` — **DEFER: file đang được session song song sửa** |
+| P2-3 | Repo map + status update | `AGENTS.md`, `CHANGELOG.md`, `docs/12`, `docs/15`, `docs/27`, `docs/29` — ✅ COMPLETED |
+| P2-4 | Streaming markdown hardening | `frontend/components/{AnswerMarkdown,CodeBlock,MathFormula,MermaidDiagram}.tsx`, `frontend/lib/inlineMd.ts` — state reset giữa render/fail, `MAX_FAILED_EMPHASIS=64` chống `O(n^2)`, `trust: false` tường minh, `useEffect` StrictMode gate |
+| P2-5 | Frontend container healthcheck | `frontend/Dockerfile`, `deploy/docker-compose.yml` — Node `fetch` `HEALTHCHECK` |
 
 ## [P3] High-ROI upgrades (chọn lọc, ROI/risk cao)
 
@@ -54,21 +56,23 @@ toàn đợt**; không dedup cross-engine; citation placeholder
 |---|---|---|
 | P3-1 | Gateway 429 backoff exponential + jitter (B#13); SearXNG retry sleep (B#14) | `llm/gateway.py`, `retrieval/adapters/searxng.py` |
 | P3-2 | `sha1_key` length-prefix chống collision (B#21); guard `canonicalize` trong research (B#16); hybrid `_cosine` precompute norm (B#24); `apply_signals` hoist tokenize (B#12) | `cache.py`, `research.py`, `hybrid.py`, `scoring.py` |
-| P3-3 | Frontend: badge + xếp-first cho topic `run_digest` ("Bản tin chung") — **DEFER sang vòng sau** (frontend churn tách commit; backend API đã sẵn topic `run_digest` cho UI tiêu thụ) | `frontend/app/page.tsx` |
+| P3-3 | Frontend: badge `🌐 Bản tin chung` + xếp-first cho topic `run_digest` — ✅ COMPLETED | `frontend/app/page.tsx`, `frontend/app/globals.css` |
 
-## DEFER (có lý do, ghi rõ)
+## DEFER — Trạng thái hoàn thiện (2026-11-17)
 
-- `auth.py` rate-cost fixes (hybrid embed cost, watchlist alerts cost),
-  market.py CSV formula-injection — **auth.py/market.py đang thuộc session
-  song song**; chuyển tiếp findings, không đụng file.
-- `engine_store` TOCTOU generation counter, `_record_db` wiring,
-  admission semaphore leak, rate-window nuke, `_LocalTTLCache` heap,
-  compress offload, council usage, FA priority short-circuit,
-  podcast/graph LRU eviction, Docker digest pins — P2/P3 Có risk cấu trúc
-  lớn hơn ROI ngay bây giờ; đã ghi đủ spec để vòng sau làm.
-- AGENTS.md/CHANGELOG sync — chờ session song song commit.
-- LLM synthesis cho briefing (thay vì extractive) — P3 vòng sau, cần
-  gateway injection + budget + fail-open; extractive-first là bước 1.
+- ✅ **DEFER-A / B / C (đã hoàn tất trong chuỗi fix sau crash quota GLM + 3 vòng audit):**
+  - `core/auth.py`: thêm `/v1/hybrid` `POST` cost `2` (`AppSec F5`), cắt tỉa expired windows trước LRU trong `_local_rate_limit` (`B#20`).
+  - `core/admission.py`: `get_key_semaphore` LRU chuẩn (move-to-end khi hit, chỉ evict slot nhàn rỗi `_value >= limit`).
+  - `api/v1/market.py`: `_csv_safe_cell` chống CSV formula injection (`=`, `+`, `-`, `@`, `\t`, `\r`, giữ nguyên số âm); `asyncio.wait` bảo toàn batch hoàn thành khi timeout fan-out; gắn cờ `QUANT_FETCH_SKIPPED_BUDGET` khi bỏ qua live quant do cạn budget.
+  - `orchestration/engine_store.py`: khóa `sqlite_write_lock()` & giá trị trả về `consecutive != prev_consecutive` trong `_record_db`, invalidates `_cache` + tăng `_cache_gen` khi `update()` fall back in-memory, giữ `record_result` in-memory (0-SQL trên search hot path).
+  - `cache.py`: `_LocalTTLCache` dùng min-heap `_expiry_heap` + rebuild có cận trên.
+  - `api/v1/podcast.py`: miễn `pending`/`running` khi `_prune_jobs`, chạy song song `_gather_sections` qua `Semaphore(3)` (`B#18`, `B#25`).
+  - `api/v1/spaces.py`: `_graph_inflight` chống evict build đang chạy (`B#17`), bọc `query_graph_endpoint` bằng delimiter ngẫu nhiên SEC-07 (`P1-2`).
+  - `llm/council.py` & `orchestration/pipeline.py`: tổng hợp `usage` thật xuyên suốt 3 pha council (`B#26`), `asyncio.gather` cho `expansion_variants` (`B#8`), offload `compress_chunks`/`build_context` của `/v1/context` qua `run_cpu` (`B#22`).
+  - `retrieval/fa_sources/aggregator.py`: `fetch_ohlcv` short-circuit tuần tự theo priority (`B#15`).
+  - **Regression & 3-round convergence fixes:** sửa tái-chèn trùng chunk khi re-scrape trong `orchestration/persist.py`, `sqlite_write_lock()` + bỏ double-dedup + escape `\`/`|` trong `orchestration/scheduler.py`, sửa lỗi `None` crash trong `_quant_only_payload` & giữ quant telemetry khi chỉ có tin đồn / nâng `S-Score >= 2.0` từ `ELEVATED` lên `VIRAL_SURGE` & lọc URL chỉ nhận `http(s)` trong `retrieval/sentiment.py` + `schemas.py`.
+- ✅ **Hoàn tất trong v3.3.0 (bổ sung từ backlog):**
+  - Opt-in guarded executive brief cho `run_digest` (`SCHEDULER_LLM_SYNTHESIS_ENABLED=false` mặc định, SEC-07 random delimiters, kiểm `validate_citations` + `prose_only >= 15`, timeout `12s` fail-open bảo toàn bản tin extractive; test ở `api/tests/test_proposals_wave.py`).
 
 ## Verification criteria (Stage 5)
 

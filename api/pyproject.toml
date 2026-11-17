@@ -92,9 +92,9 @@ filterwarnings = ["error::DeprecationWarning:app.*"]
 exclude_dirs = ["tests", "alembic"]
 
 [tool.mypy]
-# Typed surface checked in CI (WP-16); widen the list as modules are cleaned up.
+# Full application typed surface checked in CI (enforced across all packages).
 python_version = "3.12"
-files = ["app/core", "app/api", "app/llm"]
+files = ["app"]
 follow_imports = "silent"
 ignore_missing_imports = true
 warn_unused_ignores = true

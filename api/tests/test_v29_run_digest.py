@@ -294,35 +294,39 @@ class TestScanAllBehavior:
             get_settings(), "database_url", f"sqlite+aiosqlite:///{tmp_path}/scan.db"
         )
         await dispose_engine()
-        await ensure_schema()
+        try:
+            await ensure_schema()
 
-        adapters = [
-            _FakeAdapter(
-                [
-                    _result(
-                        "https://news.example/x",
-                        "Tin thực tế",
-                        "Nội dung tin thực tế cho chủ đề",
-                        "searxng",
-                    ),
-                ]
-            )
-        ]
-        scanner = self._scanner(adapters)
+            adapters = [
+                _FakeAdapter(
+                    [
+                        _result(
+                            "https://news.example/x",
+                            "Tin thực tế",
+                            "Nội dung tin thực tế cho chủ đề",
+                            "searxng",
+                        ),
+                    ]
+                )
+            ]
+            scanner = self._scanner(adapters)
 
-        async def fake_enabled():
-            return [(SimpleNamespace(id="e0", category="news", timeout_ms=500), adapters[0])]
+            async def fake_enabled():
+                return [(SimpleNamespace(id="e0", category="news", timeout_ms=500), adapters[0])]
 
-        scanner.registry.enabled = fake_enabled
-        posts = await scanner.scan_all()
-        # 6 topic posts + 1 unified digest
-        assert len(posts) == len(DEFAULT_TOPICS) + 1
-        digest = posts[-1]
-        assert digest.topic == RUN_DIGEST_TOPIC
-        assert "Bản Tin Chung" in digest.title
-        assert all(p.topic != RUN_DIGEST_TOPIC for p in posts[:-1])
-        # real content surfaced in the digest
-        assert "Tin thực tế" in digest.content_md
+            scanner.registry.enabled = fake_enabled
+            posts = await scanner.scan_all()
+            # 6 topic posts + 1 unified digest
+            assert len(posts) == len(DEFAULT_TOPICS) + 1
+            digest = posts[-1]
+            assert digest.topic == RUN_DIGEST_TOPIC
+            assert "Bản Tin Chung" in digest.title
+            assert all(p.topic != RUN_DIGEST_TOPIC for p in posts[:-1])
+            # real content surfaced in the digest
+            assert "Tin thực tế" in digest.content_md
+        finally:
+            monkeypatch.undo()
+            await dispose_engine()
 
     async def test_scan_all_respects_last_run_in_background_mode(self, monkeypatch, tmp_path):
         from app.config import get_settings
@@ -333,18 +337,22 @@ class TestScanAllBehavior:
             get_settings(), "database_url", f"sqlite+aiosqlite:///{tmp_path}/scan2.db"
         )
         await dispose_engine()
-        await ensure_schema()
+        try:
+            await ensure_schema()
 
-        adapter = _FakeAdapter([])
-        scanner = self._scanner([adapter])
+            adapter = _FakeAdapter([])
+            scanner = self._scanner([adapter])
 
-        async def fake_enabled():
-            return [(SimpleNamespace(id="e0", category="news", timeout_ms=500), adapter)]
+            async def fake_enabled():
+                return [(SimpleNamespace(id="e0", category="news", timeout_ms=500), adapter)]
 
-        scanner.registry.enabled = fake_enabled
-        await scanner.scan_all()
-        calls_after_first = adapter.calls
-        # all topics were just scanned — a background run must skip them all
-        posts = await scanner.scan_all(respect_last_run=True, interval_hours=24.0)
-        assert posts == []
-        assert adapter.calls == calls_after_first
+            scanner.registry.enabled = fake_enabled
+            await scanner.scan_all()
+            calls_after_first = adapter.calls
+            # all topics were just scanned — a background run must skip them all
+            posts = await scanner.scan_all(respect_last_run=True, interval_hours=24.0)
+            assert posts == []
+            assert adapter.calls == calls_after_first
+        finally:
+            monkeypatch.undo()
+            await dispose_engine()

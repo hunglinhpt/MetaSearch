@@ -13,7 +13,17 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-15 — v3.2.0 4-Repo AI Infra Integration + 5-pass audit; trước đó v3.1.0 Lite Web UI)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-17 — v3.3.0: docs/27 Live VIX & Simplize Quant, docs/28 Rich-Content Web UI, docs/29 Unified Extractive Digest & DEFER-A/B/C, Full-App `mypy`, Opt-In Executive Digest & UI Parity)
+
+- ✅ **v3.3.0 Convergence & 3-Round Adversarial Audit (`tests/test_proposals_wave.py`, `tests/test_defer_audit_fixes.py`)**:
+  - **Full-app `mypy` (`api/pyproject.toml`)**: mở rộng phạm vi `[tool.mypy].files` từ `app/core`, `app/api`, `app/llm` sang toàn bộ `app/` (159 file), xử lý sạch toàn bộ lỗi annotation ở `app/orchestration/`, `app/retrieval/`, `app/mcp/client.py`, `app/config.py`; bổ sung test nâng độ phủ cho `site.py`, `hybrid.py`, `worker.py`, `tracing.py`, `podcast.py` personal, `scheduler.py`, `sentiment_quant.py` và `market.py`.
+  - **Live Quant Proxies & Simplize Fallback (`sentiment_quant.py`, `market.py`)**: bổ sung `fetch_live_market_proxies` (`^VIX` + `^VIX3M` không cần key cho mã quốc tế khi `fetch_market_data=true`, `_merge_live_market_proxies` không ghi đè tham số caller), Simplize fallback khi `fa_aggregator` thiếu chỉ số VN, chặn ký tự symbol không hợp lệ qua `ensure_symbol`, và sửa `parse_yahoo_chart_bars` cho index thiếu `volume` / giá trị non-finite.
+  - **Opt-In Executive Synthesis cho `run_digest` (`scheduler.py`, `deps.py`, `config.py`, `deploy/.env.example`)**: `SCHEDULER_LLM_SYNTHESIS_ENABLED=false` mặc định; khi bật, `_synthesize_executive_brief` tóm tắt điều hành trong rào ngẫu nhiên SEC-07, kiểm `validate_citations` + `prose_only >= 15`, timeout `12s` fail-open giữ nguyên bản tin extractive.
+  - **Web UI Parity (`frontend/`)**: thêm tab `📊 Tâm lý & Dòng tiền` (`SentimentPanel.tsx`), tab `🗂️ Spaces & KG` (`SpacesPanel.tsx` với Spaces CRUD, Crawl, async KG build + bounded poll, KG query và `POST /v1/hybrid`), nút chuyển nhanh từ `ComparePanel.tsx`, và nút `"🎧 Podcast Watchlist"` (`/v1/podcast/personal*`) trong `NewsPanel.tsx`, kèm `AbortController`/generation guard và `api.test.ts` assertions.
+
+- ✅ **Hậu-v3.2.0 Convergence (docs/28 & docs/29 + DEFER-A/B/C)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md), [docs/28-chat-demo-evaluation-and-integration.md](docs/28-chat-demo-evaluation-and-integration.md) và [docs/29-master-plan-5stage-2026-11-17.md](docs/29-master-plan-5stage-2026-11-17.md):
+  - **Streaming Rich-Content Web UI (`docs/28`, `frontend/`)**: `AnswerMarkdown.tsx`, `CodeBlock.tsx` (lazy Prism), `MathFormula.tsx` (KaTeX `trust: false`), `MermaidDiagram.tsx` (serial strict sanitize + state reset), `inlineMd.ts` (`MAX_FAILED_EMPHASIS=64` chống `O(n^2)`), StrictMode-pure `useEffect` pacing gate, badge/sort-first `run_digest` (`🌐 Bản tin chung`) trên `page.tsx`, và `HEALTHCHECK` trong `frontend/Dockerfile` / `deploy/docker-compose.yml`.
+  - **Unified Extractive Digest & Hardening (`docs/29`)**: `AutomatedScanner` (`scheduler.py`) viết lại extractive thuần từ kết quả thật, `run_digest` tổng hợp toàn đợt, `sqlite_write_lock()`, hoàn tất toàn bộ DEFER-A/B/C (`admission` true LRU, `auth` `/v1/hybrid` cost & expired-first window prune, `market` CSV escape / `asyncio.wait` partial batch / `QUANT_FETCH_SKIPPED_BUDGET`, `engine_store` `_record_db` lock + `_cache_gen` & fallback cache invalidation + 0-SQL hot path, `cache` min-heap TTL, `podcast`/`spaces` active-job LRU guard + SEC-07 delimiters, `council` real `usage`, `pipeline` `expansion` gather & `run_cpu` offload, `persist` chống trùng chunk khi re-scrape, `sentiment` `None`-safe `_quant_only_payload` / rumor+quant / `S-Score >= 2.0` / `http(s)` driver URL, `FA` `fetch_ohlcv` short-circuit).
 
 - ✅ **v3.2.0 4-Repo AI Infra Integration & 5-pass hardening (docs/25)** — chi tiết ở [CHANGELOG.md](CHANGELOG.md) và [docs/25-llm-integration-evaluation.md](docs/25-llm-integration-evaluation.md):
   - **OmniRoute-inspired validation & router** (`llm/key_validator.py`, `llm/router.py`): 17 `KEY_FORMAT_SPECS`, live probe SSRF-safe qua `get_http_client("internal")` (`asyncio.Semaphore(6)`), `scoped_runtime_override`, `ProviderHealthTracker` + EWMA + `LLM_ALLOW_KEYLESS_FALLBACK=false`, API `POST /v1/llm/validate` (`require_admin`) & `GET /v1/llm/health?task=answer|report`.
@@ -190,7 +200,7 @@ api/app/
   orchestration/ pipeline.py (search + answer, event generator) · persist.py · engine_store.py
 frontend/        app/page.tsx (UI) · lib/api.ts (SSE client + ApiError)
 deploy/          docker-compose.yml · searxng/ · prometheus/ · grafana/ · k6/
-docs/            01-19 thiết kế + adr/ (16/17 WebUI+TTS/VoiceStudio, 18 roadmap v2.3, 19 global search) — 12-roadmap-plan.md là source of truth; README.md song ngữ Anh–Vi trong một file (mục #english / #tiếng-việt)
+docs/            01-29 thiết kế + adr/ (25 AI infra, 26 architect review, 27 sentiment standards, 28 rich UI, 29 unified digest) — 12-roadmap-plan.md là source of truth; README.md song ngữ Anh–Vi trong một file (mục #english / #tiếng-việt)
 ```
 
 ## 4. Quy ước bắt buộc

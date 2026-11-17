@@ -800,7 +800,7 @@ class ResearchPipeline:
             )
             deduped_results: dict[str, ScoredResult] = {}
             for out in outcomes:
-                if isinstance(out, Exception):
+                if isinstance(out, BaseException):
                     continue
                 for r in out.results:
                     existing = deduped_results.get(r.canonical_url)

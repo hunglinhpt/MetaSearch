@@ -1224,7 +1224,7 @@ def analyze_omni_channel_sentiment(
     valid_hits = [h for h in hits if not is_entity_collision(entity, h)]
 
     if not valid_hits:
-        if ohlcv_metrics.get("available") or proxy_metrics.get("available"):
+        if ohlcv_metrics.get("available") or proxy_metrics.get("available") or fundamentals_dict:
             return _quant_only_payload(
                 entity,
                 ohlcv_metrics=ohlcv_metrics,
@@ -1360,6 +1360,16 @@ def analyze_omni_channel_sentiment(
     # (scored_hits is provably non-empty here) — rumor-only input now returns
     # the honest INSUFFICIENT-factual payload instead of falling through.
     if not factual_hits:
+        if ohlcv_metrics.get("available") or proxy_metrics.get("available") or fundamentals_dict:
+            return _quant_only_payload(
+                entity,
+                ohlcv_metrics=ohlcv_metrics,
+                proxy_metrics=proxy_metrics,
+                fundamentals=fundamentals_dict,
+                seeding_collapsed_count=seeding_collapsed_count,
+                unverified_rumor_count=unverified_rumor_count,
+                all_hits=scored_hits,
+            )
         return _insufficient_data_payload(entity)
 
     def _weighted_avg(items: list[ScoredSentimentHit]) -> float:
@@ -1457,7 +1467,7 @@ def analyze_omni_channel_sentiment(
             "effective_weight": d.effective_weight,
             "polarity": d.polarity,
             "evidence_quote": d.evidence_quote,
-            "url": d.url or None,
+            "url": _safe_http_url(d.url),
         }
         for idx, d in enumerate(sorted_drivers, start=1)
     ]
@@ -1569,6 +1579,22 @@ def analyze_omni_channel_sentiment(
         "top_verified_drivers": top_drivers,
         "risk_circuit_breakers": breakers,
     }
+
+
+def _safe_http_url(url: str | None) -> str | None:
+    """Allow only http(s) driver URLs with a non-empty host (block javascript:/data:)."""
+    if not url:
+        return None
+    cleaned = url.strip()
+    if not cleaned:
+        return None
+    try:
+        parsed = urlsplit(cleaned)
+    except ValueError:
+        return None
+    if parsed.scheme.lower() in ("http", "https") and parsed.netloc:
+        return cleaned
+    return None
 
 
 def _score_to_label(score: float) -> SentimentLabel:
@@ -1916,10 +1942,10 @@ def _build_benchmark_standards(
     uncertainty_score = _compute_uncertainty_score(factual_hits)
     buzz_vel = _compute_buzz_velocity(all_hits)
     s_score = proxies.get("social_s_score")
-    if s_score is not None and buzz_vel in ("DORMANT", "NORMAL"):
+    if s_score is not None and buzz_vel in ("DORMANT", "NORMAL", "ELEVATED"):
         if float(s_score) >= 2.0:
             buzz_vel = "VIRAL_SURGE"
-        elif float(s_score) >= 1.0:
+        elif float(s_score) >= 1.0 and buzz_vel in ("DORMANT", "NORMAL"):
             buzz_vel = "ELEVATED"
 
     # 7-Pillar Checklist (CNN F&G + Finnhub + Investopedia + Vietstock + SentimenTrader + Quant)
@@ -2115,25 +2141,81 @@ def _quant_only_payload(
     ohlcv_metrics: dict[str, Any],
     proxy_metrics: dict[str, Any],
     fundamentals: dict[str, Any] | None,
+    seeding_collapsed_count: int = 0,
+    unverified_rumor_count: int = 0,
+    all_hits: list[ScoredSentimentHit] | None = None,
 ) -> dict[str, Any]:
-    """Return strictly grounded quantitative sentiment when OHLCV/proxies exist cleanly."""
+    """Return strictly grounded quantitative sentiment when OHLCV/proxies/FA exist."""
+    hits_all = all_hits or []
+    vn_social_hits = [s for s in hits_all if s.ecosystem == "vn_social"]
+    global_social_hits = [s for s in hits_all if s.ecosystem == "global_social"]
+    social_hits = vn_social_hits + global_social_hits
+    social_total_w = sum(s.effective_weight for s in social_hits)
+    social_score = (
+        round(
+            max(
+                -1.0,
+                min(
+                    1.0,
+                    sum(s.polarity_score * s.effective_weight for s in social_hits)
+                    / social_total_w,
+                ),
+            ),
+            4,
+        )
+        if social_total_w > 0.0
+        else 0.0
+    )
+
     bs = _build_benchmark_standards(
         factual_hits=[],
         official_hits=[],
-        social_hits=[],
-        all_hits=[],
+        social_hits=social_hits,
+        all_hits=hits_all,
         official_score=0.0,
-        social_score=0.0,
-        seeding_collapsed_count=0,
-        unverified_rumor_count=0,
+        social_score=social_score,
+        seeding_collapsed_count=seeding_collapsed_count,
+        unverified_rumor_count=unverified_rumor_count,
         ohlcv_metrics=ohlcv_metrics,
         proxy_metrics=proxy_metrics,
         fundamentals=fundamentals,
         nlp_telemetry=None,
     )
     fg = bs["fear_greed_index"]
-    signed = round((fg - 50) / 50.0, 3)
+    signed = round((fg - 50) / 50.0, 3) if fg is not None else 0.0
     label = _score_to_label(signed)
+    smart_conf = bs["smart_money_confidence"]
+    dumb_conf = bs["dumb_money_confidence"]
+    inst_vs_retail = (
+        round(max(-2.0, min(2.0, (smart_conf - dumb_conf) / 50.0)), 4)
+        if smart_conf is not None and dumb_conf is not None
+        else 0.0
+    )
+    breakers: list[str] = []
+    if seeding_collapsed_count > 0:
+        breakers.append("COORDINATED_SOCIAL_SEEDING")
+    if unverified_rumor_count > 0:
+        breakers.append("UNVERIFIED_RUMOR_SPIKE")
+    if fg is None:
+        breakers.append("INSUFFICIENT_DATA")
+
+    has_ohlcv_or_proxy = bool(ohlcv_metrics.get("available") or proxy_metrics.get("available"))
+    confidence = 0.35 if has_ohlcv_or_proxy else 0.2
+    if fg is None:
+        confidence = min(confidence, 0.18)
+
+    vn_platforms = sorted({s.platform for s in vn_social_hits})
+    global_platforms = sorted({s.platform for s in global_social_hits})
+    audit_note = (
+        f"Detected {seeding_collapsed_count} seeding post(s) and "
+        f"{unverified_rumor_count} uncorroborated rumor(s) with zero factual text hits; "
+        f"score derived strictly from real OHLCV/proxy/fundamental telemetry."
+        if (seeding_collapsed_count > 0 or unverified_rumor_count > 0)
+        else (
+            "Quantitative telemetry only (OHLCV / market proxies / fundamentals); "
+            "zero factual social/news hits retrieved or supplied."
+        )
+    )
     return {
         "module": "omni_channel_equity_sentiment_v2",
         "entity": {
@@ -2144,11 +2226,9 @@ def _quant_only_payload(
         },
         "sentiment_summary": {
             "composite_score": signed,
-            "institutional_vs_retail_spread": round(
-                (bs["smart_money_confidence"] - bs["dumb_money_confidence"]) / 50.0, 3
-            ),
+            "institutional_vs_retail_spread": inst_vs_retail,
             "label": label,
-            "confidence": 0.35,
+            "confidence": confidence,
             "market_regime": "LOW_SIGNAL_NOISE",
             "momentum_24h": "UNKNOWN",
         },
@@ -2161,8 +2241,8 @@ def _quant_only_payload(
             },
             "vn_social_ecosystem": {
                 "weighted_score": 0.0,
-                "platforms_covered": [],
-                "hit_count": 0,
+                "platforms_covered": vn_platforms,
+                "hit_count": len(vn_social_hits),
                 "crowd_narrative_vi": (
                     f"Chưa có bài viết xác thực trên MXH cho {entity.ticker}; "
                     f"điểm tổng hợp lấy từ dữ liệu OHLCV/proxy định lượng thực tế."
@@ -2171,8 +2251,8 @@ def _quant_only_payload(
             },
             "global_social_ecosystem": {
                 "weighted_score": 0.0,
-                "platforms_covered": [],
-                "hit_count": 0,
+                "platforms_covered": global_platforms,
+                "hit_count": len(global_social_hits),
                 "crowd_narrative_en": (
                     f"No verified social hits for ${entity.ticker}; "
                     f"scoring reflects real quantitative OHLCV/market proxy formulas."
@@ -2181,15 +2261,12 @@ def _quant_only_payload(
             },
         },
         "social_integrity_audit": {
-            "manipulation_or_seeding_detected": False,
-            "unverified_rumor_count": 0,
-            "audit_notes": (
-                "Quantitative telemetry only (OHLCV / market proxies); "
-                "zero social/news hits retrieved or supplied."
-            ),
+            "manipulation_or_seeding_detected": seeding_collapsed_count > 0,
+            "unverified_rumor_count": unverified_rumor_count,
+            "audit_notes": audit_note,
         },
         "top_verified_drivers": [],
-        "risk_circuit_breakers": [],
+        "risk_circuit_breakers": breakers,
     }
 
 

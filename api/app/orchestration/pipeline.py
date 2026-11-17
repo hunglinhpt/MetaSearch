@@ -668,22 +668,34 @@ class SearchPipeline:
         CACHE_EVENTS.labels(kind="search", outcome="miss").inc()
 
         raws, statuses = await self._fanout(query, params, on_event)
-        # v2.5 P0-3: multi-query — each variant fans out to GENERAL engines only
-        # (bounded cost) and RRF in merge() fuses all raw occurrences.
-        for variant in params.expansion_variants:
-            vraws, _vstatuses = await self._fanout(
-                variant,
-                dataclasses.replace(
-                    params,
-                    categories=["general"],
-                    deep=False,
-                    engines=None,
-                    expansion_variants=(),
-                ),
-                None,
-                general_only=True,
+        # v2.5 P0-3 + docs/29 B#8: multi-query — fan out variants concurrently
+        # against GENERAL engines only (bounded by shared wall budget).
+        if params.expansion_variants:
+
+            async def _variant_fanout(variant: str) -> list[Any]:
+                vraws, _vstatuses = await self._fanout(
+                    variant,
+                    dataclasses.replace(
+                        params,
+                        categories=["general"],
+                        deep=False,
+                        engines=None,
+                        expansion_variants=(),
+                    ),
+                    None,
+                    general_only=True,
+                )
+                return vraws
+
+            variant_batches = await asyncio.gather(
+                *(_variant_fanout(v) for v in params.expansion_variants),
+                return_exceptions=True,
             )
-            raws.extend(vraws)
+            for batch in variant_batches:
+                if isinstance(batch, BaseException):
+                    logger.warning("expansion_variant_failed", error=type(batch).__name__)
+                    continue
+                raws.extend(batch)
         configs = await self.registry.configs()
         # docs/20 P2-4: treatment variant runs with the configured RRF weight.
         rrf_weight = (
@@ -1314,7 +1326,10 @@ class AnswerPipeline:
             if self.settings.skill_orchestration_enabled
             else None
         )
-        comp_outcome = compress_chunks(
+        # docs/29 DEFER-B (audit B#22): regex/tokenize-heavy compression
+        # runs off the event loop like _score_chunks/hybrid already do.
+        comp_outcome = await run_cpu(
+            compress_chunks,
             chunks,
             query=normalized_q,
             budget=self.settings.answer_context_budget,
@@ -1323,7 +1338,8 @@ class AnswerPipeline:
             min_chunks=self.settings.context_compression_min_chunks,
             profile=skill_sel.compression_profile if skill_sel else "balanced",
         )
-        included = build_context(
+        included = await run_cpu(
+            build_context,
             comp_outcome.chunks,
             budget=self.settings.answer_context_budget,
             count=counter,
@@ -1425,8 +1441,12 @@ class AnswerPipeline:
                     skill_id=skill_sel.skill_id if skill_sel else "council",
                     max_per_key=self.settings.memory_max_per_key,
                 )
-            # F2: council answers must persist too — same as non-council path.
-            council_usage = Usage()
+            # F2 + B#26: council answers persist real aggregated panel/chairman usage.
+            usage_d = verdict.get("usage") or {}
+            council_usage = Usage(
+                input_tokens=int(usage_d.get("input_tokens") or 0),
+                output_tokens=int(usage_d.get("output_tokens") or 0),
+            )
             finalize = asyncio.create_task(
                 self._finalize_answer(
                     pages=ok_pages,
@@ -1509,8 +1529,9 @@ class AnswerPipeline:
                 "code": getattr(exc, "code", "internal"),
                 "message": str(exc)[:200],
             }
-            if getattr(exc, "retry_after_s", None) is not None:
-                error["retry_after_s"] = round(float(exc.retry_after_s), 1)
+            retry_after_val = getattr(exc, "retry_after_s", None)
+            if retry_after_val is not None:
+                error["retry_after_s"] = round(float(retry_after_val), 1)
             yield ("error", error)
             return
         record_usage(model, usage)
@@ -1733,7 +1754,8 @@ class AnswerPipeline:
             if self.settings.skill_orchestration_enabled
             else None
         )
-        comp_outcome = compress_chunks(
+        comp_outcome = await run_cpu(
+            compress_chunks,
             chunks,
             query=normalized,
             budget=eff_budget,
@@ -1742,7 +1764,8 @@ class AnswerPipeline:
             min_chunks=self.settings.context_compression_min_chunks,
             profile=skill_sel.compression_profile if skill_sel else "balanced",
         )
-        included = build_context(
+        included = await run_cpu(
+            build_context,
             comp_outcome.chunks,
             budget=eff_budget,
             count=counter,
@@ -2055,6 +2078,8 @@ class AnswerPipeline:
             logger.warning("semantic_lookup_failed", error=type(exc).__name__)
             return None
         answer_id, content_md, model = row
+        if answer_id is None:
+            return None
         # No L1 re-lookup here (audit round 10): the original request's key
         # shape (lang/k/categories/...) is unknown from an L2 row, so a
         # default-shape lookup was a near-always miss. Always rebuild

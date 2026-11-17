@@ -43,6 +43,8 @@ export default function MermaidDiagram({ code }: { code: string }) {
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    setFailed(false);
+    setSvg(null);
     if (code.length === 0 || code.length > MAX_MERMAID_CHARS) {
       setFailed(true);
       return;

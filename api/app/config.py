@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -452,6 +452,7 @@ class Settings(BaseSettings):
     # --- Automated Daily Briefings / Blog Scanner ---
     scheduler_enabled: bool = False
     scheduler_interval_hours: float = 24.0
+    scheduler_llm_synthesis_enabled: bool = False
     # Notification dispatcher (Telegram, Webhook, Discord)
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
@@ -466,7 +467,7 @@ class Settings(BaseSettings):
     def is_test(self) -> bool:
         return self.environment == "test"
 
-    def giants(self) -> dict[str, str]:
+    def giants(self) -> dict[str, Any]:
         """Public description of the upstream giants in use."""
         return {
             "searxng_url": self.searxng_url,

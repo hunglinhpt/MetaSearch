@@ -116,13 +116,19 @@ class SSIFASource:
             if len(raw) != len(c_list):
                 logger.debug("ssi_series_schema_drift: %s field=%s", sym, name)
                 return None
-            values = [to_float(x) for x in raw]
-            if any(v is None for v in values):  # NaN/Infinity/str — json accepts NaN
-                raise FASourceError(self.source_id, "upstream_error", f"non_finite_{name}")
-            series[name] = values
-        closes = [to_float(x) for x in c_list]
-        if any(v is None for v in closes):
-            raise FASourceError(self.source_id, "upstream_error", "non_finite_closes")
+            parsed_vals: list[float] = []
+            for x in raw:
+                val = to_float(x)
+                if val is None:  # NaN/Infinity/str — json accepts NaN
+                    raise FASourceError(self.source_id, "upstream_error", f"non_finite_{name}")
+                parsed_vals.append(val)
+            series[name] = parsed_vals
+        closes: list[float] = []
+        for x in c_list:
+            val = to_float(x)
+            if val is None:
+                raise FASourceError(self.source_id, "upstream_error", "non_finite_closes")
+            closes.append(val)
         if any(isinstance(t, bool) for t in t_list):
             raise FASourceError(self.source_id, "upstream_error", "bad_series")
         try:

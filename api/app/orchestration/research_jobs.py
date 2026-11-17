@@ -267,12 +267,11 @@ class ResearchJobStore:
                     for c in citation_rows
                 ]
 
+                raw_status = str(answer_row.status or "done")
                 job = ResearchJob(
                     id=job_id,
                     query=query_row.raw_text,
-                    status="done"
-                    if answer_row.status in ("complete", "truncated")
-                    else answer_row.status,
+                    status="done" if raw_status in ("complete", "truncated") else raw_status,
                     finished=True,
                     owner_key_id=str(query_row.api_key_id) if query_row.api_key_id else None,
                     result={

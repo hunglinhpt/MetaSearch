@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
@@ -48,8 +49,13 @@ _TIER_CONFIG: dict[str, tuple[int, float]] = {
 }
 
 _semaphores: dict[str, asyncio.Semaphore] = {}
-_key_semaphores: dict[str, asyncio.Semaphore] = {}
+_key_semaphores: OrderedDict[str, asyncio.Semaphore] = OrderedDict()
+_key_limits: dict[str, int] = {}
 _sem_lock = asyncio.Lock()
+# docs/29 DEFER-A (audit B#19): key semaphores leaked one entry per deleted
+# key forever — bounded LRU that evicts only idle semaphores so in-flight
+# keys keep their exact concurrency limit.
+_KEY_SEM_MAX = 2048
 
 
 async def get_tier_semaphore(tier: str, limit: int) -> asyncio.Semaphore:
@@ -61,11 +67,29 @@ async def get_tier_semaphore(tier: str, limit: int) -> asyncio.Semaphore:
 
 
 async def get_key_semaphore(key_id: str, limit: int) -> asyncio.Semaphore:
-    if key_id not in _key_semaphores:
-        async with _sem_lock:
-            if key_id not in _key_semaphores:
-                _key_semaphores[key_id] = asyncio.Semaphore(limit)
-    return _key_semaphores[key_id]
+    sem = _key_semaphores.get(key_id)
+    if sem is not None:
+        _key_semaphores.move_to_end(key_id)
+        return sem
+    async with _sem_lock:
+        sem = _key_semaphores.get(key_id)
+        if sem is not None:
+            _key_semaphores.move_to_end(key_id)
+            return sem
+        sem = asyncio.Semaphore(limit)
+        _key_semaphores[key_id] = sem
+        _key_limits[key_id] = limit
+        if len(_key_semaphores) > _KEY_SEM_MAX:
+            for candidate, cand_sem in list(_key_semaphores.items()):
+                if candidate == key_id:
+                    continue
+                cand_cap = _key_limits.get(candidate, 1)
+                if getattr(cand_sem, "_value", cand_cap) >= cand_cap:
+                    _key_semaphores.pop(candidate, None)
+                    _key_limits.pop(candidate, None)
+                    if len(_key_semaphores) <= _KEY_SEM_MAX:
+                        break
+        return sem
 
 
 def reset_admission() -> None:
@@ -73,6 +97,7 @@ def reset_admission() -> None:
     global _semaphores
     _semaphores.clear()
     _key_semaphores.clear()
+    _key_limits.clear()
 
 
 class AdmissionSlot:

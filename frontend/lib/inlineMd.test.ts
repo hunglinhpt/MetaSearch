@@ -120,4 +120,13 @@ describe("parseInline", () => {
   it("returns empty for empty input", () => {
     expect(parseInline("")).toEqual([]);
   });
+
+  it("stays linear on pathological repeated unmatched asterisks", () => {
+    const evil = "*".repeat(8000);
+    const t0 = performance.now();
+    const out = parseInline(evil);
+    const elapsed = performance.now() - t0;
+    expect(out).toEqual([{ t: "text", s: evil }]);
+    expect(elapsed).toBeLessThan(200);
+  });
 });

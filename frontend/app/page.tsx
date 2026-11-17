@@ -13,6 +13,8 @@ import {
 import NewsPanel from "../components/NewsPanel";
 import ResearchPanel from "../components/ResearchPanel";
 import ComparePanel from "../components/ComparePanel";
+import SentimentPanel from "../components/SentimentPanel";
+import SpacesPanel from "../components/SpacesPanel";
 import { dictationIsSupported, mergeTranscripts, startDictation, type DictationHandle } from "../lib/dictation";
 import AnswerMarkdown from "../components/AnswerMarkdown";
 import {
@@ -108,7 +110,16 @@ const PostMarkdown = memo(function PostMarkdown({
 
 
 type Mode = "answer" | "raw";
-type AppTab = "search" | "news" | "research" | "compare" | "blog" | "superagent" | "llm";
+type AppTab =
+  | "search"
+  | "news"
+  | "research"
+  | "compare"
+  | "sentiment"
+  | "spaces"
+  | "blog"
+  | "superagent"
+  | "llm";
 
 const CATEGORY_CHIPS = [
   { id: "auto", label: "⚡ Tự động (Universal Domain Intelligence)" },
@@ -123,6 +134,7 @@ const CATEGORY_CHIPS = [
 
 const TOPIC_CHIPS = [
   { id: "all", label: "Tất cả" },
+  { id: "run_digest", label: "🌐 Bản tin chung", badge: "badge-digest" },
   { id: "ai_coding", label: "AI Coding & LLM", badge: "badge-ai" },
   { id: "ai_agents", label: "AI Agents & MCP", badge: "badge-ai" },
   { id: "viet_finance", label: "Chứng Khoán VN & VN-Index", badge: "badge-finance" },
@@ -131,8 +143,18 @@ const TOPIC_CHIPS = [
   { id: "health_wellness", label: "Y Học & Sức Khỏe", badge: "badge-health" },
 ];
 
+function digestBadge(topic: string): { cls: string; label: string } {
+  if (topic === "run_digest") return { cls: "badge-digest", label: "🌐 Bản tin chung" };
+  if (topic.includes("ai")) return { cls: "badge-ai", label: topic };
+  if (topic.includes("finance")) return { cls: "badge-finance", label: topic };
+  if (topic.includes("fengshui")) return { cls: "badge-fengshui", label: topic };
+  if (topic.includes("health")) return { cls: "badge-health", label: topic };
+  return { cls: "badge-news", label: topic };
+}
+
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState<AppTab>("search");
+  const [sentimentTicker, setSentimentTicker] = useState("FPT");
 
   // Search state
   const [query, setQuery] = useState("");
@@ -407,7 +429,16 @@ export default function HomePage() {
     try {
       const topicFilter = topicId && topicId !== "all" ? topicId : undefined;
       const data = await listDigests(topicFilter);
-      setBlogPosts(data);
+      const sorted = [...data].sort((a, b) => {
+        const ta = Date.parse(a.created_at || "") || 0;
+        const tb = Date.parse(b.created_at || "") || 0;
+        if (Math.abs(tb - ta) < 180_000 && a.topic !== b.topic) {
+          if (a.topic === "run_digest") return -1;
+          if (b.topic === "run_digest") return 1;
+        }
+        return tb - ta;
+      });
+      setBlogPosts(sorted);
     } catch {
       setBlogPosts([]);
     } finally {
@@ -774,6 +805,18 @@ export default function HomePage() {
             ⚖️ So sánh mã
           </button>
           <button
+            className={`nav-tab ${activeTab === "sentiment" ? "active" : ""}`}
+            onClick={() => setActiveTab("sentiment")}
+          >
+            📊 Tâm lý &amp; Dòng tiền
+          </button>
+          <button
+            className={`nav-tab ${activeTab === "spaces" ? "active" : ""}`}
+            onClick={() => setActiveTab("spaces")}
+          >
+            🗂️ Spaces &amp; KG
+          </button>
+          <button
             className={`nav-tab ${activeTab === "blog" ? "active" : ""}`}
             onClick={() => setActiveTab("blog")}
           >
@@ -796,7 +839,16 @@ export default function HomePage() {
 
       {/* --- TAB 1B: NEWS FEED + VIETNAMESE TTS --- */}
       {activeTab === "news" && <NewsPanel />}
-      {activeTab === "compare" && <ComparePanel />}
+      {activeTab === "compare" && (
+        <ComparePanel
+          onAnalyzeSentiment={(sym) => {
+            setSentimentTicker(sym);
+            setActiveTab("sentiment");
+          }}
+        />
+      )}
+      {activeTab === "sentiment" && <SentimentPanel initialTicker={sentimentTicker} />}
+      {activeTab === "spaces" && <SpacesPanel />}
       {activeTab === "research" && <ResearchPanel />}
 
       {/* --- TAB 1: SEARCH & ANSWER --- */}
@@ -1233,16 +1285,12 @@ export default function HomePage() {
           ) : (
             <div className="blog-grid">
               {blogPosts.map((post) => {
-                const badgeClass =
-                  post.topic.includes("ai") ? "badge-ai" :
-                  post.topic.includes("finance") ? "badge-finance" :
-                  post.topic.includes("fengshui") ? "badge-fengshui" :
-                  post.topic.includes("health") ? "badge-health" : "badge-news";
+                const { cls: badgeClass, label: badgeLabel } = digestBadge(post.topic);
 
                 return (
                   <article key={post.id} className="card blog-item">
                     <div className="blog-meta">
-                      <span className={`badge ${badgeClass}`}>{post.topic}</span>
+                      <span className={`badge ${badgeClass}`}>{badgeLabel}</span>
                       <span className="blog-date">
                         {post.created_at ? new Date(post.created_at).toLocaleDateString("vi-VN") : "Hôm nay"}
                       </span>
@@ -2056,8 +2104,11 @@ POST ${API_BASE_URL}/v1/citations/validate
               ✕
             </button>
             <div style={{ marginBottom: "1.5rem" }}>
-              <span className="badge badge-ai" style={{ marginRight: "0.5rem" }}>
-                {selectedPost.topic}
+              <span
+                className={`badge ${digestBadge(selectedPost.topic).cls}`}
+                style={{ marginRight: "0.5rem" }}
+              >
+                {digestBadge(selectedPost.topic).label}
               </span>
               <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
                 {selectedPost.created_at

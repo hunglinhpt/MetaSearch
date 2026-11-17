@@ -842,3 +842,189 @@ def test_no_fabricated_neutral_when_no_market_pillars() -> None:
     # hits themselves (real input), so only assert the fabricated scalar.
     assert bm["smart_money_confidence"] is None
     assert not (bm["smart_dumb_spread"] == 0.0 and bm["dumb_money_confidence"] == 50.0)
+
+
+def _sample_bars(count: int = 30) -> list[Any]:
+    from app.retrieval.sentiment_quant import OhlcvBarInput
+
+    base_ts = int(datetime.now(UTC).timestamp()) - count * 86400
+    return [
+        OhlcvBarInput(
+            time=base_ts + i * 86400,
+            open=100.0 + i * 0.4,
+            high=101.0 + i * 0.4,
+            low=99.0 + i * 0.4,
+            close=100.5 + i * 0.4,
+            volume=1_000_000.0 + i * 10_000.0,
+        )
+        for i in range(count)
+    ]
+
+
+def test_quant_only_ohlcv_does_not_crash_with_none_smart_dumb() -> None:
+    """Zero text hits + OHLCV only leaves smart/dumb confidence None without TypeError."""
+    entity = resolve_equity_entity("FPT", company_name=None)
+    out = analyze_omni_channel_sentiment(
+        entity,
+        [],
+        now=datetime.now(UTC),
+        ohlcv_bars=_sample_bars(30),
+        ohlcv_source_name="VNDIRECT",
+    )
+    bm = out["benchmark_standards"]
+    assert bm["smart_money_confidence"] is None
+    assert bm["dumb_money_confidence"] is None
+    assert bm["fear_greed_index"] is not None
+    assert out["sentiment_summary"]["institutional_vs_retail_spread"] == 0.0
+    assert bm["quantitative_telemetry"]["ohlcv"]["bars_count"] == 30
+
+
+def test_rumor_only_preserves_quant_payload() -> None:
+    """Rumor-only text paired with real OHLCV keeps quant telemetry + flags rumor breaker."""
+    entity = resolve_equity_entity("VNM", company_name=None)
+    now = datetime.now(UTC)
+    hits = [
+        RawSentimentHit(
+            url="https://t.me/ck/rumor1",
+            title="Nghe đồn VNM sắp bị khởi tố",
+            snippet="Nghe đồn VNM sắp bị khởi tố chưa kiểm chứng",
+            content="Nghe đồn VNM sắp bị khởi tố chưa kiểm chứng",
+            published_at=now - timedelta(hours=1),
+            lang="VI",
+        )
+    ]
+    out = analyze_omni_channel_sentiment(
+        entity,
+        hits,
+        now=now,
+        ohlcv_bars=_sample_bars(30),
+        ohlcv_source_name="VNDIRECT",
+    )
+    assert out["benchmark_standards"]["quantitative_telemetry"]["ohlcv"]["bars_count"] == 30
+    assert out["social_integrity_audit"]["unverified_rumor_count"] == 1
+    assert "UNVERIFIED_RUMOR_SPIKE" in out["risk_circuit_breakers"]
+
+
+def test_s_score_upgrades_elevated_buzz_to_viral_surge() -> None:
+    """S-Score >= 2.0 must promote ELEVATED buzz_velocity to VIRAL_SURGE."""
+    from app.retrieval.sentiment_quant import MarketProxiesInput
+
+    entity = resolve_equity_entity("FPT", company_name=None)
+    now = datetime.now(UTC)
+    # Mix recent + older hits so baseline buzz is ELEVATED before S-Score promotion.
+    hits = [
+        RawSentimentHit(
+            url=f"https://cafef.vn/fpt-r{i}",
+            title=f"FPT công bố KQKD quý {i + 1} tăng trưởng",
+            snippet="FPT công bố KQKD tăng trưởng vượt kế hoạch.",
+            content="FPT công bố KQKD tăng trưởng vượt kế hoạch.",
+            published_at=now - timedelta(hours=2),
+            lang="VI",
+        )
+        for i in range(4)
+    ] + [
+        RawSentimentHit(
+            url=f"https://cafef.vn/fpt-o{i}",
+            title=f"FPT báo cáo tháng {i + 1}",
+            snippet="FPT tăng trưởng ổn định.",
+            content="FPT tăng trưởng ổn định.",
+            published_at=now - timedelta(days=4),
+            lang="VI",
+        )
+        for i in range(4)
+    ]
+    proxies = MarketProxiesInput(
+        social_weighted_24h=10.0,
+        social_mean_20d=2.0,
+        social_std_20d=3.0,  # (10 - 2) / 3 = 2.67 >= 2.0
+    )
+    out = analyze_omni_channel_sentiment(entity, hits, now=now, market_proxies=proxies)
+    assert out["benchmark_standards"]["buzz_velocity"] == "VIRAL_SURGE"
+
+
+def test_verified_driver_rejects_non_http_url() -> None:
+    """Dangerous schemes (javascript:, data:) are stripped from top_verified_drivers."""
+    from app.api.v1.schemas import VerifiedDriverOut
+
+    entity = resolve_equity_entity("FPT", company_name=None)
+    now = datetime.now(UTC)
+    out = analyze_omni_channel_sentiment(
+        entity,
+        [
+            RawSentimentHit(
+                url="javascript:alert(1)",
+                title="FPT trúng thầu hợp đồng lớn",
+                snippet="FPT trúng thầu chuyển đổi số lớn.",
+                content="FPT trúng thầu chuyển đổi số lớn.",
+                published_at=now - timedelta(hours=1),
+                lang="VI",
+            )
+        ],
+        now=now,
+    )
+    assert out["top_verified_drivers"]
+    assert out["top_verified_drivers"][0]["url"] is None
+    model = VerifiedDriverOut.model_validate(
+        {**out["top_verified_drivers"][0], "url": "data:text/html,<script>1</script>"}
+    )
+    assert model.url is None
+
+
+def test_market_sentiment_partial_timeout_and_budget_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Partial fan-out preserves fast batches on timeout and emits budget breaker."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    import app.api.v1.market as market_mod
+    from app.main import create_app
+
+    class _TightPipe:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, params: Any) -> Any:
+            self.calls += 1
+            idx = self.calls
+            if idx > 1:
+                await asyncio.sleep(5.0)
+            return SimpleNamespace(
+                results=[
+                    ScoredResult(
+                        url="https://cafef.vn/fpt-partial-ok",
+                        canonical_url="https://cafef.vn/fpt-partial-ok",
+                        domain="cafef.vn",
+                        title="FPT khối ngoại mua ròng",
+                        snippet="FPT khối ngoại mua ròng kỷ lục",
+                        engines=["google_news"],
+                        score=0.9,
+                        published_at=datetime.now(UTC),
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(deps, "get_search_pipeline", lambda: _TightPipe())
+    monkeypatch.setattr(
+        market_mod,
+        "create_budget_for_route",
+        lambda *_a, **_kw: SimpleNamespace(remaining=lambda: 0.4),
+    )
+
+    with TestClient(create_app()) as client:
+        resp = client.post(
+            "/v1/market/sentiment",
+            json={
+                "ticker": "FPT",
+                "max_queries": 3,
+                "fetch_market_data": True,
+                "timeout_ms": 1_500,
+            },
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    # At least the fast batch survived timeout AND tight budget signaled explicitly.
+    assert any(d["url"] == "https://cafef.vn/fpt-partial-ok" for d in body["top_verified_drivers"])
+    assert "QUANT_FETCH_SKIPPED_BUDGET" in body["risk_circuit_breakers"]

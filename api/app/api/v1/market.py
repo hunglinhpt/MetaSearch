@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -40,6 +41,7 @@ from app.retrieval.sentiment_quant import (
     FundamentalSnapshotInput,
     MarketProxiesInput,
     OhlcvBarInput,
+    fetch_live_market_proxies,
     fetch_sentiment_quant_context,
 )
 from app.retrieval.vn_tickers import load_vn_tickers
@@ -66,6 +68,18 @@ def _ticker_meta(sym: str) -> tuple[str | None, str | None]:
     return name, exchange
 
 
+def _csv_safe_cell(val: object) -> str:
+    """Neutralize spreadsheet formula injection (=, +, -, @, tab, cr) on non-numeric strings."""
+    if isinstance(val, (int, float)):
+        return str(val)
+    text = "" if val is None else str(val)
+    if text and text.lstrip(" ")[0:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return f"'{text}"
+    if text.startswith(("\t", "\r")):
+        return f"'{text}"
+    return text
+
+
 def _compare_to_csv(results: list[FaSymbolResult]) -> str:
     """Phase 4 P0-1: CSV export of the compare table (docs/23 #1).
 
@@ -82,17 +96,17 @@ def _compare_to_csv(results: list[FaSymbolResult]) -> str:
 
     buf = _io.StringIO()
     writer = _csv.writer(buf, lineterminator="\n")
-    writer.writerow(["metric"] + [f"{r.symbol}" for r in results])
-    writer.writerow(["name"] + [r.name or "" for r in results])
-    writer.writerow(["exchange"] + [r.exchange or "" for r in results])
+    writer.writerow(["metric"] + [_csv_safe_cell(r.symbol) for r in results])
+    writer.writerow(["name"] + [_csv_safe_cell(r.name or "") for r in results])
+    writer.writerow(["exchange"] + [_csv_safe_cell(r.exchange or "") for r in results])
     for metric in metric_names:
-        row = [metric]
+        row = [_csv_safe_cell(metric)]
         for r in results:
             fv = r.fields.get(metric)
-            row.append("" if fv is None else str(fv.value))
+            row.append("" if fv is None else _csv_safe_cell(fv.value))
         writer.writerow(row)
-    writer.writerow(["sources"] + [",".join(r.sources_used) for r in results])
-    writer.writerow(["as_of"] + [r.as_of or "" for r in results])
+    writer.writerow(["sources"] + [_csv_safe_cell(",".join(r.sources_used)) for r in results])
+    writer.writerow(["as_of"] + [_csv_safe_cell(r.as_of or "") for r in results])
     return "﻿" + buf.getvalue()
 
 
@@ -357,6 +371,22 @@ async def market_ohlcv(request: MarketOhlcvRequest) -> MarketOhlcvResponse:
     )
 
 
+def _merge_live_market_proxies(
+    base: MarketProxiesInput | None, live: MarketProxiesInput | None
+) -> MarketProxiesInput | None:
+    if live is None:
+        return base
+    if base is None:
+        return live
+    return _dc_replace(
+        base,
+        vix=base.vix if base.vix is not None else live.vix,
+        vix_ma50=base.vix_ma50 if base.vix_ma50 is not None else live.vix_ma50,
+        vix_3m=base.vix_3m if base.vix_3m is not None else live.vix_3m,
+        source_note=base.source_note or live.source_note,
+    )
+
+
 def _parse_iso_dt(raw: str | None) -> datetime | None:
     if not raw or not raw.strip():
         return None
@@ -465,13 +495,26 @@ async def market_sentiment(request: MarketSentimentRequest) -> MarketSentimentRe
                             )
                         return out
 
+                tasks = [asyncio.create_task(_run_vec(q)) for q in queries]
                 try:
-                    async with asyncio.timeout(max(1.5, total_timeout)):
-                        batches = await asyncio.gather(
-                            *(_run_vec(q) for q in queries), return_exceptions=True
-                        )
-                except TimeoutError:
-                    batches = []
+                    done, pending = await asyncio.wait(tasks, timeout=max(1.5, total_timeout))
+                except BaseException:
+                    for t in tasks:
+                        t.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    raise
+                for p_task in pending:
+                    p_task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                batches: list[list[RawSentimentHit] | BaseException] = []
+                for t in tasks:
+                    if t not in done:
+                        continue
+                    try:
+                        batches.append(t.result())
+                    except BaseException as exc:
+                        batches.append(exc)
 
                 seen_urls: set[str] = set()
                 for b in batches:
@@ -513,28 +556,43 @@ async def market_sentiment(request: MarketSentimentRequest) -> MarketSentimentRe
                 )
 
             fundamentals: FundamentalSnapshotInput | None = None
+            quant_skipped_budget = False
             if request.fetch_market_data:
                 rem = budget.remaining() if budget else 4.0
                 if rem >= 0.8:
-                    (
-                        live_bars,
-                        live_src,
-                        live_url,
-                        live_as_of,
-                        fa_snap,
-                    ) = await fetch_sentiment_quant_context(
+                    need_vix = not entity.is_vietnam and (
+                        market_proxies is None
+                        or market_proxies.vix is None
+                        or market_proxies.vix_3m is None
+                    )
+                    quant_coro = fetch_sentiment_quant_context(
                         entity.ticker,
                         is_vietnam=entity.is_vietnam,
                         need_ohlcv=not bool(ohlcv_bars),
                         fa_aggregator=deps.get_fa_aggregator(),
                         timeout_s=min(4.0, rem),
                     )
+                    if need_vix:
+                        (quant_res, live_proxies) = await asyncio.gather(
+                            quant_coro,
+                            fetch_live_market_proxies(
+                                entity.ticker,
+                                is_vietnam=entity.is_vietnam,
+                                timeout_s=min(3.0, rem),
+                            ),
+                        )
+                        market_proxies = _merge_live_market_proxies(market_proxies, live_proxies)
+                    else:
+                        quant_res = await quant_coro
+                    live_bars, live_src, live_url, live_as_of, fa_snap = quant_res
                     if not ohlcv_bars and live_bars:
                         ohlcv_bars = live_bars
                         ohlcv_src = live_src
                         ohlcv_url = live_url
                         ohlcv_as_of = live_as_of
                     fundamentals = fa_snap
+                else:
+                    quant_skipped_budget = True
 
             # PASS-2 audit P2-7: the lexicon scan + quant aggregation are
             # CPU-bound regex/scan work (measured 206 ms at schema-max
@@ -550,4 +608,9 @@ async def market_sentiment(request: MarketSentimentRequest) -> MarketSentimentRe
                 market_proxies=market_proxies,
                 fundamentals=fundamentals,
             )
+            if quant_skipped_budget:
+                breakers_list = list(payload.get("risk_circuit_breakers") or [])
+                if "QUANT_FETCH_SKIPPED_BUDGET" not in breakers_list:
+                    breakers_list.append("QUANT_FETCH_SKIPPED_BUDGET")
+                payload["risk_circuit_breakers"] = breakers_list
             return MarketSentimentResponse.model_validate(payload)

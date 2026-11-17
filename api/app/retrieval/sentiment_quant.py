@@ -19,10 +19,16 @@ import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeGuard
+from urllib.parse import quote
 
 from app.http import get_http_client
-from app.retrieval.adapters.viet_stock import fetch_vndirect_ohlcv_series
+from app.retrieval.adapters.viet_stock import (
+    _fetch_simplize_summary,
+    _safe_float,
+    fetch_vndirect_ohlcv_series,
+)
 from app.retrieval.adapters.yahoo_finance import DEFAULT_CHART_URL as YAHOO_CHART_URL
+from app.retrieval.fa_sources.base import ensure_symbol
 from app.retrieval.technical_analysis import _calc_ema_series, calc_wilder_rsi
 
 logger = logging.getLogger(__name__)
@@ -753,32 +759,117 @@ def parse_yahoo_chart_bars(payload: dict[str, Any]) -> tuple[list[OhlcvBarInput]
     lows = q.get("low") or []
     closes = q.get("close") or []
     volumes = q.get("volume") or []
-    n = min(len(timestamps), len(opens), len(highs), len(lows), len(closes), len(volumes))
+    n = min(len(timestamps), len(opens), len(highs), len(lows), len(closes))
     raw_bars: list[OhlcvBarInput] = []
     for i in range(n):
-        ts, o, h, l_val, c, v = (
+        ts, o, h, l_val, c = (
             timestamps[i],
             opens[i],
             highs[i],
             lows[i],
             closes[i],
-            volumes[i],
         )
+        v = volumes[i] if i < len(volumes) else 0.0
         if ts is None or o is None or h is None or l_val is None or c is None:
+            continue
+        try:
+            ts_int = int(ts)
+            f_o, f_h, f_l, f_c, f_v = (
+                float(o),
+                float(h),
+                float(l_val),
+                float(c),
+                float(v or 0.0),
+            )
+        except (TypeError, ValueError):
+            continue
+        if (
+            ts_int <= 0
+            or f_c <= 0.0
+            or not all(math.isfinite(x) for x in (f_o, f_h, f_l, f_c, f_v))
+        ):
             continue
         raw_bars.append(
             OhlcvBarInput(
-                time=int(ts),
-                open=float(o),
-                high=float(h),
-                low=float(l_val),
-                close=float(c),
-                volume=float(v or 0.0),
+                time=ts_int,
+                open=f_o,
+                high=f_h,
+                low=f_l,
+                close=f_c,
+                volume=f_v,
             )
         )
     valid = _normalize_bars(raw_bars)
     as_of = datetime.fromtimestamp(valid[-1].time, tz=UTC).isoformat() if valid else None
     return valid, as_of
+
+
+async def _fetch_yahoo_chart_series(
+    symbol: str,
+    *,
+    range_str: str,
+    timeout_s: float,
+    client: Any = None,
+    yahoo_chart_url: str = YAHOO_CHART_URL,
+) -> tuple[list[OhlcvBarInput], str | None]:
+    """Fetch daily OHLCV bars from Yahoo Finance v8 chart JSON (fail-open)."""
+    try:
+        http_cli = client or get_http_client("search")
+        url = f"{yahoo_chart_url.rstrip('/')}/{quote(symbol, safe='')}"
+        resp = await http_cli.get(
+            url,
+            params={"range": range_str, "interval": "1d"},
+            timeout=timeout_s,
+        )
+        if resp.status_code == 200:
+            return parse_yahoo_chart_bars(resp.json())
+    except Exception as exc:
+        logger.debug("Yahoo Finance chart fetch failed for %s: %s", symbol, exc)
+    return [], None
+
+
+async def fetch_live_market_proxies(
+    ticker: str,
+    *,
+    is_vietnam: bool,
+    timeout_s: float = 3.0,
+    client: Any = None,
+    yahoo_chart_url: str = YAHOO_CHART_URL,
+) -> MarketProxiesInput | None:
+    """Fetch real CBOE ^VIX / ^VIX3M volatility term structure for global equities (fail-open)."""
+    sym = ensure_symbol(ticker)
+    if is_vietnam or sym is None:
+        return None
+    eff_timeout = max(0.8, min(6.0, float(timeout_s)))
+    (vix_bars, _), (vix3m_bars, _) = await asyncio.gather(
+        _fetch_yahoo_chart_series(
+            "^VIX",
+            range_str="3mo",
+            timeout_s=eff_timeout,
+            client=client,
+            yahoo_chart_url=yahoo_chart_url,
+        ),
+        _fetch_yahoo_chart_series(
+            "^VIX3M",
+            range_str="5d",
+            timeout_s=eff_timeout,
+            client=client,
+            yahoo_chart_url=yahoo_chart_url,
+        ),
+    )
+    vix_val = round(vix_bars[-1].close, 2) if vix_bars and vix_bars[-1].close > 0 else None
+    vix_ma50 = (
+        round(sum(b.close for b in vix_bars[-50:]) / 50.0, 2) if len(vix_bars) >= 50 else None
+    )
+    vix3m_val = round(vix3m_bars[-1].close, 2) if vix3m_bars and vix3m_bars[-1].close > 0 else None
+    if vix_val is None and vix_ma50 is None and vix3m_val is None:
+        return None
+    return MarketProxiesInput(
+        vix=vix_val,
+        vix_ma50=vix_ma50,
+        vix_3m=vix3m_val,
+        source_note=f"Yahoo Finance (^VIX, ^VIX3M) for {sym}",
+    )
 
 
 async def fetch_sentiment_quant_context(
@@ -799,6 +890,10 @@ async def fetch_sentiment_quant_context(
     FundamentalSnapshotInput | None,
 ]:
     """Fetch real OHLCV & FA fundamentals concurrently when requested (fail-open)."""
+    sym = ensure_symbol(ticker)
+    if sym is None:
+        return [], None, None, None, None
+    ticker = sym
     eff_timeout = max(0.8, min(8.0, float(timeout_s)))
 
     async def _fetch_ohlcv() -> tuple[list[OhlcvBarInput], str | None, str | None, str | None]:
@@ -855,81 +950,98 @@ async def fetch_sentiment_quant_context(
             return [], None, None, None
 
         # Global equity daily series via Yahoo Finance v8 chart JSON
-        try:
-            http_cli = client or get_http_client("search")
-            url = f"{yahoo_chart_url.rstrip('/')}/{ticker}"
-            resp = await http_cli.get(
-                url,
-                params={"range": "1y", "interval": "1d"},
-                timeout=eff_timeout,
+        bars, as_of = await _fetch_yahoo_chart_series(
+            ticker,
+            range_str="1y",
+            timeout_s=eff_timeout,
+            client=client,
+            yahoo_chart_url=yahoo_chart_url,
+        )
+        if bars:
+            return (
+                bars,
+                "Yahoo Finance",
+                f"https://finance.yahoo.com/quote/{quote(ticker, safe='')}",
+                as_of,
             )
-            if resp.status_code == 200:
-                bars, as_of = parse_yahoo_chart_bars(resp.json())
-                if bars:
-                    return (
-                        bars,
-                        "Yahoo Finance",
-                        f"https://finance.yahoo.com/quote/{ticker}",
-                        as_of,
-                    )
-        except Exception as exc:
-            logger.debug("Yahoo Finance chart fetch failed for %s: %s", ticker, exc)
         return [], None, None, None
 
     async def _fetch_fa() -> FundamentalSnapshotInput | None:
-        if fa_aggregator is None or not is_vietnam:
+        if not is_vietnam:
             return None
-        try:
-            agg = await fa_aggregator.fetch_financials(ticker, timeout_s=eff_timeout)
-            if agg is None or not getattr(agg, "fields", None):
-                return None
-            pe = agg.get("pe")
-            pb = agg.get("pb")
-            # PASS-2 audit P3-17: `or` swallows legitimate 0.0 values —
-            # explicit is-not-None chains per key family.
-            roe = agg.get("roe") if agg.get("roe") is not None else agg.get("roe_pct")
-            rev_g = (
-                agg.get("revenue_growth_yoy")
-                if agg.get("revenue_growth_yoy") is not None
-                else agg.get("revenue_growth_pct")
-            )
-            prof_g = next(
-                (
-                    v
-                    for v in (
-                        agg.get("profit_growth_yoy"),
-                        agg.get("profit_growth_pct"),
-                        agg.get("net_profit_growth_pct"),
+        if fa_aggregator is not None:
+            try:
+                agg = await fa_aggregator.fetch_financials(ticker, timeout_s=eff_timeout)
+                if agg is not None and getattr(agg, "fields", None):
+                    pe = agg.get("pe")
+                    pb = agg.get("pb")
+                    # PASS-2 audit P3-17: `or` swallows legitimate 0.0 values —
+                    # explicit is-not-None chains per key family.
+                    roe = agg.get("roe") if agg.get("roe") is not None else agg.get("roe_pct")
+                    rev_g = (
+                        agg.get("revenue_growth_yoy")
+                        if agg.get("revenue_growth_yoy") is not None
+                        else agg.get("revenue_growth_pct")
                     )
-                    if v is not None
-                ),
-                None,
-            )
-            dte = agg.get("debt_to_equity")
-            mcap = (
-                agg.get("market_cap")
-                if agg.get("market_cap") is not None
-                else agg.get("market_cap_vnd_bil")
-            )
-            if all(v is None for v in (pe, pb, roe, rev_g, prof_g, dte, mcap)):
-                return None
-            sources_used = getattr(agg, "sources_used", []) or []
-            source_urls = getattr(agg, "source_urls", []) or []
-            as_of_dt = getattr(agg, "as_of", None)
-            return FundamentalSnapshotInput(
-                pe=pe,
-                pb=pb,
-                roe=roe,
-                revenue_growth_yoy=rev_g,
-                profit_growth_yoy=prof_g,
-                debt_to_equity=dte,
-                market_cap=mcap,
-                source=", ".join(sources_used) if sources_used else None,
-                source_url=source_urls[0] if source_urls else None,
-                as_of=as_of_dt.isoformat() if as_of_dt is not None else None,
-            )
-        except Exception:
-            return None
+                    prof_g = next(
+                        (
+                            v
+                            for v in (
+                                agg.get("profit_growth_yoy"),
+                                agg.get("profit_growth_pct"),
+                                agg.get("net_profit_growth_pct"),
+                            )
+                            if v is not None
+                        ),
+                        None,
+                    )
+                    dte = agg.get("debt_to_equity")
+                    mcap = (
+                        agg.get("market_cap")
+                        if agg.get("market_cap") is not None
+                        else agg.get("market_cap_vnd_bil")
+                    )
+                    if not all(v is None for v in (pe, pb, roe, rev_g, prof_g, dte, mcap)):
+                        sources_used = getattr(agg, "sources_used", []) or []
+                        source_urls = getattr(agg, "source_urls", []) or []
+                        as_of_dt = getattr(agg, "as_of", None)
+                        return FundamentalSnapshotInput(
+                            pe=pe,
+                            pb=pb,
+                            roe=roe,
+                            revenue_growth_yoy=rev_g,
+                            profit_growth_yoy=prof_g,
+                            debt_to_equity=dte,
+                            market_cap=mcap,
+                            source=", ".join(sources_used) if sources_used else None,
+                            source_url=source_urls[0] if source_urls else None,
+                            as_of=as_of_dt.isoformat() if as_of_dt is not None else None,
+                        )
+            except Exception as exc:
+                logger.debug("FA aggregator snapshot failed for %s: %s", ticker, exc)
+
+        # Fallback to direct keyless Simplize summary API when aggregator lacks VN ratios
+        try:
+            simp = await _fetch_simplize_summary(ticker, timeout_s=eff_timeout, client=client)
+            if simp:
+                pe = _safe_float(simp.get("peRatio"))
+                pb = _safe_float(simp.get("pbRatio"))
+                roe = _safe_float(simp.get("roe"))
+                mc_raw = _safe_float(simp.get("marketCap"))
+                mcap = round(mc_raw / 1e9, 2) if mc_raw is not None and mc_raw > 0 else None
+                if any(v is not None for v in (pe, pb, roe, mcap)):
+                    return FundamentalSnapshotInput(
+                        pe=round(pe, 2) if pe is not None else None,
+                        pb=round(pb, 2) if pb is not None else None,
+                        roe=round(roe, 2) if roe is not None else None,
+                        market_cap=mcap,
+                        source="Simplize",
+                        source_url=f"https://simplize.vn/co-phieu/{quote(ticker.upper(), safe='')}",
+                        as_of=None,
+                    )
+        except Exception as exc:
+            logger.debug("Simplize FA fallback failed for %s: %s", ticker, exc)
+        return None
 
     (bars, src_name, src_url, as_of), fa_snap = await asyncio.gather(
         _fetch_ohlcv(),

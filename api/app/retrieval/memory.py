@@ -178,9 +178,9 @@ async def load_memory_boosts(owner: str, *, settings: Any) -> list[BoostRule]:
         from app.db.models import MemoryItem
         from app.db.session import get_sessionmaker
 
-        async def _read() -> list:
+        async def _read() -> list[Any]:
             async with get_sessionmaker()() as session:
-                return (
+                return list(
                     (
                         await session.execute(
                             select(MemoryItem).where(
@@ -681,7 +681,7 @@ async def delete_memory(owner: str, *, memory_id: str | None = None) -> int:
         result = await session.execute(stmt)
         await session.commit()
     _boost_cache.pop(owner, None)  # deleted feedback must stop applying immediately
-    return int(result.rowcount or 0)
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 def _parse_uuid(value: str):

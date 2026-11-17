@@ -96,12 +96,12 @@ async def _purge(model: Any, key: Any, condition: Any, dry_run: bool) -> int:
                 result = await session.execute(delete(model).where(condition))
             else:
                 ids = select(key).where(condition).limit(BATCH_SIZE)
-                stmt = (
+                del_stmt = (
                     delete(model).where(key.in_(ids)).execution_options(synchronize_session=False)
                 )
-                result = await session.execute(stmt)
+                result = await session.execute(del_stmt)
             await session.commit()
-        deleted = int(result.rowcount or 0)
+        deleted = int(getattr(result, "rowcount", 0) or 0)
         total += deleted
         if key is None or deleted < BATCH_SIZE:
             return total
@@ -118,15 +118,15 @@ async def _blank_chunks(cutoff: datetime, dry_run: bool) -> int:
     while True:
         async with maker() as session:
             ids = select(Chunk.id).where(condition).limit(BATCH_SIZE)
-            stmt = (
+            upd_stmt = (
                 update(Chunk)
                 .where(Chunk.id.in_(ids))
                 .values(content="", embedding=None)
                 .execution_options(synchronize_session=False)
             )
-            result = await session.execute(stmt)
+            result = await session.execute(upd_stmt)
             await session.commit()
-        changed = int(result.rowcount or 0)
+        changed = int(getattr(result, "rowcount", 0) or 0)
         total += changed
         if changed < BATCH_SIZE:
             return total

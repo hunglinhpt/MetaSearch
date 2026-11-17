@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased]
+
+## [3.3.0] - 2026-11-17
+
+### Added & Hardened — 5-Proposal Feature & CI Convergence + 3-Round Adversarial Audit
+
+- **Full-App `mypy` Coverage & Low-Coverage Module Test Suite (`api/pyproject.toml`, `api/tests/test_proposals_wave.py`)**:
+  - Widened `[tool.mypy].files` from `["app/core", "app/api", "app/llm"]` to `["app"]` (covering all 159 Python source files) and fixed all type annotations across `app/orchestration/` (`retention.py`, `notifier.py`, `research.py`, `research_jobs.py`), `app/retrieval/` (`boosts.py`, `memory.py`, `fa_sources/ssi.py`, `fa_sources/fireant.py`), `app/mcp/client.py`, and `app/config.py`.
+  - Added `api/tests/test_proposals_wave.py` (10 unit/integration tests) covering `app/api/v1/site.py` (`/v1/map`, `/v1/crawl`), `app/api/v1/hybrid.py`, `app/worker.py`, `app/core/tracing.py`, `app/api/v1/podcast.py` (`/v1/podcast/personal*`), `app/orchestration/scheduler.py` executive brief synthesis & timeout/bare-citation fail-open, `app/retrieval/sentiment_quant.py` (`^VIX`/`^VIX3M` & Simplize fallback), and `app/api/v1/market.py` live proxy merge.
+- **Live CBOE VIX Term-Structure Proxies & Simplize FA Fallback (`api/app/retrieval/sentiment_quant.py`, `api/app/api/v1/market.py`)**:
+  - Added `fetch_live_market_proxies` querying Yahoo Finance v8 charts for `^VIX` (3M daily, `vix_ma50`) and `^VIX3M` (5D daily, term ratio) concurrently with OHLCV/FA inside `POST /v1/market/sentiment` when `fetch_market_data=true` on non-VN equities, merging without overwriting caller-supplied `market_proxies` (`_merge_live_market_proxies`).
+  - Added `_fetch_simplize_summary` keyless fallback inside `_fetch_fa()` when `fa_aggregator` lacks VN ratios; hardened `parse_yahoo_chart_bars` against empty `volume` arrays on index payloads and non-finite/malformed bar values, and added `ensure_symbol` entry guards in `fetch_live_market_proxies` and `fetch_sentiment_quant_context`.
+- **Opt-In Guarded Executive Brief for `run_digest` (`api/app/orchestration/scheduler.py`, `api/app/api/deps.py`, `api/app/config.py`, `deploy/.env.example`)**:
+  - Added `SCHEDULER_LLM_SYNTHESIS_ENABLED` (`bool = false` default) and wired `gateway=get_gateway()` in `deps.get_scanner()`.
+  - When enabled, `_synthesize_executive_brief` wraps verified `run_digest` citations inside SEC-07 random delimiters, validates output via `validate_citations` + minimum non-marker prose guard (`>= 15` chars), and fails open (`12s` timeout -> `None`) so the pure extractive `run_digest` always survives.
+- **Web UI Parity (`frontend/components/SentimentPanel.tsx`, `SpacesPanel.tsx`, `NewsPanel.tsx`, `ComparePanel.tsx`, `frontend/app/page.tsx`, `frontend/lib/api.ts`)**:
+  - Added `📊 Tâm lý & Dòng tiền` tab (`SentimentPanel`) calling `POST /v1/market/sentiment` to render CNN Fear & Greed (`0..100`), Smart/Dumb Money (`—` when `null`, never placeholder `50`), risk circuit breakers, quant/OHLCV/VIX/FA bar, 7-pillar checklist, 3-layer network telemetry, `top_verified_drivers` (`safeHref`), and direct `"📊 Phân tích Tâm lý"` navigation from `ComparePanel`.
+  - Added `🗂️ Spaces & KG` tab (`SpacesPanel`) calling `/v1/spaces*` CRUD, `/crawl`, async `202 /graph/build` + aborted-safe `/graph/status` polling, `/graph/query`, and `POST /v1/hybrid` search, plus `"🎧 Podcast Watchlist"` (`/v1/podcast/personal*`) in `NewsPanel` with request-generation and `AbortController` guards.
+
+### Added & Hardened — Rich-Content Web UI (docs/28), Unified Run Digest & DEFER-A/B/C Convergence (docs/29)
+
+- **Streaming Rich-Content Web UI (`docs/28`) & Run-Digest UI (`docs/29` P3-3)**:
+  - Upgraded streaming markdown pipeline (`frontend/components/AnswerMarkdown.tsx`, `CodeBlock.tsx`, `MathFormula.tsx`, `MermaidDiagram.tsx`, `frontend/lib/inlineMd.ts`, `mdMath.ts`, `markdownBlocks.ts`) with lazy Prism highlighting, KaTeX math rendering (`trust: false`, last-good fallback), serial strict Mermaid rendering with state reset across edits/errors, `O(n)` bounded emphasis scanning (`MAX_FAILED_EMPHASIS=64`), StrictMode-pure `useEffect` pacing gate, and adaptive render-cost throttle.
+  - Added `run_digest` (`🌐 Bản tin chung`) chip, `.badge-digest` styling, and digest-first ordering within the same scan window in `frontend/app/page.tsx` and `frontend/app/globals.css`.
+  - Added Node `fetch` `HEALTHCHECK` to `frontend/Dockerfile` and `deploy/docker-compose.yml`.
+- **Extractive Unified Run Digest & Security/Concurrency Wave (`docs/29`)**:
+  - Rewrote `AutomatedScanner` (`api/app/orchestration/scheduler.py`) strictly extractive over verified search results (removed hardcoded static templates & placeholder URLs), added cross-engine canonical/simhash dedup, escaped markdown metacharacters including `\`/`|`, serialized SQLite writes with `sqlite_write_lock()`, and published unified `run_digest` briefings per run.
+  - Restored SEC-07 random delimiters across `research.py` source packs and `spaces.py` `/spaces/{slug}/graph/query`; eliminated raw exception text leakage on `/v1/answer` SSE, research jobs, and `/v1/llm/test`; added SSRF TOCTOU re-checks around `crawl4ai`, `domain` in `answer` cache keys, jittered backoff/retry in `gateway.py`/`searxng.py`, and precomputed cosine norms in `hybrid.py`.
+- **Completed DEFER-A/B/C & 3-Round Audit Fixes**:
+  - `api/app/core/admission.py`: true LRU + idle-only eviction in `get_key_semaphore`.
+  - `api/app/core/auth.py`: `/v1/hybrid` POST cost `2` in `_STATIC_ROUTE_COSTS` and expired-first pruning in `_local_rate_limit`.
+  - `api/app/api/v1/market.py`, `api/app/retrieval/sentiment.py`, `api/app/retrieval/sentiment_quant.py`, `api/app/api/v1/schemas.py`: CSV formula escaping via `_csv_safe_cell` (keeping negative floats numeric); `asyncio.wait` partial batch preservation on fan-out timeouts; `QUANT_FETCH_SKIPPED_BUDGET` circuit breaker when live market fetch is budget-skipped; fixed `_quant_only_payload` `None` crash when smart/dumb/FG metrics are unavailable; preserved quant telemetry on rumor-only inputs; allowed `S-Score >= 2.0` to promote `ELEVATED -> VIRAL_SURGE`; stripped non-`http(s)` URLs from `top_verified_drivers` and `VerifiedDriverOut`.
+  - `api/app/orchestration/engine_store.py`, `api/app/cache.py`, `api/app/api/v1/podcast.py`, `api/app/api/v1/spaces.py`, `api/app/llm/council.py`, `api/app/orchestration/pipeline.py`, `api/app/orchestration/persist.py`, `api/app/retrieval/fa_sources/aggregator.py`: SQLite write locking & change-detection in `DbEngineStore._record_db` + fallback cache invalidation in `update()` + `_cache_gen` TOCTOU guard (preserving 0-SQL search hot path in `record_result`); min-heap TTL expiration in `_LocalTTLCache`; protected active podcast/KG jobs from LRU eviction; parallelized podcast section gathering & query-expansion fan-out; aggregated real `usage` across all 3 council phases; offloaded `/v1/context` compression/build via `run_cpu`; fixed `_persist_documents` re-scrape chunk duplication bug; priority-ordered `fetch_ohlcv` short-circuiting.
+
 ## [3.2.0] - 2026-11-15
 
 ### Added — 4-Repo AI Infrastructure Stack & 5-Pass Hardening (docs/25)

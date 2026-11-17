@@ -26,7 +26,11 @@ import {
 import { buildCompareSpeech, formatField, METRICS, parseSymbolsInput } from "../lib/faTable";
 import ChartPanel from "./ChartPanel";
 
-export default function ComparePanel() {
+export default function ComparePanel({
+  onAnalyzeSentiment,
+}: {
+  onAnalyzeSentiment?: (ticker: string) => void;
+} = {}) {
   const [input, setInput] = useState("");
   const [data, setData] = useState<FaCompareResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -202,6 +206,15 @@ export default function ComparePanel() {
                   {r.symbol}
                 </button>
               ))}
+              {onAnalyzeSentiment && chartSymbol && (
+                <button
+                  type="button"
+                  className="read-btn"
+                  onClick={() => onAnalyzeSentiment(chartSymbol)}
+                >
+                  📊 Phân tích Tâm lý {chartSymbol}
+                </button>
+              )}
             </div>
           )}
           {chartSymbol && <ChartPanel symbol={chartSymbol} />}

@@ -248,7 +248,7 @@ async def equity_sentiment(
 
 def run_tool(name: str, kwargs: dict[str, Any]) -> Any:
     """Sync entry for tests/CLI; dispatches one tool call."""
-    tools = {
+    tools: dict[str, Any] = {
         "web_search": web_search,
         "web_scrape": web_scrape,
         "web_search_and_scrape": web_search_and_scrape,

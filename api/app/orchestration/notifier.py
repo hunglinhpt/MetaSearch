@@ -37,11 +37,8 @@ class NotificationDispatcher:
             return False
 
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        pub_date = (
-            post.published_at.strftime("%d/%m/%Y")
-            if getattr(post, "published_at", None)
-            else "Hôm nay"
-        )
+        pub_dt = getattr(post, "published_at", None)
+        pub_date = pub_dt.strftime("%d/%m/%Y") if pub_dt is not None else "Hôm nay"
         msg_text = (
             f"📰 *[MetaSearch Daily Briefing]*\n\n"
             f"*{post.title}*\n\n"
@@ -84,9 +81,9 @@ class NotificationDispatcher:
             "summary": post.summary,
             "tags": post.tags or [],
             "sources_count": len(post.sources or []),
-            "published_at": (
-                post.published_at.isoformat() if getattr(post, "published_at", None) else None
-            ),
+            "published_at": pub_dt.isoformat()
+            if (pub_dt := getattr(post, "published_at", None)) is not None
+            else None,
         }
         try:
             resp = await client.post(webhook_url, json=payload)

@@ -10,7 +10,12 @@ Languages: [English](#english) · [Tiếng Việt](#tiếng-việt)
 > A multi-source search & quantitative analysis system for AI: **Meta-Search (SearXNG 70+ engines + 14 Vertical Engines) → Crawl & Extract → Dedup/Consensus/Rerank → Synthesize with `[n]` citations**, packaged as REST API + SSE Streaming + MCP Server + Automated Daily Briefings Blog + Web UI.
 
 
-Status: **v3.2.0 — 4-Repo AI Infrastructure Integration & 5-Pass Audit (`OmniRoute`, `headroom`, `one-skill-to-rule-them-all`, `claude-mem`; [docs/25](docs/25-llm-integration-evaluation.md)): multi-provider API key validation & health-aware failover routing (`/v1/llm/validate`, `/v1/llm/health`), structural/extractive context compression + KV-cache prefix alignment, 10 unified skills + `TaskObserver` (`/v1/skills`, `/v1/ops/skills`), and per-key episodic observations with 3-layer progressive disclosure REST & MCP tools; below: v3.1.0 — Lite Web UI on the API port + no-popup job runner + 2 P3 fixes**:
+Status: **v3.3.0 — Omni-Channel Equity Sentiment (`docs/27`), Streaming Rich-Content Web UI (`docs/28`), Unified Extractive `run_digest` & Boundary Convergence (`docs/29`), Full-App `mypy` & UI Parity (`SentimentPanel`, `SpacesPanel`, `Watchlist Podcast`), preceded by v3.2.0 (`docs/25`, `docs/26`)**:
+
+- **v3.3.0 Convergence, Quant Grounding & Web UI Parity (docs/27, docs/28, docs/29)**:
+  - **Omni-Channel Bilingual Equity Sentiment (`docs/27`)**: 5-layer VI/EN query fan-out + quantitative gateways, anti-collision entity resolution (`VNM`, `GAS`, `SSI`, `FPT`, `POW`), coordinated social seeding / unverified rumor filtering, `Tier_Weight × Time_Decay`, Loughran-McDonald TF-IDF + Tetlock pessimism + consensus polarization, CNN Fear & Greed (`0..100`), 7-pillar quantitative checklist, live `^VIX`/`^VIX3M` proxies (`Yahoo Finance v8` keyless) & keyless `Simplize` VN FA fallback (`POST /v1/market/sentiment`, MCP `equity_sentiment`), with strict `null` handling and no fabricated figures.
+  - **Streaming Rich-Content Web UI (`docs/28`) & Parity Tabs**: upgraded `AnswerMarkdown` (lazy Prism code blocks, KaTeX math with `trust: false` & currency guards, serial strict-sandbox Mermaid diagrams, `O(n)` bounded emphasis scanning, StrictMode pacing gate), added `📊 Tâm lý & Dòng tiền` (`SentimentPanel.tsx` + cross-link from `ComparePanel.tsx`), `🗂️ Spaces & KG` (`SpacesPanel.tsx` CRUD/Crawl/202 KG build+poll/query + `POST /v1/hybrid`), `🎧 Podcast Watchlist` (`/v1/podcast/personal*` in `NewsPanel.tsx`), and `🌐 Bản tin chung` (`run_digest` badge & sort-first).
+  - **Unified Extractive Digest & Hardening (`docs/29`)**: strictly extractive `AutomatedScanner` publishing unified `run_digest` briefings with optional opt-in guarded synthesis (`SCHEDULER_LLM_SYNTHESIS_ENABLED=false` default, SEC-07 delimiters, `validate_citations`, 12s fail-open), serialized SQLite writes (`sqlite_write_lock()`), `DEFER-A/B/C` hardening (`admission` LRU, `auth` `/v1/hybrid` cost, CSV formula escaping, min-heap cache TTL, SSRF TOCTOU re-checks), and full-app `mypy` enforced across all `app/` (`159` files) plus `tests/test_proposals_wave.py`.
 
 - **v3.2.0 4-Repo AI Infra Integration (docs/25)**: Native in-repo (Lite-safe) integration of `OmniRoute` (17 `KEY_FORMAT_SPECS`, SSRF-safe live key probing via shared HTTP pool, `ProviderHealthTracker` + EWMA/breaker failover routing, `LLM_ALLOW_KEYLESS_FALLBACK=false`), `headroom` (`ContentRouter` + `SmartCrusher` + verbatim `SearchCompressor` with 4 skill-driven compression profiles + `CacheAligner` memory delimiters), `one-skill-to-rule-them-all` (10 unified skills + bounded `TaskObserver` telemetry, `GET /v1/skills`, `GET /v1/ops/skills`), and `claude-mem` (per-key `kind="observation"` distillation, bounded recall, 3-layer progressive disclosure `/v1/memory/search|timeline|observations` + 3 MCP tools). Hardened across 5 audit passes + 13 tests in `tests/test_phase4_ai_infra.py`; OpenAPI snapshot regenerated.
 - **v3.1.0 Lite Web UI + no-popup jobs + P3 fixes (docs/08 §Lite, docs/24 §8)**: Web UI static export (`npm run build:export` → `frontend/out`) được API mount tại `/` trên cùng cổng khi `SERVE_UI=true` — Lite còn một tiến trình duy nhất, UI ở `http://127.0.0.1:8000/`; watchdog chạy `-WindowStyle Hidden` và manager có mutex theo port nên không popup cửa sổ console hay chạy chồng (đã có thì bỏ qua), thêm `metasearch-lite.ps1 open`; `POST /v1/spaces/{slug}/graph/build` chuyển sang job nền 202 single-flight + `GET .../graph/status` (admit tier `kg`); fix tokenize tiếng Việt: stopword so trên token gốc trước khi fold nên "cổ phiếu"/"thị trường" không bị nuốt. Test mới `tests/test_v31_lite_ui.py` + graph job test; OpenAPI snapshot regen.
@@ -56,7 +61,7 @@ Status: **v3.2.0 — 4-Repo AI Infrastructure Integration & 5-Pass Audit (`OmniR
 - **Universal Multi-Domain Deep Intelligence**: deep domain assessment across verticals with **Finance & Financial-Statement Forensics (`financial`)** as the **flagship pilot** plus 7 packs (`biomedical_health`, `technology_ai`, `academic_research`, `legal_macro_policy`, `eastern_metaphysics`, `news_geopolitics`, `general_discovery`).
 - **Industry-Specific Financial Forensics (`financial_forensics.py`)**: branch by industry — **Banking (CAMELS / Basel II-III: CAR, NPL, Group-2 loans, LLR, NIM, CASA, LDR, CIR)**, **Brokerage (Margin/collateral vs 200% cap, FVTPL/HTM/AFS, capital adequacy)**, **Real Estate & Industrial Parks (advances from buyers / unbilled, inventory/assets)**, **Manufacturing (debt structure, DSO, CFO/Net Income)** plus **Altman Z-Score**, **Beneish M-Score**, **Piotroski F-Score (9 criteria)**.
 - **Quantitative Technical Analysis (`technical_analysis.py`)**: **Fibonacci Retracement & Golden Pocket (`61.8%–65.0%`) + Extensions (`127.2%`, `261.8%`)**, **Ichimoku Kinko Hyo (Tenkan/Kijun/Senkou A-B/Chikou Span)**, **true EMA-based MACD**, **Wilder's RSI & 2x ATR Trailing Stop**, **Stochastic (`%K`, `%D`)**, **Multi-EMA Ribbon (`20/50/200`)**, **linear regression channel ±2σ ($R^2$)**, **8 chart patterns**, and a **Custom Indicator Query Parser** (`RSI 9`, `MACD 8 21 5`, `Bollinger 15 2.5`...).
-- **Strict Pre-Commit & Release Process**: the mandatory `.githooks/pre-commit` hook blocks any commit that fails a gate (lockfile check runs first); **1095 backend tests + 107 frontend tests (vitest) PASS**, `ruff` 0 issues, `bandit` 0 security issues, clean Next.js 15 build, CI 13/13 jobs green across 3 OS. Full design in [docs/](docs/), detailed plan in [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
+- **Strict Pre-Commit & Release Process**: the mandatory `.githooks/pre-commit` hook blocks any commit that fails a gate (lockfile check runs first); **1135 backend tests collected (1127 passed + 8 skipped for compose/tiktoken) + 109 frontend tests (vitest) PASS**, `86.87%` backend coverage, full-app `mypy` (`159` files), `ruff` 0 issues, `bandit` 0 security issues, clean Next.js 15 build + static export (`frontend/out`), CI 13/13 jobs across 3 OS. Full design in [docs/](docs/), detailed plan in [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
 
 ---
 
@@ -171,7 +176,7 @@ Web UI: open `http://localhost:3000` — pick a category (Finance & Stocks, News
 MetaSearch/
 ├── README.md                  ← this file — bilingual (English + Tiếng Việt in one file)
 ├── AGENTS.md                  ← agent onboarding guide (status, conventions, checklist)
-├── CHANGELOG.md               ← version history (Keep a Changelog — current v3.2.0)
+├── CHANGELOG.md               ← version history (Keep a Changelog — current v3.3.0)
 ├── CONTRIBUTING.md            ← setup + workflow + gates guideline
 ├── docs/                      ← detailed design (16 documents + ADRs)
 │   ├── 01-product-requirements.md
@@ -209,9 +214,9 @@ MetaSearch/
 │   │   ├── mcp/               ← FastMCP server + REST client (9 tools, stdio + HTTP)
 │   │   └── llm/               ← gateway streaming, prompts, citations, embeddings, tokens, langfuse
 │   ├── alembic/versions/      ← migrations (Postgres + pgvector / SQLite auto-bootstrap)
-│   ├── evals/golden.json      ← 46 golden evaluation queries across domains (EN + VI)
-│   ├── scripts/               ← eval_run.py (--judge-faithfulness) + perf_load.py
-│   ├── tests/                 ← 1095 tests (integration gated by METASEARCH_INTEGRATION=1)
+│   ├── evals/golden.json      ← 46 golden evaluation queries across domains (EN + VI), plus golden_v2.json & golden_v3_vi.json
+│   ├── scripts/               ← eval_run.py (--judge-faithfulness), eval_v2.py + perf_load.py
+│   ├── tests/                 ← 1135 collected tests (compose integration gated by METASEARCH_INTEGRATION=1)
 │   └── pyproject.toml
 ├── frontend/                  ← Next.js 15 + React 19 (streaming Web UI + category chips + News tab + TTS + blog reader)
 │   ├── app/ · lib/api.ts      ← SSE client + ApiError + Digests API + safeHref
@@ -241,7 +246,7 @@ MetaSearch/
 | [08 Deployment](docs/08-deployment.md) | Lite profile (no Docker) vs Docker Compose dev 16 GB / prod VPS? |
 | [09 Observability & Eval](docs/09-observability-eval.md) | Traces/metrics/logs, 40 golden queries + faithfulness judge? |
 | [10 Security & Compliance](docs/10-security-compliance.md) | SSRF IP-pinning, admin RBAC, robots.txt, rate limit, secrets? |
-| [11 Testing Strategy](docs/11-testing-strategy.md) | Test strategy, 830 backend + 21 frontend tests, golden set, citation accuracy measurement? |
+| [11 Testing Strategy](docs/11-testing-strategy.md) | Test strategy, 1135 backend tests (1127 active + 8 conditional skip) & 109 frontend tests, golden set, citation accuracy? |
 | [12 Roadmap & Plan](docs/12-roadmap-plan.md) | **Detailed Phase 0–5 plan, KPI, risks & mitigations, post-v2.0.0 version status** |
 | [13 Versioning & Release](docs/13-versioning-and-release.md) | **SemVer rules, Quality Gates, automated release script & CI/CD** |
 | [15 FA Sources Plan](docs/15-fa-sources-plan.md) | 21 vetted VN financial data sources; direct SSI/TCBS/FireAnt adapters, `FAAggregator` cross-validation (v2.1.0)? |
@@ -249,6 +254,10 @@ MetaSearch/
 | [16 Web UI News + TTS](docs/16-web-ui-news-tts.md) | 6-category News tab + Vietnamese TTS; server-side `freshness_days`→`when:Nd`; voice privacy policy (v2.2.0)? |
 | [17 VoiceStudio Integration](docs/17-voicestudio-integration.md) | Optional server-side VoiceStudio TTS engine (comparison, enabling, licensing, extra-feature roadmap)? |
 | [25 4-Repo AI Infra Integration](docs/25-llm-integration-evaluation.md) | Native OmniRoute validator/router, Headroom compression, One-Skill orchestrator & Claude-Mem observations (v3.2.0) |
+| [26 Principal Architect Review](docs/26-principal-architect-review-2026-11-15.md) | 22 boundary hardening findings `F-01..F-22` & non-regression guardrails (`test_w5_guardrails.py`) |
+| [27 Market Sentiment Standards](docs/27-sentiment-measurement-standards-and-checklist.md) | Omni-channel equity sentiment formulas, 7-pillar checklist, `^VIX`/`^VIX3M` & zero-fabrication rules |
+| [28 Rich-Content Web UI](docs/28-chat-demo-evaluation-and-integration.md) | Streaming Markdown/Prism/KaTeX/Mermaid integration & 3-round adversarial audit |
+| [29 Master Plan 5-Stage](docs/29-master-plan-5stage-2026-11-17.md) | Unified `run_digest`, DEFER-A/B/C hardening, env/doc parity & verification criteria |
 
 ## 6. Standing on the shoulders of giants
 
@@ -284,7 +293,12 @@ We warmly welcome community contributions (issues, feature requests, pull reques
 
 [English](#english)
 
-Trạng thái: **v3.2.0 — Tích hợp 4-Repo AI Infra & 5-pass audit (`OmniRoute`, `headroom`, `one-skill-to-rule-them-all`, `claude-mem`; [docs/25](docs/25-llm-integration-evaluation.md)): kiểm định key đa provider & định tuyến failover theo sức khoẻ (`/v1/llm/validate`, `/v1/llm/health`), nén ngữ cảnh cấu trúc/nguyên văn + ổn định KV-cache prefix, 9 skill thống nhất + `TaskObserver` (`/v1/skills`, `/v1/ops/skills`), và trí nhớ dài hạn Progressive Disclosure 3 lớp (REST + MCP); bên dưới: v3.1.0 Lite Web UI + job runner không popup + 2 fix P3**:
+Trạng thái: **v3.3.0 — Tâm lý Cổ phiếu Đa kênh (`docs/27`), Streaming Rich-Content Web UI (`docs/28`), Unified Extractive `run_digest` & Hội tụ ranh giới (`docs/29`), `mypy` toàn bộ `app/` & Đồng bộ Web UI (`SentimentPanel`, `SpacesPanel`, `Podcast Watchlist`), kế tiếp v3.2.0 (`docs/25`, `docs/26`)**:
+
+- **v3.3.0 Hội tụ Chất lượng, Grounding Định lượng & Đồng bộ Web UI (docs/27, docs/28, docs/29)**:
+  - **Tâm lý Cổ phiếu Đa kênh Song ngữ (`docs/27`)**: fan-out 5 lớp VI/EN + cổng định lượng, chống trùng mã đa thị trường (`VNM`, `GAS`, `SSI`, `FPT`, `POW`), lọc seeding/tin đồn chưa kiểm chứng, `Tier_Weight × Time_Decay`, Loughran-McDonald TF-IDF + Tetlock pessimism + độ phân cực đồng thuận, CNN Fear & Greed (`0..100`), bảng kiểm 7 trụ cột định lượng, proxy `^VIX`/`^VIX3M` trực tiếp (`Yahoo Finance v8` không cần key) & fallback FA Việt Nam từ `Simplize` (`POST /v1/market/sentiment`, MCP `equity_sentiment`), tuyệt đối giữ `null` khi thiếu dữ liệu.
+  - **Streaming Rich-Content Web UI (`docs/28`) & Tab Parity**: nâng cấp `AnswerMarkdown` (CodeBlock lazy Prism, công thức KaTeX `trust: false` kèm guard tiền tệ, Mermaid strict-sandbox render tuần tự, emphasis scan có cận `O(n)`, StrictMode gate), bổ sung tab `📊 Tâm lý & Dòng tiền` (`SentimentPanel.tsx` + nút chuyển nhanh từ `ComparePanel.tsx`), tab `🗂️ Spaces & KG` (`SpacesPanel.tsx` CRUD/Crawl/202 KG build+poll/query + `POST /v1/hybrid`), nút `🎧 Podcast Watchlist` (`/v1/podcast/personal*` trong `NewsPanel.tsx`), và badge/ưu tiên hiển thị `🌐 Bản tin chung` (`run_digest`).
+  - **Unified Extractive Digest & Hardening (`docs/29`)**: viết lại `AutomatedScanner` hoàn toàn extractive tạo bản tin tổng hợp `run_digest`, thêm tùy chọn tóm tắt điều hành có kiểm định (`SCHEDULER_LLM_SYNTHESIS_ENABLED=false` mặc định, rào SEC-07, `validate_citations`, fail-open 12s), tuần tự hóa ghi SQLite (`sqlite_write_lock()`), hoàn tất `DEFER-A/B/C` (`admission` LRU, `auth` `/v1/hybrid` cost, chống CSV injection, cache min-heap TTL, SSRF TOCTOU re-check), và mở rộng `mypy` qua toàn bộ `app/` (`159` file) kèm `tests/test_proposals_wave.py`.
 
 - **v3.2.0 Tích hợp 4-Repo AI Infra (docs/25)**: Tích hợp trực tiếp in-repo (tương thích Lite zero-Docker): `OmniRoute` (17 `KEY_FORMAT_SPECS`, probe key an toàn SSRF qua shared HTTP pool, `ProviderHealthTracker` + EWMA/breaker failover, `LLM_ALLOW_KEYLESS_FALLBACK=false`), `headroom` (`ContentRouter` + `SmartCrusher` + `SearchCompressor` nguyên văn với 4 profile nén theo skill + `CacheAligner` bọc ranh giới memory), `one-skill-to-rule-them-all` (9 skills hợp nhất + `TaskObserver` ring-buffer telemetry, `GET /v1/skills`, `GET /v1/ops/skills`), và `claude-mem` (`kind="observation"` theo key, recall có ngân sách, REST Progressive Disclosure `/v1/memory/search|timeline|observations` + 3 MCP tools). Kiểm toán 5 lượt + 13 test mới (`tests/test_phase4_ai_infra.py`) + OpenAPI snapshot regen.
 - **v3.1.0 Lite Web UI + job không popup + fix P3 (docs/08 §Lite, docs/24 §8)**: Web UI static export (`npm run build:export` → `frontend/out`) được API mount tại `/` trên cùng cổng khi `SERVE_UI=true` — Lite còn một tiến trình duy nhất, UI ở `http://127.0.0.1:8000/`; watchdog chạy `-WindowStyle Hidden` và manager có mutex theo port nên không popup cửa sổ console hay chạy chồng (đã có phiên thì bỏ qua), thêm `metasearch-lite.ps1 open`; `POST /v1/spaces/{slug}/graph/build` nay là job nền 202 single-flight + `GET .../graph/status` (admit tier `kg`); fix tokenize tiếng Việt: kiểm stopword trên token gốc trước khi fold nên "cổ phiếu"/"thị trường" không bị nuốt. Test mới `tests/test_v31_lite_ui.py` + test graph job; OpenAPI snapshot regen.
@@ -328,7 +342,7 @@ Trạng thái: **v3.2.0 — Tích hợp 4-Repo AI Infra & 5-pass audit (`OmniRou
 - **Kiến Trúc Universal Multi-Domain Deep Intelligence**: Khả năng thẩm định bản chất chuyên sâu đa lĩnh vực với **Tài chính & Pháp y BCTC (`financial`)** giữ vai trò **Flagship Pilot** cùng 7 gói chuyên sâu (`biomedical_health`, `technology_ai`, `academic_research`, `legal_macro_policy`, `eastern_metaphysics`, `news_geopolitics`, `general_discovery`).
 - **Thẩm Định Pháp Y BCTC Chuyên Sâu (`financial_forensics.py`)**: Phân nhánh theo đặc thù ngành — **Ngân hàng (CAMELS / Basel II-III: CAR, NPL, Nợ nhóm 2, LLR, NIM, CASA, LDR, CIR)**, **Chứng khoán (Margin/VCSH so với trần 200%, FVTPL/HTM/AFS, Tỷ lệ an toàn tài chính)**, **Bất động sản & KCN (Người mua trả tiền trước / Của để dành, Tồn kho/Tài sản)**, **Sản xuất (Cấu trúc nợ, DSO, CFO/Net Income)** kèm **Altman Z-Score**, **Beneish M-Score**, **Piotroski F-Score (9 tiêu chí)**.
 - **Phân Tích Kỹ Thuật Định Lượng (`technical_analysis.py`)**: **Fibonacci Retracement & Golden Pocket (`61.8%–65.0%`) + Extensions (`127.2%`, `261.8%`)**, **Ichimoku Kinko Hyo (Tenkan/Kijun/Senkou A-B/Chikou Span)**, **True EMA-based MACD**, **Wilder's RSI & 2x ATR Trailing Stop**, **Stochastic (`%K`, `%D`)**, **Multi-EMA Ribbon (`20/50/200`)**, **Kênh hồi quy tuyến tính $\pm 2\sigma$ ($R^2$)**, **8 mẫu hình giá/nến**, và **Custom Indicator Query Parser** (`RSI 9`, `MACD 8 21 5`, `Bollinger 15 2.5`...).
-- **Quy Trình Pre-Commit & Release Nghiêm Ngặt**: Cưỡng chế bắt buộc hook `.githooks/pre-commit` chặn mọi commit nếu trượt bất kỳ kiểm định nào (kiểm tra `uv.lock` trước tiên); **1095 backend tests + 107 frontend tests (vitest) PASS**, `ruff` 0 lỗi, `bandit` 0 lỗi bảo mật, Next.js 15 build sạch, CI 13/13 jobs xanh trên 3 OS. Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
+- **Quy Trình Pre-Commit & Release Nghiêm Ngặt**: Cưỡng chế bắt buộc hook `.githooks/pre-commit` chặn mọi commit nếu trượt bất kỳ kiểm định nào (kiểm tra `uv.lock` trước tiên); **1135 backend tests collected (1127 passed + 8 skipped có điều kiện) + 109 frontend tests (vitest) PASS**, `86.87%` coverage, `mypy` toàn bộ `app/` (`159` file), `ruff` 0 lỗi, `bandit` 0 lỗi bảo mật, Next.js 15 build + static export (`frontend/out`) sạch, CI 13/13 jobs trên 3 OS. Thiết kế đầy đủ nằm trong [docs/](docs/), plan chi tiết ở [docs/12-roadmap-plan.md](docs/12-roadmap-plan.md).
 
 ---
 
@@ -341,7 +355,7 @@ Trạng thái: **v3.2.0 — Tích hợp 4-Repo AI Infra & 5-pass audit (`OmniRou
 | Phân tích cổ phiếu chỉ đọc chỉ số thô (P/E, ROE) | Bóc tách **Pháp y BCTC theo ngành** (CAMELS ngân hàng, Margin/FVTPL chứng khoán, Unbilled Bookings BĐS/KCN, Altman Z, Beneish M, Piotroski F) kết hợp **Kỹ thuật định lượng** (Fibonacci Golden Pocket, Ichimoku Cloud, True EMA MACD, Wilder's RSI/ATR, Kênh hồi quy $\pm 2\sigma$, 8 mẫu hình giá/nến) |
 | Nội dung web đầy rác HTML/JS/ads/CAPTCHA | Extraction pipeline (`trafilatura` → `crawl4ai` → `Jina Reader`) kèm SSRF IP-pinning & Anti-challenge escalation biến URL → **Markdown sạch tối ưu cho context LLM** |
 | Kết quả trùng lặp, kém liên quan | Canonical URL + SimHash 64-bit dedup → consensus scoring + curated domain authority → **rerank heuristic-first (0ms)**, tuỳ chọn int8 ONNX hoặc API rerank |
-| AI Agent cần công cụ tìm kiếm | **MCP Server** với 4 tool: `web_search`, `web_scrape`, `web_search_and_scrape`, `deep_research` (stdio + HTTP) |
+| AI Agent cần công cụ tìm kiếm | **MCP Server** với 9 tool: `web_search`, `web_scrape`, `web_search_and_scrape`, `deep_research`, `research_status`, `memory_search`, `memory_timeline`, `memory_get_observations`, `equity_sentiment` (stdio + HTTP) |
 | Chi phí API search hàng tháng | Self-host SearXNG hoặc chạy **Lite Profile** (DuckDuckGo keyless + SQLite + Jina keyless) = **$0 cho phần search**, API chỉ ~100MB RAM |
 
 ## 2. Kiến trúc một trang
@@ -443,7 +457,7 @@ Web UI: mở `http://localhost:3000` — chọn chuyên mục (Tài chính & C�
 MetaSearch/
 ├── README.md                  ← bạn đang ở đây
 ├── AGENTS.md                  ← hướng dẫn AI agent nhận việc (trạng thái, quy ước, checklist)
-├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — hiện tại v3.2.0)
+├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — hiện tại v3.3.0)
 ├── CONTRIBUTING.md            ← guideline setup + workflow + gate
 ├── docs/                      ← thiết kế chi tiết (16 tài liệu + ADR)
 │   ├── 01-product-requirements.md
@@ -481,9 +495,9 @@ MetaSearch/
 │   │   ├── mcp/               ← FastMCP server + REST client (9 tools, stdio + HTTP)
 │   │   └── llm/               ← gateway streaming, prompts, citations, embeddings, tokens, langfuse
 │   ├── alembic/versions/      ← migrations (Postgres + pgvector / SQLite auto-bootstrap)
-│   ├── evals/golden.json      ← 46 golden evaluation queries đa miền (EN + VI)
-│   ├── scripts/               ← eval_run.py (--judge-faithfulness) + perf_load.py
-│   ├── tests/                 ← 1095 tests (integration gated bằng METASEARCH_INTEGRATION=1)
+│   ├── evals/golden.json      ← 46 golden evaluation queries đa miền (EN + VI), kèm golden_v2.json & golden_v3_vi.json
+│   ├── scripts/               ← eval_run.py (--judge-faithfulness), eval_v2.py + perf_load.py
+│   ├── tests/                 ← 1135 tests collected (integration gated bằng METASEARCH_INTEGRATION=1)
 │   └── pyproject.toml
 ├── frontend/                  ← Next.js 15 + React 19 (Web UI streaming + Category Chips + News tab + TTS + Blog Reader)
 │   ├── app/ · lib/api.ts      ← SSE client + ApiError + Digests API + safeHref
@@ -513,7 +527,7 @@ MetaSearch/
 | [08 Deployment](docs/08-deployment.md) | Lite profile (không Docker) vs Docker Compose dev 16GB / prod VPS? |
 | [09 Observability & Eval](docs/09-observability-eval.md) | Trace/metrics/log, eval 40 golden queries + faithfulness judge? |
 | [10 Security & Compliance](docs/10-security-compliance.md) | SSRF IP-pinning, RBAC admin, robots.txt, rate limit, secrets? |
-| [11 Testing Strategy](docs/11-testing-strategy.md) | Test strategy, 1095 backend + 107 frontend tests, golden set, đo citation accuracy? |
+| [11 Testing Strategy](docs/11-testing-strategy.md) | Test strategy, 1135 backend tests (1127 chạy thực tế + 8 skip có điều kiện) & 109 frontend tests, golden set, đo citation accuracy? |
 | [12 Roadmap & Plan](docs/12-roadmap-plan.md) | **Plan chi tiết Phase 0–5, KPI, rủi ro & mitigation, trạng thái các version sau v2.0.0** |
 | [13 Versioning & Release](docs/13-versioning-and-release.md) | **Quy chuẩn SemVer, Quality Gates, script release tự động & CI/CD** |
 | [15 FA Sources Plan](docs/15-fa-sources-plan.md) | 21 nguồn dữ liệu tài chính VN đã thẩm định; adapter trực tiếp SSI/TCBS/FireAnt, `FAAggregator` cross-validate (v2.1.0)? |
@@ -521,6 +535,10 @@ MetaSearch/
 | [16 Web UI News + TTS](docs/16-web-ui-news-tts.md) | Tab Tin tức 6 mục + TTS tiếng Việt; map `freshness_days`→`when:Nd` server-side; chính sách riêng tư giọng đọc (v2.2.0)? |
 | [17 VoiceStudio Integration](docs/17-voicestudio-integration.md) | Engine đọc VoiceStudio server-side tuỳ chọn (so sánh, cách bật, license, roadmap tính năng thêm)? |
 | [25 4-Repo AI Infra Integration](docs/25-llm-integration-evaluation.md) | Tích hợp in-repo OmniRoute validator/router, Headroom compression, One-Skill orchestrator & Claude-Mem observations (v3.2.0) |
+| [26 Principal Architect Review](docs/26-principal-architect-review-2026-11-15.md) | 22 finding hardening ranh giới `F-01..F-22` & kiểm tự động chống tái phát (`test_w5_guardrails.py`) |
+| [27 Market Sentiment Standards](docs/27-sentiment-measurement-standards-and-checklist.md) | Tiêu chuẩn đo tâm lý cổ phiếu đa kênh, checklist 7 trụ cột, `^VIX`/`^VIX3M` & zero-fabrication |
+| [28 Rich-Content Web UI](docs/28-chat-demo-evaluation-and-integration.md) | Tích hợp streaming Markdown/Prism/KaTeX/Mermaid & 3 vòng audit đối kháng |
+| [29 Master Plan 5-Stage](docs/29-master-plan-5stage-2026-11-17.md) | Unified `run_digest`, hoàn tất `DEFER-A/B/C`, đồng bộ env/docs & tiêu chí kiểm định |
 
 ## 6. Đứng trên vai người khổng lồ
 
