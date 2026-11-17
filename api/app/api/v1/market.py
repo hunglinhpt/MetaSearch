@@ -25,6 +25,8 @@ from app.api.v1.schemas import (
     FaSymbolResult,
     MarketOhlcvRequest,
     MarketOhlcvResponse,
+    MarketSentimentRequest,
+    MarketSentimentResponse,
     OhlcvCandle,
 )
 from app.config import get_settings
@@ -34,6 +36,12 @@ from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
 from app.retrieval.adapters.viet_stock import fetch_vndirect_ohlcv_series
 from app.retrieval.fa_sources.base import ensure_symbol
+from app.retrieval.sentiment_quant import (
+    FundamentalSnapshotInput,
+    MarketProxiesInput,
+    OhlcvBarInput,
+    fetch_sentiment_quant_context,
+)
 from app.retrieval.vn_tickers import load_vn_tickers
 
 router = APIRouter(tags=["market"])
@@ -347,3 +355,199 @@ async def market_ohlcv(request: MarketOhlcvRequest) -> MarketOhlcvResponse:
         days=days,
         latency_ms=int((time.perf_counter() - started) * 1000),
     )
+
+
+def _parse_iso_dt(raw: str | None) -> datetime | None:
+    if not raw or not raw.strip():
+        return None
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+@router.post(
+    "/market/sentiment",
+    response_model=MarketSentimentResponse,
+    response_model_exclude_none=False,
+)
+async def market_sentiment(request: MarketSentimentRequest) -> MarketSentimentResponse:
+    """Omni-Channel Bilingual Equity Sentiment Engine (VI / EN) — Phase 1..3."""
+    from app.orchestration.pipeline import SearchParams
+    from app.retrieval.sentiment import (
+        RawSentimentHit,
+        analyze_omni_channel_sentiment,
+        build_omni_channel_queries,
+        resolve_equity_entity,
+    )
+
+    sym = ensure_symbol(request.ticker)
+    if sym is None:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            f"invalid ticker: {request.ticker!r}",
+            status_code=400,
+        )
+
+    entity = resolve_equity_entity(
+        sym,
+        company_name=request.company_name,
+        exchange=request.exchange,
+    )
+    budget = create_budget_for_route("market_sentiment", timeout_ms=request.timeout_ms)
+    total_timeout = budget.remaining() if budget else 15.0
+
+    async with admit("market"):
+        with use_budget(budget):
+            hits: list[RawSentimentHit] = []
+            # Execution Rule: If retrieved_documents are already provided in context,
+            # bypass Phase 1 search fan-out and proceed directly to Phase 2.
+            if request.retrieved_documents is not None:
+                for doc in request.retrieved_documents:
+                    hits.append(
+                        RawSentimentHit(
+                            url=doc.url,
+                            title=doc.title,
+                            snippet=doc.snippet,
+                            content=doc.content,
+                            published_at=_parse_iso_dt(doc.published_at),
+                            lang=doc.lang,
+                            client_supplied=True,
+                        )
+                    )
+            else:
+                queries = build_omni_channel_queries(entity, max_queries=request.max_queries)
+                pipe = deps.get_search_pipeline()
+                sem = asyncio.Semaphore(4)
+
+                async def _run_vec(q_vec: Any) -> list[RawSentimentHit]:
+                    async with sem:
+                        try:
+                            outcome = await pipe.run(
+                                SearchParams(
+                                    query=q_vec.query,
+                                    lang=q_vec.lang.lower(),
+                                    k=request.k,
+                                    categories=[q_vec.category],
+                                    record_memory=False,
+                                    # PASS-2 audit P1-3: 22 site:-prefixed
+                                    # sub-queries must not each pay the
+                                    # adaptive-router deep escalation or LLM
+                                    # query expansion (~10x cost amplifier).
+                                    skip_router=True,
+                                    expansion=False,
+                                )
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            logger.warning(
+                                "sentiment_fanout_query_failed",
+                                ticker=sym,
+                                layer=q_vec.layer,
+                                error=type(exc).__name__,
+                            )
+                            return []
+                        out: list[RawSentimentHit] = []
+                        for r in outcome.results:
+                            out.append(
+                                RawSentimentHit(
+                                    url=r.url,
+                                    title=r.title,
+                                    snippet=r.snippet,
+                                    published_at=r.published_at,
+                                    lang=q_vec.lang,
+                                )
+                            )
+                        return out
+
+                try:
+                    async with asyncio.timeout(max(1.5, total_timeout)):
+                        batches = await asyncio.gather(
+                            *(_run_vec(q) for q in queries), return_exceptions=True
+                        )
+                except TimeoutError:
+                    batches = []
+
+                seen_urls: set[str] = set()
+                for b in batches:
+                    if isinstance(b, BaseException):
+                        continue
+                    for h in b:
+                        if h.url and h.url not in seen_urls:
+                            seen_urls.add(h.url)
+                            hits.append(h)
+
+            ohlcv_bars: list[OhlcvBarInput] | None = None
+            ohlcv_src: str | None = None
+            ohlcv_url: str | None = None
+            ohlcv_as_of: str | None = None
+            if request.ohlcv_bars:
+                ohlcv_bars = [
+                    OhlcvBarInput(
+                        time=bar.time,
+                        open=bar.open,
+                        high=bar.high,
+                        low=bar.low,
+                        close=bar.close,
+                        volume=bar.volume,
+                    )
+                    for bar in request.ohlcv_bars
+                ]
+                ohlcv_src = "request"
+                ohlcv_as_of = datetime.fromtimestamp(
+                    max(bar.time for bar in ohlcv_bars), tz=UTC
+                ).isoformat()
+
+            market_proxies: MarketProxiesInput | None = None
+            if request.market_proxies is not None:
+                mp = request.market_proxies
+                mp_dict = mp.model_dump(exclude={"rana_series"})
+                market_proxies = MarketProxiesInput(
+                    **mp_dict,
+                    rana_series=tuple(mp.rana_series) if mp.rana_series is not None else None,
+                )
+
+            fundamentals: FundamentalSnapshotInput | None = None
+            if request.fetch_market_data:
+                rem = budget.remaining() if budget else 4.0
+                if rem >= 0.8:
+                    (
+                        live_bars,
+                        live_src,
+                        live_url,
+                        live_as_of,
+                        fa_snap,
+                    ) = await fetch_sentiment_quant_context(
+                        entity.ticker,
+                        is_vietnam=entity.is_vietnam,
+                        need_ohlcv=not bool(ohlcv_bars),
+                        fa_aggregator=deps.get_fa_aggregator(),
+                        timeout_s=min(4.0, rem),
+                    )
+                    if not ohlcv_bars and live_bars:
+                        ohlcv_bars = live_bars
+                        ohlcv_src = live_src
+                        ohlcv_url = live_url
+                        ohlcv_as_of = live_as_of
+                    fundamentals = fa_snap
+
+            # PASS-2 audit P2-7: the lexicon scan + quant aggregation are
+            # CPU-bound regex/scan work (measured 206 ms at schema-max
+            # input) — offload to a worker thread, never stall the loop.
+            payload = await asyncio.to_thread(
+                analyze_omni_channel_sentiment,
+                entity,
+                hits,
+                ohlcv_bars=ohlcv_bars,
+                ohlcv_source_name=ohlcv_src,
+                ohlcv_source_url=ohlcv_url,
+                ohlcv_as_of=ohlcv_as_of,
+                market_proxies=market_proxies,
+                fundamentals=fundamentals,
+            )
+            return MarketSentimentResponse.model_validate(payload)

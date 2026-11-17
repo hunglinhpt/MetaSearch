@@ -32,13 +32,15 @@ metasearch keys create my-system --rate-limit 600 --max-concurrent 16
 | Câu trả lời có trích dẫn, dùng LLM của MetaSearch | `POST /v1/answer` | JSON hoặc SSE (`"stream": true`). |
 | Hậu kiểm `[n]` trong câu trả lời LLM của bạn | `POST /v1/citations/validate` | Xem `marker_valid` ở mục 3.4. |
 | Báo cáo nhiều vòng (30-180 s) | `POST /v1/research`, rồi `GET /v1/research/{id}` | Chạy nền, chỉ chủ job đọc được. |
+| Phân tích tâm lý cổ phiếu đa kênh song ngữ (VI/EN) | `POST /v1/market/sentiment` | Fan-out 5 lớp + cổng định lượng hoặc truyền `retrieved_documents`, `ohlcv_bars`, `market_proxies`, `fetch_market_data=true`; trả `benchmark_standards` (`nlp_telemetry`, `quantitative_telemetry`, 7-pillar checklist) không bịa số. |
 
 > **v3.2.0 (2026-11-15):** OpenAPI snapshot đổi: `POST /v1/context` thêm
 > `compression` và `skill` vào `include`; `AnswerResponse` thêm `compression`
-> và `skill`; thêm 7 endpoint mới (`/v1/llm/validate`, `/v1/llm/health`,
+> và `skill`; thêm 8 endpoint mới (`/v1/llm/validate`, `/v1/llm/health`,
 > `/v1/skills`, `/v1/ops/skills`, `/v1/memory/search`, `/v1/memory/timeline`,
-> `/v1/memory/observations`). MCP thêm 3 tools: `memory_search`,
-> `memory_timeline`, `memory_get_observations`. Xem docs/25.
+> `/v1/memory/observations`, `POST /v1/market/sentiment`). MCP thêm 4 tools:
+> `memory_search`, `memory_timeline`, `memory_get_observations`,
+> `equity_sentiment`. Xem docs/25.
 >
 > **v3.0.0 (2026-11-14):** OpenAPI snapshot đổi: `SearchRequest` thêm
 > `response_format` (structured JSON output, `SearchResponse` có `structured` +
@@ -148,5 +150,5 @@ Danh sách engine đang bật và sức khỏe của chúng: `GET /v1/engines`, 
 
 | Ngày | Thay đổi |
 |---|---|
-| 2026-11-15 | `/v1/context` `include` thêm `compression`, `skill`; `AnswerResponse` thêm `compression`, `skill`. Thêm 7 endpoint: `POST /v1/llm/validate`, `GET /v1/llm/health`, `GET /v1/skills`, `GET /v1/ops/skills`, `GET /v1/memory/search`, `GET /v1/memory/timeline`, `POST /v1/memory/observations`. MCP: thêm `memory_search`, `memory_timeline`, `memory_get_observations`. Hardening `docs/26`: `GET /v1/ops/status`, `GET /v1/ops/interleave`, `GET /v1/ops/skills`, `GET /v1/llm/health`, `POST /v1/podcast/briefing` yêu cầu `require_operator` (bắt buộc role `admin` khi `AUTH_ENABLED=true`, mở cho Lite `AUTH_ENABLED=false`); `/openapi.json`, `/docs`, `/metrics` và chi tiết nội bộ `/readyz` từ chối request có forwarding header (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`); toàn bộ request body/query/path có cận trên tường minh. |
+| 2026-11-15 | `/v1/context` `include` thêm `compression`, `skill`; `AnswerResponse` thêm `compression`, `skill`. Thêm 8 endpoint: `POST /v1/llm/validate`, `GET /v1/llm/health`, `GET /v1/skills`, `GET /v1/ops/skills`, `GET /v1/memory/search`, `GET /v1/memory/timeline`, `POST /v1/memory/observations`, `POST /v1/market/sentiment`. MCP: thêm `memory_search`, `memory_timeline`, `memory_get_observations`, `equity_sentiment`. Hardening `docs/26`: `GET /v1/ops/status`, `GET /v1/ops/interleave`, `GET /v1/ops/skills`, `GET /v1/llm/health`, `POST /v1/podcast/briefing` yêu cầu `require_operator` (bắt buộc role `admin` khi `AUTH_ENABLED=true`, mở cho Lite `AUTH_ENABLED=false`); `/openapi.json`, `/docs`, `/metrics` và chi tiết nội bộ `/readyz` từ chối request có forwarding header (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`); toàn bộ request body/query/path có cận trên tường minh. |
 | 2026-11-08 | `/v1/context` mặc định chỉ trả `chunks`, `sources`; thêm `include`. Thêm `include_domains`, `exclude_domains`. Thêm mốc dữ liệu cho kết quả, source, chunk. Thêm `marker_valid`. MCP: thêm tool `research_status`, bỏ `poll_hint`. |

@@ -42,6 +42,7 @@ COSTED_POST = {
     "/v1/podcast/personal": 5,
     "/v1/llm/council": 10,
     "/v1/market/ohlcv": 2,
+    "/v1/market/sentiment": 8,
     "/v1/crawl": 8,
     "/v1/map": 3,
     "/v1/spaces/{slug}/crawl": 8,

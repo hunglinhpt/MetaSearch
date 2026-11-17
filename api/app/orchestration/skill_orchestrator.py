@@ -67,6 +67,12 @@ _SKILL_PROMPTS: dict[str, str] = {
         "Active Skill [deep_research_synthesis]: Decompose into sub-questions, resolve source "
         "disagreements explicitly, and organize structured sections with [n] citations."
     ),
+    "omni_channel_equity_sentiment": (
+        "Active Skill [omni_channel_equity_sentiment]: Cross-check Tier 1/2 official exchange & "
+        "broker sources against Tier 3/4 social chatter (FireAnt, F319, Facebook, X, Reddit, "
+        "StockTwits); discount unverified rumors and copy-paste VIP seeding, and report the "
+        "market regime with verbatim evidence quotes [n]."
+    ),
     "general_grounded_search": (
         "Active Skill [general_grounded_search]: Synthesize concisely from highest-trust "
         "sources [n], keeping the response in the user's query language."
@@ -82,6 +88,7 @@ _COMPRESSION_PROFILES: dict[str, CompressionProfile] = {
     "eastern_metaphysics": "balanced",
     "news_geopolitics": "compact",
     "deep_research_synthesis": "balanced",
+    "omni_channel_equity_sentiment": "preserve_numbers",
     "general_grounded_search": "balanced",
 }
 
@@ -289,7 +296,40 @@ def list_skills() -> list[SkillDefinition]:
             ],
         )
     )
+    skills.append(
+        SkillDefinition(
+            id="omni_channel_equity_sentiment",
+            domain_id="financial",
+            name="Omni-Channel Bilingual Equity Sentiment (VI / EN)",
+            description=(
+                "5-layer bilingual sentiment discovery across exchanges, brokers, financial media, "
+                "and social networks with anti-seeding/anti-collision filtering."
+            ),
+            compression_profile="preserve_numbers",
+            preferred_engines=["viet_stock", "yahoo_finance", "google_news", "reddit", "searxng"],
+            verification_rubric=[
+                "Were cross-market ticker collisions and unverified social rumors filtered out?",
+                "Did every verified sentiment driver include a verbatim quote and source tier [n]?",
+            ],
+        )
+    )
     return skills
+
+
+_SENTIMENT_TRIGGERS: tuple[str, ...] = (
+    "sentiment",
+    "tâm lý thị trường",
+    "tâm lý đám đông",
+    "tâm lý nhà đầu tư",
+    "lùa gà",
+    "đội lái",
+    "phím hàng",
+    "kéo xả",
+    "úp bô",
+    "f319",
+    "stocktwits",
+    "cashtag",
+)
 
 
 def select_skill(
@@ -303,10 +343,15 @@ def select_skill(
     pack = classify_domain_intelligence(query, requested_domain=requested_domain)
     complexity = "deep" if deep else classify_complexity(query, min_words_deep=min_words_deep)
     domain_skill = _DOMAIN_TO_SKILL.get(pack.id, "general_grounded_search")
+    low_q = (query or "").lower()
 
-    # Specialized domains retain their forensic rubric even when complexity is deep;
-    # general queries routed as deep use deep_research_synthesis.
-    if domain_skill == "general_grounded_search" and complexity == "deep":
+    if any(t in low_q for t in _SENTIMENT_TRIGGERS) and pack.id in (
+        "financial",
+        "news_geopolitics",
+        "general_discovery",
+    ):
+        eff_skill = "omni_channel_equity_sentiment"
+    elif domain_skill == "general_grounded_search" and complexity == "deep":
         eff_skill = "deep_research_synthesis"
     else:
         eff_skill = domain_skill

@@ -1591,6 +1591,159 @@
         "title": "FaSymbolResult",
         "type": "object"
       },
+      "FundamentalMetricsOut": {
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "debt_to_equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debt To Equity"
+          },
+          "market_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Cap"
+          },
+          "pb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pb"
+          },
+          "pe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pe"
+          },
+          "profit_growth_yoy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profit Growth Yoy"
+          },
+          "revenue_growth_yoy": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revenue Growth Yoy"
+          },
+          "roe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roe"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          }
+        },
+        "title": "FundamentalMetricsOut",
+        "type": "object"
+      },
+      "GlobalSocialTelemetryOut": {
+        "properties": {
+          "crowd_narrative_en": {
+            "title": "Crowd Narrative En",
+            "type": "string"
+          },
+          "hit_count": {
+            "title": "Hit Count",
+            "type": "integer"
+          },
+          "platforms_covered": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Platforms Covered",
+            "type": "array"
+          },
+          "trending_tags_en": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Trending Tags En",
+            "type": "array"
+          },
+          "weighted_score": {
+            "title": "Weighted Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "weighted_score",
+          "hit_count",
+          "crowd_narrative_en"
+        ],
+        "title": "GlobalSocialTelemetryOut",
+        "type": "object"
+      },
       "GraphBuildResponse": {
         "description": "docs/20 P2-2: knowledge-graph build job for a Space.\n\nPOST /graph/build enqueues the build and returns 202 with\n``status=\"running\"`` (counts 0); poll GET /graph/status — when the job\nfinishes it reports ``status=\"ready\"`` with the real counts (also derived\nfrom the kg tables, so it survives a restart).",
         "properties": {
@@ -2087,6 +2240,57 @@
         "title": "MapResponse",
         "type": "object"
       },
+      "MarketOhlcvBarInput": {
+        "description": "Bounded OHLCV candle supplied directly in request payloads.",
+        "properties": {
+          "close": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1000000000000.0,
+            "title": "Close",
+            "type": "number"
+          },
+          "high": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1000000000000.0,
+            "title": "High",
+            "type": "number"
+          },
+          "low": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1000000000000.0,
+            "title": "Low",
+            "type": "number"
+          },
+          "open": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1000000000000.0,
+            "title": "Open",
+            "type": "number"
+          },
+          "time": {
+            "maximum": 4102444800.0,
+            "minimum": 1.0,
+            "title": "Time",
+            "type": "integer"
+          },
+          "volume": {
+            "maximum": 1000000000000000.0,
+            "minimum": 0.0,
+            "title": "Volume",
+            "type": "number"
+          }
+        },
+        "required": [
+          "time",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume"
+        ],
+        "title": "MarketOhlcvBarInput",
+        "type": "object"
+      },
       "MarketOhlcvRequest": {
         "description": "POST /v1/market/ohlcv — daily candles for the chart (docs/18 B2).",
         "properties": {
@@ -2179,6 +2383,1072 @@
           "days"
         ],
         "title": "MarketOhlcvResponse",
+        "type": "object"
+      },
+      "MarketProxiesSchemaInput": {
+        "description": "Optional external market breadth, survey, options, dark-pool & flow proxies.",
+        "properties": {
+          "aaii_bearish_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aaii Bearish Pct"
+          },
+          "aaii_bullish_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aaii Bullish Pct"
+          },
+          "aaii_neutral_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aaii Neutral Pct"
+          },
+          "advancing_issues": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Advancing Issues"
+          },
+          "advancing_volume": {
+            "anyOf": [
+              {
+                "maximum": 1e+16,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Advancing Volume"
+          },
+          "cboe_put_call_equity": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cboe Put Call Equity"
+          },
+          "cboe_put_call_total": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cboe Put Call Total"
+          },
+          "cboe_skew": {
+            "anyOf": [
+              {
+                "maximum": 300.0,
+                "minimum": 50.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cboe Skew"
+          },
+          "credit_spread_bps": {
+            "anyOf": [
+              {
+                "maximum": 10000.0,
+                "minimum": -500.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Spread Bps"
+          },
+          "declining_issues": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declining Issues"
+          },
+          "declining_volume": {
+            "anyOf": [
+              {
+                "maximum": 1e+16,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declining Volume"
+          },
+          "dix_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dix Pct"
+          },
+          "gex_billions": {
+            "anyOf": [
+              {
+                "maximum": 500.0,
+                "minimum": -500.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gex Billions"
+          },
+          "ig_yield_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ig Yield Pct"
+          },
+          "ii_bearish_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ii Bearish Pct"
+          },
+          "ii_bullish_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ii Bullish Pct"
+          },
+          "insider_acquired_shares": {
+            "anyOf": [
+              {
+                "maximum": 10000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Insider Acquired Shares"
+          },
+          "insider_disposed_shares": {
+            "anyOf": [
+              {
+                "maximum": 10000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Insider Disposed Shares"
+          },
+          "junk_yield_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Junk Yield Pct"
+          },
+          "margin_debt_curr": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Debt Curr"
+          },
+          "margin_debt_prev_year": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1000000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Debt Prev Year"
+          },
+          "margin_debt_yoy_pct": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": -100.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Debt Yoy Pct"
+          },
+          "naaim_exposure_pct": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": -200.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Naaim Exposure Pct"
+          },
+          "new_52w_highs": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New 52W Highs"
+          },
+          "new_52w_lows": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New 52W Lows"
+          },
+          "off_exchange_short_dollar_vol": {
+            "anyOf": [
+              {
+                "maximum": 1e+16,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Off Exchange Short Dollar Vol"
+          },
+          "off_exchange_total_dollar_vol": {
+            "anyOf": [
+              {
+                "maximum": 1e+16,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Off Exchange Total Dollar Vol"
+          },
+          "pct_above_ma200": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Above Ma200"
+          },
+          "pct_above_ma50": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Above Ma50"
+          },
+          "rana_series": {
+            "anyOf": [
+              {
+                "items": {
+                  "maximum": 1000.0,
+                  "minimum": -1000.0,
+                  "type": "number"
+                },
+                "maxItems": 252,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rana Series"
+          },
+          "social_mean_20d": {
+            "anyOf": [
+              {
+                "maximum": 1000000000.0,
+                "minimum": -1000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Social Mean 20D"
+          },
+          "social_std_20d": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Social Std 20D"
+          },
+          "social_weighted_24h": {
+            "anyOf": [
+              {
+                "maximum": 1000000000.0,
+                "minimum": -1000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Social Weighted 24H"
+          },
+          "source_note": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Note"
+          },
+          "vix": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 200.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vix"
+          },
+          "vix_3m": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 200.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vix 3M"
+          },
+          "vix_ma50": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 200.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vix Ma50"
+          },
+          "vn_foreign_net_value_bil": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vn Foreign Net Value Bil"
+          },
+          "vn_prop_net_value_bil": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vn Prop Net Value Bil"
+          }
+        },
+        "title": "MarketProxiesSchemaInput",
+        "type": "object"
+      },
+      "MarketProxyMetricsOut": {
+        "properties": {
+          "aaii_bull_bear_spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aaii Bull Bear Spread"
+          },
+          "arms_trin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arms Trin"
+          },
+          "available": {
+            "default": false,
+            "title": "Available",
+            "type": "boolean"
+          },
+          "bofa_bull_bear_analog_0_10": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bofa Bull Bear Analog 0 10"
+          },
+          "breadth_proxy_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breadth Proxy Score"
+          },
+          "cboe_put_call_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cboe Put Call Ratio"
+          },
+          "cboe_skew": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cboe Skew"
+          },
+          "credit_spread_bps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credit Spread Bps"
+          },
+          "crowd_positioning_proxy_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crowd Positioning Proxy Score"
+          },
+          "dix_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dix Pct"
+          },
+          "gex_billions": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gex Billions"
+          },
+          "high_low_breadth_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High Low Breadth Pct"
+          },
+          "ii_bull_bear_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ii Bull Bear Ratio"
+          },
+          "insider_mspr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Insider Mspr"
+          },
+          "margin_debt_yoy_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Debt Yoy Pct"
+          },
+          "mcclellan_oscillator": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mcclellan Oscillator"
+          },
+          "mcclellan_rana": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mcclellan Rana"
+          },
+          "naaim_exposure_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Naaim Exposure Pct"
+          },
+          "pct_above_ma200": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Above Ma200"
+          },
+          "pct_above_ma50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Above Ma50"
+          },
+          "smart_money_proxy_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Smart Money Proxy Score"
+          },
+          "social_s_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Social S Score"
+          },
+          "source_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Note"
+          },
+          "vix_term_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vix Term Ratio"
+          },
+          "vix_term_regime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vix Term Regime"
+          },
+          "vix_vs_ma50_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vix Vs Ma50 Pct"
+          },
+          "vn_foreign_net_value_bil": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vn Foreign Net Value Bil"
+          },
+          "vn_prop_net_value_bil": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vn Prop Net Value Bil"
+          },
+          "volatility_options_proxy_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volatility Options Proxy Score"
+          }
+        },
+        "title": "MarketProxyMetricsOut",
+        "type": "object"
+      },
+      "MarketSentimentDocInput": {
+        "description": "Pre-retrieved document item passed to bypass Phase 1 search fan-out.",
+        "properties": {
+          "content": {
+            "default": "",
+            "maxLength": 8000,
+            "title": "Content",
+            "type": "string"
+          },
+          "lang": {
+            "anyOf": [
+              {
+                "enum": [
+                  "VI",
+                  "EN"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lang"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "snippet": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Snippet",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "MarketSentimentDocInput",
+        "type": "object"
+      },
+      "MarketSentimentRequest": {
+        "description": "POST /v1/market/sentiment — Omni-Channel Bilingual Equity Sentiment Engine.",
+        "properties": {
+          "company_name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "pattern": "^[\\w\\s.,&'\\-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Company Name"
+          },
+          "exchange": {
+            "anyOf": [
+              {
+                "enum": [
+                  "HOSE",
+                  "HSX",
+                  "HNX",
+                  "UPCOM",
+                  "NASDAQ",
+                  "NYSE",
+                  "OTHER"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exchange"
+          },
+          "fetch_market_data": {
+            "default": false,
+            "title": "Fetch Market Data",
+            "type": "boolean"
+          },
+          "k": {
+            "default": 5,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "market_proxies": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketProxiesSchemaInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_queries": {
+            "default": 10,
+            "maximum": 22.0,
+            "minimum": 1.0,
+            "title": "Max Queries",
+            "type": "integer"
+          },
+          "ohlcv_bars": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MarketOhlcvBarInput"
+                },
+                "maxItems": 500,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ohlcv Bars"
+          },
+          "retrieved_documents": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MarketSentimentDocInput"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieved Documents"
+          },
+          "ticker": {
+            "maxLength": 15,
+            "minLength": 1,
+            "title": "Ticker",
+            "type": "string"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 60000.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          }
+        },
+        "required": [
+          "ticker"
+        ],
+        "title": "MarketSentimentRequest",
+        "type": "object"
+      },
+      "MarketSentimentResponse": {
+        "properties": {
+          "benchmark_standards": {
+            "$ref": "#/components/schemas/SentimentBenchmarkStandardsOut"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/SentimentEntityOut"
+          },
+          "module": {
+            "const": "omni_channel_equity_sentiment_v2",
+            "default": "omni_channel_equity_sentiment_v2",
+            "title": "Module",
+            "type": "string"
+          },
+          "network_telemetry": {
+            "$ref": "#/components/schemas/SentimentNetworkTelemetryOut"
+          },
+          "risk_circuit_breakers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Risk Circuit Breakers",
+            "type": "array"
+          },
+          "sentiment_summary": {
+            "$ref": "#/components/schemas/SentimentSummaryOut"
+          },
+          "social_integrity_audit": {
+            "$ref": "#/components/schemas/SocialIntegrityAuditOut"
+          },
+          "top_verified_drivers": {
+            "items": {
+              "$ref": "#/components/schemas/VerifiedDriverOut"
+            },
+            "title": "Top Verified Drivers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entity",
+          "sentiment_summary",
+          "benchmark_standards",
+          "network_telemetry",
+          "social_integrity_audit"
+        ],
+        "title": "MarketSentimentResponse",
         "type": "object"
       },
       "MemoryCreateRequest": {
@@ -2590,6 +3860,31 @@
         "title": "MemoryTimelineResponse",
         "type": "object"
       },
+      "OfficialMediaTelemetryOut": {
+        "properties": {
+          "hit_count": {
+            "title": "Hit Count",
+            "type": "integer"
+          },
+          "key_catalysts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Key Catalysts",
+            "type": "array"
+          },
+          "weighted_score": {
+            "title": "Weighted Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "weighted_score",
+          "hit_count"
+        ],
+        "title": "OfficialMediaTelemetryOut",
+        "type": "object"
+      },
       "OhlcvCandle": {
         "properties": {
           "close": {
@@ -2626,6 +3921,242 @@
           "volume"
         ],
         "title": "OhlcvCandle",
+        "type": "object"
+      },
+      "OhlcvSentimentMetricsOut": {
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "available": {
+            "default": false,
+            "title": "Available",
+            "type": "boolean"
+          },
+          "bars_count": {
+            "default": 0,
+            "title": "Bars Count",
+            "type": "integer"
+          },
+          "breadth_flow_quant_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breadth Flow Quant Score"
+          },
+          "cmf_21": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cmf 21"
+          },
+          "last_close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Close"
+          },
+          "mfi_14": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfi 14"
+          },
+          "momentum_quant_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Momentum Quant Score"
+          },
+          "pct_vs_ma125": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Vs Ma125"
+          },
+          "pct_vs_ma200": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Vs Ma200"
+          },
+          "pct_vs_ma50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct Vs Ma50"
+          },
+          "range_pos_52w_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Range Pos 52W Pct"
+          },
+          "realized_vol_20d_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Vol 20D Pct"
+          },
+          "realized_vol_60d_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Vol 60D Pct"
+          },
+          "return_1d_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return 1D Pct"
+          },
+          "return_20d_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return 20D Pct"
+          },
+          "rsi_14": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rsi 14"
+          },
+          "source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Name"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "vol_ratio_20_60": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol Ratio 20 60"
+          },
+          "volatility_quant_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volatility Quant Score"
+          },
+          "volume_ratio_20d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume Ratio 20D"
+          }
+        },
+        "title": "OhlcvSentimentMetricsOut",
         "type": "object"
       },
       "PodcastBriefingStatus": {
@@ -3231,6 +4762,399 @@
         "title": "SearchResponse",
         "type": "object"
       },
+      "SentimentBenchmarkStandardsOut": {
+        "properties": {
+          "buzz_velocity": {
+            "enum": [
+              "VIRAL_SURGE",
+              "ELEVATED",
+              "NORMAL",
+              "DORMANT"
+            ],
+            "title": "Buzz Velocity",
+            "type": "string"
+          },
+          "contrarian_signal": {
+            "enum": [
+              "CONTRARIAN_BULLISH_OPPORTUNITY",
+              "CONTRARIAN_BEARISH_WARNING",
+              "TREND_ALIGNED",
+              "NEUTRAL"
+            ],
+            "title": "Contrarian Signal",
+            "type": "string"
+          },
+          "dumb_money_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dumb Money Confidence"
+          },
+          "fear_greed_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fear Greed Index"
+          },
+          "fear_greed_zone": {
+            "enum": [
+              "EXTREME_FEAR",
+              "FEAR",
+              "NEUTRAL",
+              "GREED",
+              "EXTREME_GREED",
+              "INSUFFICIENT_DATA"
+            ],
+            "title": "Fear Greed Zone",
+            "type": "string"
+          },
+          "insider_signal": {
+            "enum": [
+              "NET_BUYING",
+              "NET_SELLING",
+              "MIXED",
+              "NONE"
+            ],
+            "title": "Insider Signal",
+            "type": "string"
+          },
+          "nlp_telemetry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SentimentNlpTelemetryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quantitative_telemetry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SentimentQuantTelemetryOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seven_pillar_checklist": {
+            "items": {
+              "$ref": "#/components/schemas/SentimentPillarChecklistItemOut"
+            },
+            "title": "Seven Pillar Checklist",
+            "type": "array"
+          },
+          "smart_dumb_spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Smart Dumb Spread"
+          },
+          "smart_money_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Smart Money Confidence"
+          },
+          "uncertainty_and_litigation_score": {
+            "title": "Uncertainty And Litigation Score",
+            "type": "number"
+          },
+          "vietstock_psychology_state": {
+            "enum": [
+              "BI_QUAN_QUA_MUC",
+              "THAN_TRONG_SO_HAI",
+              "TRUNG_LAP_PHAN_VAN",
+              "LAC_QUAN_HUNG_PHAN",
+              "HUNG_PHAN_QUA_MUC",
+              "THIEU_DU_LIEU"
+            ],
+            "title": "Vietstock Psychology State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fear_greed_zone",
+          "vietstock_psychology_state",
+          "contrarian_signal",
+          "buzz_velocity",
+          "insider_signal",
+          "uncertainty_and_litigation_score"
+        ],
+        "title": "SentimentBenchmarkStandardsOut",
+        "type": "object"
+      },
+      "SentimentEntityOut": {
+        "properties": {
+          "exchange": {
+            "enum": [
+              "HOSE",
+              "HNX",
+              "UPCOM",
+              "NASDAQ",
+              "NYSE",
+              "OTHER"
+            ],
+            "title": "Exchange",
+            "type": "string"
+          },
+          "resolved_name": {
+            "title": "Resolved Name",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "timestamp_utc": {
+            "title": "Timestamp Utc",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "resolved_name",
+          "exchange",
+          "timestamp_utc"
+        ],
+        "title": "SentimentEntityOut",
+        "type": "object"
+      },
+      "SentimentNetworkTelemetryOut": {
+        "properties": {
+          "global_social_ecosystem": {
+            "$ref": "#/components/schemas/GlobalSocialTelemetryOut"
+          },
+          "official_and_media": {
+            "$ref": "#/components/schemas/OfficialMediaTelemetryOut"
+          },
+          "vn_social_ecosystem": {
+            "$ref": "#/components/schemas/VnSocialTelemetryOut"
+          }
+        },
+        "required": [
+          "official_and_media",
+          "vn_social_ecosystem",
+          "global_social_ecosystem"
+        ],
+        "title": "SentimentNetworkTelemetryOut",
+        "type": "object"
+      },
+      "SentimentNlpTelemetryOut": {
+        "properties": {
+          "consensus_polarization": {
+            "default": 0.0,
+            "title": "Consensus Polarization",
+            "type": "number"
+          },
+          "corpus_doc_count": {
+            "default": 0,
+            "title": "Corpus Doc Count",
+            "type": "integer"
+          },
+          "source_diversity_entropy": {
+            "default": 0.0,
+            "title": "Source Diversity Entropy",
+            "type": "number"
+          },
+          "tetlock_media_pessimism": {
+            "default": 0.0,
+            "title": "Tetlock Media Pessimism",
+            "type": "number"
+          },
+          "tfidf_corpus_weighting": {
+            "default": false,
+            "title": "Tfidf Corpus Weighting",
+            "type": "boolean"
+          }
+        },
+        "title": "SentimentNlpTelemetryOut",
+        "type": "object"
+      },
+      "SentimentPillarChecklistItemOut": {
+        "properties": {
+          "evidence_count": {
+            "title": "Evidence Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "pillar_id": {
+            "title": "Pillar Id",
+            "type": "string"
+          },
+          "score_0_100": {
+            "title": "Score 0 100",
+            "type": "integer"
+          },
+          "standard_ref": {
+            "title": "Standard Ref",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "BULLISH",
+              "BEARISH",
+              "NEUTRAL",
+              "WARNING",
+              "INSUFFICIENT_DATA"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pillar_id",
+          "name",
+          "standard_ref",
+          "score_0_100",
+          "status",
+          "evidence_count"
+        ],
+        "title": "SentimentPillarChecklistItemOut",
+        "type": "object"
+      },
+      "SentimentQuantTelemetryOut": {
+        "properties": {
+          "fundamentals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FundamentalMetricsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "market_proxies": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketProxyMetricsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ohlcv": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OhlcvSentimentMetricsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "SentimentQuantTelemetryOut",
+        "type": "object"
+      },
+      "SentimentSummaryOut": {
+        "properties": {
+          "composite_score": {
+            "title": "Composite Score",
+            "type": "number"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "institutional_vs_retail_spread": {
+            "title": "Institutional Vs Retail Spread",
+            "type": "number"
+          },
+          "label": {
+            "enum": [
+              "STRONG_BULLISH",
+              "BULLISH",
+              "NEUTRAL",
+              "BEARISH",
+              "STRONG_BEARISH"
+            ],
+            "title": "Label",
+            "type": "string"
+          },
+          "market_regime": {
+            "enum": [
+              "STEALTH_ACCUMULATION",
+              "MOMENTUM_MARKUP",
+              "EUPHORIC_DISTRIBUTION_TRAP",
+              "PANIC_CAPITULATION",
+              "EVENT_DRIVEN_BINARY",
+              "LOW_SIGNAL_NOISE"
+            ],
+            "title": "Market Regime",
+            "type": "string"
+          },
+          "momentum_24h": {
+            "enum": [
+              "IMPROVING",
+              "STABLE",
+              "DETERIORATING",
+              "UNKNOWN"
+            ],
+            "title": "Momentum 24H",
+            "type": "string"
+          }
+        },
+        "required": [
+          "composite_score",
+          "institutional_vs_retail_spread",
+          "label",
+          "confidence",
+          "market_regime",
+          "momentum_24h"
+        ],
+        "title": "SentimentSummaryOut",
+        "type": "object"
+      },
+      "SocialIntegrityAuditOut": {
+        "properties": {
+          "audit_notes": {
+            "title": "Audit Notes",
+            "type": "string"
+          },
+          "manipulation_or_seeding_detected": {
+            "title": "Manipulation Or Seeding Detected",
+            "type": "boolean"
+          },
+          "unverified_rumor_count": {
+            "title": "Unverified Rumor Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "manipulation_or_seeding_detected",
+          "unverified_rumor_count",
+          "audit_notes"
+        ],
+        "title": "SocialIntegrityAuditOut",
+        "type": "object"
+      },
       "SpaceCreateRequest": {
         "description": "docs/20 P1-6: create a Space (named collection) for the current key.",
         "properties": {
@@ -3577,6 +5501,129 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VerifiedDriverOut": {
+        "properties": {
+          "effective_weight": {
+            "title": "Effective Weight",
+            "type": "number"
+          },
+          "evidence_quote": {
+            "title": "Evidence Quote",
+            "type": "string"
+          },
+          "freshness": {
+            "enum": [
+              "BREAKING_6H",
+              "INTRADAY_24H",
+              "SHORT_3D",
+              "WEEKLY_7D",
+              "STALE"
+            ],
+            "title": "Freshness",
+            "type": "string"
+          },
+          "headline_or_post_summary": {
+            "title": "Headline Or Post Summary",
+            "type": "string"
+          },
+          "lang": {
+            "enum": [
+              "VI",
+              "EN"
+            ],
+            "title": "Lang",
+            "type": "string"
+          },
+          "platform_or_domain": {
+            "title": "Platform Or Domain",
+            "type": "string"
+          },
+          "polarity": {
+            "enum": [
+              "POSITIVE",
+              "NEGATIVE",
+              "NEUTRAL"
+            ],
+            "title": "Polarity",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "tier": {
+            "enum": [
+              "TIER_1",
+              "TIER_2",
+              "TIER_3",
+              "TIER_4"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "rank",
+          "headline_or_post_summary",
+          "lang",
+          "platform_or_domain",
+          "tier",
+          "freshness",
+          "effective_weight",
+          "polarity",
+          "evidence_quote"
+        ],
+        "title": "VerifiedDriverOut",
+        "type": "object"
+      },
+      "VnSocialTelemetryOut": {
+        "properties": {
+          "crowd_narrative_vi": {
+            "title": "Crowd Narrative Vi",
+            "type": "string"
+          },
+          "hit_count": {
+            "title": "Hit Count",
+            "type": "integer"
+          },
+          "platforms_covered": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Platforms Covered",
+            "type": "array"
+          },
+          "trending_slang_vi": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Trending Slang Vi",
+            "type": "array"
+          },
+          "weighted_score": {
+            "title": "Weighted Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "weighted_score",
+          "hit_count",
+          "crowd_narrative_vi"
+        ],
+        "title": "VnSocialTelemetryOut",
         "type": "object"
       },
       "WatchlistAlertItem": {
@@ -4931,6 +6978,49 @@
           }
         },
         "summary": "Market Ohlcv",
+        "tags": [
+          "v1",
+          "market"
+        ]
+      }
+    },
+    "/v1/market/sentiment": {
+      "post": {
+        "description": "Omni-Channel Bilingual Equity Sentiment Engine (VI / EN) — Phase 1..3.",
+        "operationId": "market_sentiment_v1_market_sentiment_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketSentimentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketSentimentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Market Sentiment",
         "tags": [
           "v1",
           "market"

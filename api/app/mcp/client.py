@@ -224,6 +224,28 @@ async def memory_get_observations(ids: list[str], *, max_chars: int = _TOTAL_CHA
     return _cap(json.dumps(data, ensure_ascii=False), max(max_chars, 500))
 
 
+async def equity_sentiment(
+    ticker: str,
+    *,
+    company_name: str | None = None,
+    exchange: str | None = None,
+    max_queries: int = 10,
+    fetch_market_data: bool = False,
+) -> str:
+    """Omni-Channel Bilingual Equity Sentiment Engine (VI / EN) across 5 network layers."""
+    payload: dict[str, Any] = {
+        "ticker": ticker,
+        "max_queries": max(1, min(max_queries, 22)),
+        "fetch_market_data": fetch_market_data,
+    }
+    if company_name:
+        payload["company_name"] = company_name
+    if exchange:
+        payload["exchange"] = exchange
+    data = await _call("POST", "/v1/market/sentiment", payload)
+    return json.dumps(data, ensure_ascii=False)
+
+
 def run_tool(name: str, kwargs: dict[str, Any]) -> Any:
     """Sync entry for tests/CLI; dispatches one tool call."""
     tools = {
@@ -235,6 +257,7 @@ def run_tool(name: str, kwargs: dict[str, Any]) -> Any:
         "memory_search": memory_search,
         "memory_timeline": memory_timeline,
         "memory_get_observations": memory_get_observations,
+        "equity_sentiment": equity_sentiment,
     }
     if name not in tools:
         raise MCPClientError(f"unknown tool: {name}")

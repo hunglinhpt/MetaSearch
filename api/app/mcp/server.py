@@ -133,6 +133,25 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
         raw = await mcp_client.memory_get_observations(ids, max_chars=max_chars)
         return _loads(raw)
 
+    @mcp.tool()
+    async def equity_sentiment(
+        ticker: str,
+        company_name: str | None = None,
+        exchange: str | None = None,
+        max_queries: int = 10,
+        fetch_market_data: bool = False,
+    ) -> dict[str, Any]:
+        """Omni-Channel Bilingual Equity Sentiment Engine (VI / EN) across official exchanges,
+        brokers, financial media, Vietnamese/global social networks, and optional live OHLCV/FA."""
+        raw = await mcp_client.equity_sentiment(
+            ticker,
+            company_name=company_name,
+            exchange=exchange,
+            max_queries=max_queries,
+            fetch_market_data=fetch_market_data,
+        )
+        return _loads(raw)
+
     return mcp
 
 

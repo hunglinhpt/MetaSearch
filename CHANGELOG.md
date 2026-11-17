@@ -22,9 +22,35 @@
     exposed in `POST /v1/answer` and `POST /v1/context` (`include` adds `"compression"`).
 - **One-Skill Orchestrator & TaskObserver** (`api/app/orchestration/skill_orchestrator.py`,
   `api/app/api/v1/skills.py`):
-  - 9 unified skills wrapping domain intelligence packs, driving `compression_profile` and
-    recording bounded ring-buffer telemetry (`TaskObserver`).
+  - 10 unified skills wrapping domain intelligence packs (including `omni_channel_equity_sentiment`),
+    driving `compression_profile` and recording bounded ring-buffer telemetry (`TaskObserver`).
   - Endpoints: `GET /v1/skills`, `GET /v1/ops/skills`, and `"skill"` in `POST /v1/context` `include`.
+- **Omni-Channel Bilingual Equity Sentiment Sub-Engine (VI / EN)** (`api/app/retrieval/sentiment.py`,
+  `api/app/api/v1/market.py`, `api/app/mcp/server.py`):
+  - Phase 1: 5-layer bilingual query fan-out across official exchanges/filings, institutional
+    brokers/media, VN social communities (Facebook, FireAnt, F319, Telegram, Threads), global
+    cashtag streams (X/Twitter, Reddit, StockTwits, Substack), and video/KOL transcripts (YouTube,
+    TikTok), with automatic bypass when `retrieved_documents` is supplied.
+  - Phase 2: Entity anti-collision guard (`VNM`, `GAS`, `SSI`, `FPT`, `POW`, etc.), coordinated
+    social seeding detector (`COORDINATED_SOCIAL_SEEDING`, collapsing copy-paste/VIP room spam into
+    1 `TIER_4` hit), unverified rumor discounting (`UNVERIFIED_RUMOR_SPIKE`), and `Effective_Weight =
+    Tier_Weight × Time_Decay`.
+  - Phase 3: Bilingual VI/EN financial lexicon with negation/reversal guard (`_is_negated_match`),
+    market regime classifier (`STEALTH_ACCUMULATION`, `MOMENTUM_MARKUP`,
+    `EUPHORIC_DISTRIBUTION_TRAP`, `PANIC_CAPITULATION`, `EVENT_DRIVEN_BINARY`,
+    `LOW_SIGNAL_NOISE`), gold-standard `benchmark_standards` block (`docs/27` — CNN Fear & Greed
+    `0..100` với MA125/52W H-L, Vietstock Market Psychology, SentimenTrader Smart/Dumb Money &
+    `contrarian_signal`, AAII/II/NAAIM, CBOE Put/Call/VIX-VIX3M/SKEW, Arms TRIN, McClellan
+    RANA/NYMO, SqueezeMetrics DIX/GEX, FINRA Margin YoY, Wilder RSI-14, MFI-14, CMF-21,
+    StockTwits S-Score, Loughran-McDonald sublinear TF-IDF, Tetlock Media Pessimism, Finnhub
+    Insider MSPR, Sentimentick `buzz_velocity`, `nlp_telemetry`, `quantitative_telemetry` với
+    tùy chọn `ohlcv_bars`/`market_proxies`/`fetch_market_data=true`, và 7-pillar checklist
+    `seven_pillar_checklist`), cổng định lượng mở rộng (`fiintrade.vn`, `wichart.vn`,
+    `simplize.vn`, `cboe.com`, `finra.org`, `aaii.com`, `naaim.org`, `finviz.com`,
+    `barchart.com`, `tipranks.com`, `whalewisdom.com`, `quiverquant.com`, `unusualwhales.com`,
+    `swaggystocks.com`, `apewisdom.io`, `sentimentrader.com`), và zero-fabrication output
+    contract (`api/app/retrieval/sentiment_quant.py`, `POST /v1/market/sentiment` + MCP tool
+    `equity_sentiment` + `api/tests/test_equity_sentiment.py`).
 - **Claude-Mem-inspired Episodic Observations & Progressive Disclosure** (`api/app/retrieval/memory.py`,
   `api/app/api/v1/memory.py`, `api/app/mcp/server.py`):
   - Per-key `kind="observation"` distillation + recall (`MEMORY_RECALL_ENABLED`,

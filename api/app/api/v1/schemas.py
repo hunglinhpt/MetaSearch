@@ -101,6 +101,305 @@ class MarketOhlcvResponse(BaseModel):
     latency_ms: int = 0
 
 
+# --- Omni-Channel Bilingual Equity Sentiment Engine (VI / EN) ------------------
+
+
+class MarketSentimentDocInput(BaseModel):
+    """Pre-retrieved document item passed to bypass Phase 1 search fan-out."""
+
+    url: str = Field(min_length=1, max_length=2000)
+    title: str = Field(default="", max_length=500)
+    snippet: str = Field(default="", max_length=4000)
+    content: str = Field(default="", max_length=8_000)
+    published_at: str | None = Field(default=None, max_length=64)
+    lang: Literal["VI", "EN"] | None = None
+
+
+class MarketOhlcvBarInput(BaseModel):
+    """Bounded OHLCV candle supplied directly in request payloads."""
+
+    time: int = Field(ge=1, le=4_102_444_800)
+    open: float = Field(gt=0.0, le=1e12)
+    high: float = Field(gt=0.0, le=1e12)
+    low: float = Field(gt=0.0, le=1e12)
+    close: float = Field(gt=0.0, le=1e12)
+    volume: float = Field(ge=0.0, le=1e15)
+
+
+class MarketProxiesSchemaInput(BaseModel):
+    """Optional external market breadth, survey, options, dark-pool & flow proxies."""
+
+    aaii_bullish_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    aaii_bearish_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    aaii_neutral_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    ii_bullish_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    ii_bearish_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    naaim_exposure_pct: float | None = Field(default=None, ge=-200.0, le=200.0)
+    advancing_issues: int | None = Field(default=None, ge=0, le=100_000)
+    declining_issues: int | None = Field(default=None, ge=0, le=100_000)
+    advancing_volume: float | None = Field(default=None, ge=0.0, le=1e16)
+    declining_volume: float | None = Field(default=None, ge=0.0, le=1e16)
+    new_52w_highs: int | None = Field(default=None, ge=0, le=100_000)
+    new_52w_lows: int | None = Field(default=None, ge=0, le=100_000)
+    pct_above_ma50: float | None = Field(default=None, ge=0.0, le=100.0)
+    pct_above_ma200: float | None = Field(default=None, ge=0.0, le=100.0)
+    rana_series: list[Annotated[float, Field(ge=-1000.0, le=1000.0)]] | None = Field(
+        default=None, max_length=252
+    )
+    cboe_put_call_equity: float | None = Field(default=None, ge=0.0, le=20.0)
+    cboe_put_call_total: float | None = Field(default=None, ge=0.0, le=20.0)
+    vix: float | None = Field(default=None, gt=0.0, le=200.0)
+    vix_3m: float | None = Field(default=None, gt=0.0, le=200.0)
+    vix_ma50: float | None = Field(default=None, gt=0.0, le=200.0)
+    cboe_skew: float | None = Field(default=None, ge=50.0, le=300.0)
+    off_exchange_short_dollar_vol: float | None = Field(default=None, ge=0.0, le=1e16)
+    off_exchange_total_dollar_vol: float | None = Field(default=None, ge=0.0, le=1e16)
+    dix_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    gex_billions: float | None = Field(default=None, ge=-500.0, le=500.0)
+    margin_debt_curr: float | None = Field(default=None, ge=0.0, le=1e15)
+    margin_debt_prev_year: float | None = Field(default=None, gt=0.0, le=1e15)
+    margin_debt_yoy_pct: float | None = Field(default=None, ge=-100.0, le=1000.0)
+    junk_yield_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    ig_yield_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    credit_spread_bps: float | None = Field(default=None, ge=-500.0, le=10_000.0)
+    vn_foreign_net_value_bil: float | None = Field(default=None, ge=-100_000.0, le=100_000.0)
+    vn_prop_net_value_bil: float | None = Field(default=None, ge=-100_000.0, le=100_000.0)
+    social_weighted_24h: float | None = Field(default=None, ge=-1e9, le=1e9)
+    social_mean_20d: float | None = Field(default=None, ge=-1e9, le=1e9)
+    social_std_20d: float | None = Field(default=None, gt=0.0, le=1e9)
+    insider_acquired_shares: float | None = Field(default=None, ge=0.0, le=1e13)
+    insider_disposed_shares: float | None = Field(default=None, ge=0.0, le=1e13)
+    source_note: str | None = Field(default=None, max_length=300)
+
+
+class MarketSentimentRequest(BaseModel):
+    """POST /v1/market/sentiment — Omni-Channel Bilingual Equity Sentiment Engine."""
+
+    ticker: str = Field(min_length=1, max_length=15)
+    # PASS-2 audit P1-2: free-text but operator-safe — quotes / OR / site:
+    # must never reach the fan-out query grammar (search-operator injection).
+    company_name: str | None = Field(
+        default=None,
+        max_length=120,
+        pattern=r"^[\w\s.,&'\-]+$",
+    )
+    exchange: Literal["HOSE", "HSX", "HNX", "UPCOM", "NASDAQ", "NYSE", "OTHER"] | None = None
+    k: int = Field(default=5, ge=1, le=20)
+    max_queries: int = Field(default=10, ge=1, le=22)
+    # PASS-2 P1-4: 50 x 8,000 chars stays inside the 1 MiB body cap
+    retrieved_documents: list[MarketSentimentDocInput] | None = Field(default=None, max_length=50)
+    ohlcv_bars: list[MarketOhlcvBarInput] | None = Field(default=None, max_length=500)
+    market_proxies: MarketProxiesSchemaInput | None = None
+    fetch_market_data: bool = False
+    timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
+
+
+class SentimentEntityOut(BaseModel):
+    ticker: str
+    resolved_name: str
+    exchange: Literal["HOSE", "HNX", "UPCOM", "NASDAQ", "NYSE", "OTHER"]
+    timestamp_utc: str
+
+
+class SentimentSummaryOut(BaseModel):
+    composite_score: float
+    institutional_vs_retail_spread: float
+    label: Literal["STRONG_BULLISH", "BULLISH", "NEUTRAL", "BEARISH", "STRONG_BEARISH"]
+    confidence: float
+    market_regime: Literal[
+        "STEALTH_ACCUMULATION",
+        "MOMENTUM_MARKUP",
+        "EUPHORIC_DISTRIBUTION_TRAP",
+        "PANIC_CAPITULATION",
+        "EVENT_DRIVEN_BINARY",
+        "LOW_SIGNAL_NOISE",
+    ]
+    momentum_24h: Literal["IMPROVING", "STABLE", "DETERIORATING", "UNKNOWN"]
+
+
+class OfficialMediaTelemetryOut(BaseModel):
+    weighted_score: float
+    hit_count: int
+    key_catalysts: list[str] = Field(default_factory=list)
+
+
+class VnSocialTelemetryOut(BaseModel):
+    weighted_score: float
+    platforms_covered: list[str] = Field(default_factory=list)
+    hit_count: int
+    crowd_narrative_vi: str
+    trending_slang_vi: list[str] = Field(default_factory=list)
+
+
+class GlobalSocialTelemetryOut(BaseModel):
+    weighted_score: float
+    platforms_covered: list[str] = Field(default_factory=list)
+    hit_count: int
+    crowd_narrative_en: str
+    trending_tags_en: list[str] = Field(default_factory=list)
+
+
+class SentimentNetworkTelemetryOut(BaseModel):
+    official_and_media: OfficialMediaTelemetryOut
+    vn_social_ecosystem: VnSocialTelemetryOut
+    global_social_ecosystem: GlobalSocialTelemetryOut
+
+
+class SocialIntegrityAuditOut(BaseModel):
+    manipulation_or_seeding_detected: bool
+    unverified_rumor_count: int
+    audit_notes: str
+
+
+class VerifiedDriverOut(BaseModel):
+    rank: int
+    headline_or_post_summary: str
+    lang: Literal["VI", "EN"]
+    platform_or_domain: str
+    tier: Literal["TIER_1", "TIER_2", "TIER_3", "TIER_4"]
+    freshness: Literal["BREAKING_6H", "INTRADAY_24H", "SHORT_3D", "WEEKLY_7D", "STALE"]
+    effective_weight: float
+    polarity: Literal["POSITIVE", "NEGATIVE", "NEUTRAL"]
+    evidence_quote: str
+    url: str | None = None
+
+
+class SentimentPillarChecklistItemOut(BaseModel):
+    pillar_id: str
+    name: str
+    standard_ref: str
+    score_0_100: int
+    status: Literal["BULLISH", "BEARISH", "NEUTRAL", "WARNING", "INSUFFICIENT_DATA"]
+    evidence_count: int
+
+
+class SentimentNlpTelemetryOut(BaseModel):
+    tfidf_corpus_weighting: bool = False
+    corpus_doc_count: int = 0
+    tetlock_media_pessimism: float = 0.0
+    consensus_polarization: float = 0.0
+    source_diversity_entropy: float = 0.0
+
+
+class OhlcvSentimentMetricsOut(BaseModel):
+    available: bool = False
+    bars_count: int = 0
+    source_name: str | None = None
+    source_url: str | None = None
+    as_of: str | None = None
+    last_close: float | None = None
+    return_1d_pct: float | None = None
+    return_20d_pct: float | None = None
+    pct_vs_ma50: float | None = None
+    pct_vs_ma125: float | None = None
+    pct_vs_ma200: float | None = None
+    range_pos_52w_pct: float | None = None
+    rsi_14: float | None = None
+    mfi_14: float | None = None
+    cmf_21: float | None = None
+    volume_ratio_20d: float | None = None
+    realized_vol_20d_pct: float | None = None
+    realized_vol_60d_pct: float | None = None
+    vol_ratio_20_60: float | None = None
+    momentum_quant_score: float | None = None
+    breadth_flow_quant_score: float | None = None
+    volatility_quant_score: float | None = None
+
+
+class MarketProxyMetricsOut(BaseModel):
+    available: bool = False
+    aaii_bull_bear_spread: float | None = None
+    ii_bull_bear_ratio: float | None = None
+    naaim_exposure_pct: float | None = None
+    arms_trin: float | None = None
+    mcclellan_rana: float | None = None
+    mcclellan_oscillator: float | None = None
+    high_low_breadth_pct: float | None = None
+    pct_above_ma50: float | None = None
+    pct_above_ma200: float | None = None
+    vix_term_ratio: float | None = None
+    vix_term_regime: str | None = None
+    vix_vs_ma50_pct: float | None = None
+    cboe_put_call_ratio: float | None = None
+    cboe_skew: float | None = None
+    dix_pct: float | None = None
+    gex_billions: float | None = None
+    margin_debt_yoy_pct: float | None = None
+    credit_spread_bps: float | None = None
+    vn_foreign_net_value_bil: float | None = None
+    vn_prop_net_value_bil: float | None = None
+    social_s_score: float | None = None
+    insider_mspr: float | None = None
+    bofa_bull_bear_analog_0_10: float | None = None
+    breadth_proxy_score: float | None = None
+    volatility_options_proxy_score: float | None = None
+    smart_money_proxy_score: float | None = None
+    crowd_positioning_proxy_score: float | None = None
+    source_note: str | None = None
+
+
+class FundamentalMetricsOut(BaseModel):
+    pe: float | None = None
+    pb: float | None = None
+    roe: float | None = None
+    revenue_growth_yoy: float | None = None
+    profit_growth_yoy: float | None = None
+    debt_to_equity: float | None = None
+    market_cap: float | None = None
+    source: str | None = None
+    source_url: str | None = None
+    as_of: str | None = None
+
+
+class SentimentQuantTelemetryOut(BaseModel):
+    ohlcv: OhlcvSentimentMetricsOut | None = None
+    market_proxies: MarketProxyMetricsOut | None = None
+    fundamentals: FundamentalMetricsOut | None = None
+
+
+class SentimentBenchmarkStandardsOut(BaseModel):
+    # PASS-2 audit P2-5: nullable when the corresponding input class is
+    # absent — docs/27 zero-fabrication (never emit placeholder 50/NEUTRAL).
+    fear_greed_index: int | None = None
+    fear_greed_zone: Literal[
+        "EXTREME_FEAR", "FEAR", "NEUTRAL", "GREED", "EXTREME_GREED", "INSUFFICIENT_DATA"
+    ]
+    vietstock_psychology_state: Literal[
+        "BI_QUAN_QUA_MUC",
+        "THAN_TRONG_SO_HAI",
+        "TRUNG_LAP_PHAN_VAN",
+        "LAC_QUAN_HUNG_PHAN",
+        "HUNG_PHAN_QUA_MUC",
+        "THIEU_DU_LIEU",
+    ]
+    smart_money_confidence: float | None = None
+    dumb_money_confidence: float | None = None
+    smart_dumb_spread: float | None = None
+    contrarian_signal: Literal[
+        "CONTRARIAN_BULLISH_OPPORTUNITY",
+        "CONTRARIAN_BEARISH_WARNING",
+        "TREND_ALIGNED",
+        "NEUTRAL",
+    ]
+    buzz_velocity: Literal["VIRAL_SURGE", "ELEVATED", "NORMAL", "DORMANT"]
+    insider_signal: Literal["NET_BUYING", "NET_SELLING", "MIXED", "NONE"]
+    uncertainty_and_litigation_score: float
+    nlp_telemetry: SentimentNlpTelemetryOut | None = None
+    quantitative_telemetry: SentimentQuantTelemetryOut | None = None
+    seven_pillar_checklist: list[SentimentPillarChecklistItemOut] = Field(default_factory=list)
+
+
+class MarketSentimentResponse(BaseModel):
+    module: Literal["omni_channel_equity_sentiment_v2"] = "omni_channel_equity_sentiment_v2"
+    entity: SentimentEntityOut
+    sentiment_summary: SentimentSummaryOut
+    benchmark_standards: SentimentBenchmarkStandardsOut
+    network_telemetry: SentimentNetworkTelemetryOut
+    social_integrity_audit: SocialIntegrityAuditOut
+    top_verified_drivers: list[VerifiedDriverOut] = Field(default_factory=list)
+    risk_circuit_breakers: list[str] = Field(default_factory=list)
+
+
 # --- v2.3.0 watchlist (docs/18 C) ----------------------------------------------
 
 

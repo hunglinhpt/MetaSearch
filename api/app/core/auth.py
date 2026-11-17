@@ -385,6 +385,7 @@ _STATIC_ROUTE_COSTS: tuple[tuple[str, str | None, int], ...] = (
     ("/graph/build", "POST", 10),  # up to kg_max_docs_per_build LLM extractions
     ("/graph/query", "POST", 2),  # optional LLM answer over the subgraph
     ("/market/ohlcv", "POST", 2),  # one upstream feed call + possible SSI fallback
+    ("/market/sentiment", "POST", 8),  # PASS-2 P1-3: up to 22 pipeline sub-searches/fan-out
     ("/crawl", "POST", 8),  # crawl fans out to dozens of guarded fetches (also Spaces crawl)
     ("/map", "POST", 3),  # sitemap/HTML discovery
 )
