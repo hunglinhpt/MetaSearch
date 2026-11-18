@@ -101,6 +101,14 @@ def create_budget_for_route(
         total_s = 8.0
         search_cap = 0.0
         scrape_cap = 8.0
+    elif route == "market_news_wire":
+        total_s = 12.0
+        search_cap = 4.0
+        scrape_cap = 6.0
+    elif route == "market_events":
+        total_s = 15.0
+        search_cap = 5.0
+        scrape_cap = 8.0
     else:
         total_s = 15.0
         search_cap = 5.0

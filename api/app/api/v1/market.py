@@ -11,7 +11,9 @@ carry source + as_of from the payload, missing data stays missing.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
+from dataclasses import asdict
 from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 from typing import Any
@@ -20,15 +22,22 @@ from fastapi import APIRouter, Response
 
 from app.api import deps
 from app.api.v1.schemas import (
+    CorporateEventOut,
     FaCompareRequest,
     FaCompareResponse,
     FaFieldOut,
     FaSymbolResult,
+    MarketEventsRequest,
+    MarketEventsResponse,
+    MarketNewsWireItemOut,
+    MarketNewsWireRequest,
+    MarketNewsWireResponse,
     MarketOhlcvRequest,
     MarketOhlcvResponse,
     MarketSentimentRequest,
     MarketSentimentResponse,
     OhlcvCandle,
+    ShareRatioExplanationOut,
 )
 from app.config import get_settings
 from app.core.admission import admit
@@ -36,7 +45,7 @@ from app.core.budget import create_budget_for_route, use_budget
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
 from app.retrieval.adapters.viet_stock import fetch_vndirect_ohlcv_series
-from app.retrieval.fa_sources.base import ensure_symbol
+from app.retrieval.fa_sources.base import ensure_global_symbol, ensure_symbol
 from app.retrieval.sentiment_quant import (
     FundamentalSnapshotInput,
     MarketProxiesInput,
@@ -632,3 +641,186 @@ async def market_sentiment(request: MarketSentimentRequest) -> MarketSentimentRe
                     breakers_list.append("QUANT_FETCH_SKIPPED_BUDGET")
                 payload["risk_circuit_breakers"] = breakers_list
             return MarketSentimentResponse.model_validate(payload)
+
+
+def _normalize_market_symbols(raw_symbols: list[str]) -> list[str]:
+    out: list[str] = []
+    for raw in raw_symbols:
+        sym = ensure_symbol(raw) or ensure_global_symbol(raw)
+        if sym is None:
+            raise MetaSearchError(
+                ErrorCode.INVALID_REQUEST,
+                f"invalid symbol: {raw!r}",
+                status_code=400,
+            )
+        if sym not in out:
+            out.append(sym)
+    return out
+
+
+@router.post(
+    "/market/news-wire",
+    response_model=MarketNewsWireResponse,
+    response_model_exclude_none=True,
+)
+async def market_news_wire(request: MarketNewsWireRequest) -> MarketNewsWireResponse:
+    """Headless bilingual market news wire: RSS/HTML aggregation, entity disambiguation & dedup."""
+    from app.retrieval.events import fetch_market_news_wire
+
+    symbols = _normalize_market_symbols(request.symbols)
+    budget = create_budget_for_route("market_news_wire", timeout_ms=request.timeout_ms)
+    started = time.perf_counter()
+
+    async with admit("market"):
+        with use_budget(budget):
+            rem = budget.remaining() if budget else 8.0
+            if rem <= 0.1:
+                raise MetaSearchError(
+                    ErrorCode.DEADLINE_EXCEEDED,
+                    "request budget exhausted before market_news_wire dispatch",
+                    status_code=504,
+                )
+            timeout_s = min(12.0, rem)
+            raw_articles = (
+                [art.model_dump() for art in request.raw_articles]
+                if request.raw_articles is not None
+                else None
+            )
+            res = await fetch_market_news_wire(
+                symbols=symbols or None,
+                lang=request.lang,
+                categories=request.categories,
+                include_market_macro=request.include_market_macro,
+                deduplicate=request.deduplicate,
+                max_age_days=request.max_age_days,
+                max_items=request.max_items,
+                seen_fingerprints=request.seen_fingerprints or None,
+                raw_articles=raw_articles,
+                include_search_fallback=request.include_search_fallback,
+                timeout_s=timeout_s,
+                breakers=deps.get_events_breaker_registry(),
+                cache=deps.get_cache(),
+            )
+            items_out = [
+                MarketNewsWireItemOut(
+                    title=it.title,
+                    url=it.url,
+                    source_id=it.source_id,
+                    snippet=it.snippet,
+                    published_at=_iso(it.published_at),
+                    event_date=it.event_date,
+                    symbols=list(it.symbols),
+                    scope=it.scope,
+                    category=it.category,
+                    severity=it.severity,
+                    stable_id=it.stable_id,
+                    fingerprint=it.fingerprint,
+                    date_status=it.date_status,
+                    duplicate_count=it.duplicate_count,
+                    also_reported_by=list(it.also_reported_by),
+                    is_new=it.is_new,
+                )
+                for it in res["items"]
+            ]
+            return MarketNewsWireResponse(
+                items=items_out,
+                new_count=int(res["new_count"]),
+                total_raw=int(res["total_raw"]),
+                deduplicated_count=int(res["deduplicated_count"]),
+                sources_used=list(res["sources_used"]),
+                sources_failed=list(res["sources_failed"]),
+                warnings=list(res["warnings"]),
+                partial=bool(res["partial"]),
+                new_fingerprints=list(res["new_fingerprints"]),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )
+
+
+@router.post(
+    "/market/events",
+    response_model=MarketEventsResponse,
+    response_model_exclude_none=True,
+)
+async def market_events(request: MarketEventsRequest) -> MarketEventsResponse:
+    """Structured corporate actions, ex-dividend calendar, risk notices & ratio proof."""
+    from app.retrieval.events import fetch_market_events
+
+    if (request.observed_shares_high is None) != (request.observed_shares_low is None):
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            "observed_shares_high and observed_shares_low must both be provided together",
+            status_code=400,
+        )
+
+    symbols = _normalize_market_symbols(request.symbols)
+    reported_ratio = request.reported_share_ratio
+    if (
+        reported_ratio is None
+        and request.observed_shares_high is not None
+        and request.observed_shares_low is not None
+    ):
+        reported_ratio = request.observed_shares_high / request.observed_shares_low
+    if reported_ratio is not None and (
+        not math.isfinite(reported_ratio) or reported_ratio < 1e-4 or reported_ratio > 1000.0
+    ):
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST,
+            "share ratio out of supported finite bounds (1e-4 .. 1000.0)",
+            status_code=400,
+        )
+
+    budget = create_budget_for_route("market_events", timeout_ms=request.timeout_ms)
+    started = time.perf_counter()
+
+    async with admit("market"):
+        with use_budget(budget):
+            rem = budget.remaining() if budget else 10.0
+            if rem <= 0.1:
+                raise MetaSearchError(
+                    ErrorCode.DEADLINE_EXCEEDED,
+                    "request budget exhausted before market_events dispatch",
+                    status_code=504,
+                )
+            timeout_s = min(14.0, rem)
+            raw_notices = (
+                [n.model_dump() for n in request.raw_notices]
+                if request.raw_notices is not None
+                else None
+            )
+            res = await fetch_market_events(
+                symbols=symbols or None,
+                include_corporate_actions=request.include_corporate_actions,
+                include_calendar=request.include_calendar,
+                include_listing=request.include_listing,
+                include_insider=request.include_insider,
+                include_regulatory=request.include_regulatory,
+                lookback_days=request.lookback_days,
+                lookahead_days=request.lookahead_days,
+                reported_share_ratio=reported_ratio,
+                ratio_tolerance=request.ratio_tolerance,
+                seen_event_ids=request.seen_event_ids or None,
+                raw_notices=raw_notices,
+                timeout_s=timeout_s,
+                breakers=deps.get_events_breaker_registry(),
+                cache=deps.get_cache(),
+            )
+            ratio_exp = res.get("share_ratio_explanation")
+            return MarketEventsResponse(
+                symbols=list(res["symbols"]),
+                events=[CorporateEventOut(**asdict(e)) for e in res["events"]],
+                upcoming_ex_dates=[
+                    CorporateEventOut(**asdict(e)) for e in res["upcoming_ex_dates"]
+                ],
+                dilution_alerts=[CorporateEventOut(**asdict(e)) for e in res["dilution_alerts"]],
+                risk_alerts=[CorporateEventOut(**asdict(e)) for e in res["risk_alerts"]],
+                share_ratio_explanation=(
+                    ShareRatioExplanationOut(**asdict(ratio_exp)) if ratio_exp is not None else None
+                ),
+                new_events_count=int(res["new_events_count"]),
+                new_event_ids=list(res["new_event_ids"]),
+                sources_used=list(res["sources_used"]),
+                sources_failed=list(res["sources_failed"]),
+                warnings=list(res["warnings"]),
+                partial=bool(res["partial"]),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+            )

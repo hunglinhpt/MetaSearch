@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildSpaceGraph,
   createPersonalPodcast,
+  fetchMarketEvents,
+  fetchMarketNewsWire,
   getLLMHealth,
   hybridSearch,
   listSkills,
@@ -121,6 +123,9 @@ describe("AI infra client helpers", () => {
     await hybridSearch({ query: "FPT revenue", space: "my-space", k: 5 });
     await createPersonalPodcast();
     await personalPodcastStatus();
+    const ctrl = new AbortController();
+    await fetchMarketNewsWire({ symbols: ["VNM", "FPT"], max_items: 10 }, ctrl.signal);
+    await fetchMarketEvents({ symbols: ["FPT"], lookahead_days: 30 }, ctrl.signal);
 
     const urls = mockFetch.mock.calls.map((c) => String(c[0]));
     expect(urls[0]).toMatch(/\/v1\/market\/sentiment$/);
@@ -131,6 +136,27 @@ describe("AI infra client helpers", () => {
     expect(urls[5]).toMatch(/\/v1\/hybrid$/);
     expect(urls[6]).toMatch(/\/v1\/podcast\/personal$/);
     expect(urls[7]).toMatch(/\/v1\/podcast\/personal\/status$/);
+    expect(urls[8]).toMatch(/\/v1\/market\/news-wire$/);
+    expect(urls[9]).toMatch(/\/v1\/market\/events$/);
+    expect((mockFetch.mock.calls[8][1] as RequestInit).method).toBe("POST");
+    expect(JSON.parse(String((mockFetch.mock.calls[8][1] as RequestInit).body))).toEqual({
+      symbols: ["VNM", "FPT"],
+      max_items: 10,
+    });
+    expect((mockFetch.mock.calls[9][1] as RequestInit).signal).toBe(ctrl.signal);
     expect(personalPodcastLatestUrl()).toMatch(/\/v1\/podcast\/personal\/latest$/);
+  });
+
+  it("fetchMarketEvents rejects cleanly on HTTP error responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: async () => ({ error: { code: "invalid_request", message: "invalid symbol" } }),
+      })
+    );
+    await expect(fetchMarketEvents({ symbols: ["BAD!!"] })).rejects.toThrow(/invalid symbol/);
   });
 });

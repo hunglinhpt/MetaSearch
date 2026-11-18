@@ -1652,3 +1652,155 @@ export async function hybridSearch(
   if (!resp.ok) throw await parseError(resp);
   return resp.json();
 }
+
+export type MarketNewsCategory =
+  | "corporate_action"
+  | "listing_status"
+  | "insider_trade"
+  | "regulatory"
+  | "macro_policy"
+  | "market_flow"
+  | "general_finance";
+
+export interface MarketNewsWireItem {
+  title: string;
+  url?: string | null;
+  source_id: string;
+  snippet?: string;
+  published_at?: string | null;
+  event_date?: string | null;
+  symbols: string[];
+  scope: "ticker" | "market" | "policy" | "sector" | "general";
+  category: MarketNewsCategory;
+  severity: "critical" | "high" | "medium" | "info";
+  stable_id: string;
+  fingerprint: string;
+  date_status: "event_date" | "published_at" | "undated";
+  duplicate_count: number;
+  also_reported_by: string[];
+  is_new: boolean;
+}
+
+export interface MarketNewsWireRequest {
+  symbols?: string[];
+  lang?: "auto" | "vi" | "en";
+  categories?: MarketNewsCategory[];
+  include_market_macro?: boolean;
+  deduplicate?: boolean;
+  max_age_days?: number;
+  max_items?: number;
+  seen_fingerprints?: string[];
+  include_search_fallback?: boolean;
+  timeout_ms?: number;
+}
+
+export interface MarketNewsWireResponse {
+  items: MarketNewsWireItem[];
+  new_count: number;
+  total_raw: number;
+  deduplicated_count: number;
+  sources_used: string[];
+  sources_failed: string[];
+  warnings: string[];
+  partial: boolean;
+  new_fingerprints: string[];
+  latency_ms: number;
+}
+
+export interface CorporateEventRecord {
+  event_id: string;
+  symbol?: string | null;
+  exchange?: string | null;
+  event_type: "corporate_action" | "dividend_calendar" | "listing" | "insider" | "regulatory";
+  event_subtype: string;
+  severity: "critical" | "high" | "medium" | "info";
+  risk_level: number;
+  title: string;
+  detail?: string;
+  event_date?: string | null;
+  ex_date?: string | null;
+  record_date?: string | null;
+  payment_date?: string | null;
+  days_until?: number | null;
+  source_id: string;
+  source_url?: string | null;
+  is_share_changing: boolean;
+  share_factor?: number | null;
+  shares_delta?: number | null;
+  is_dilution: boolean;
+  cash_dividend_pct?: number | null;
+  cash_per_share_vnd?: number | null;
+  stock_ratio?: string | null;
+  date_mismatch_warning?: string | null;
+  is_new: boolean;
+}
+
+export interface ShareRatioExplanation {
+  explained: boolean;
+  observed_ratio: number;
+  matched_factor?: number | null;
+  residual_error_pct?: number | null;
+  matched_events: Array<Record<string, unknown>>;
+  explanation: string;
+}
+
+export interface MarketEventsRequest {
+  symbols?: string[];
+  include_corporate_actions?: boolean;
+  include_calendar?: boolean;
+  include_listing?: boolean;
+  include_insider?: boolean;
+  include_regulatory?: boolean;
+  lookback_days?: number;
+  lookahead_days?: number;
+  reported_share_ratio?: number;
+  observed_shares_high?: number;
+  observed_shares_low?: number;
+  ratio_tolerance?: number;
+  seen_event_ids?: string[];
+  timeout_ms?: number;
+}
+
+export interface MarketEventsResponse {
+  symbols: string[];
+  events: CorporateEventRecord[];
+  upcoming_ex_dates: CorporateEventRecord[];
+  dilution_alerts: CorporateEventRecord[];
+  risk_alerts: CorporateEventRecord[];
+  share_ratio_explanation?: ShareRatioExplanation | null;
+  new_events_count: number;
+  new_event_ids: string[];
+  sources_used: string[];
+  sources_failed: string[];
+  warnings: string[];
+  partial: boolean;
+  latency_ms: number;
+}
+
+export async function fetchMarketNewsWire(
+  req: MarketNewsWireRequest = {},
+  signal?: AbortSignal
+): Promise<MarketNewsWireResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/market/news-wire`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export async function fetchMarketEvents(
+  req: MarketEventsRequest = {},
+  signal?: AbortSignal
+): Promise<MarketEventsResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/market/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}

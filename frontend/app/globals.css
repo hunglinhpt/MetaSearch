@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #0b0f14;
   --fg: #e6edf3;
   --muted: #9aa7b4;
@@ -864,6 +865,36 @@ a {
   padding-left: 1.2rem;
 }
 
+.news-query-input {
+  flex: 1 1 16rem;
+  min-width: 0;
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.9rem;
+}
+
+.news-query-input:focus {
+  outline: 1px solid var(--accent);
+}
+
+.watchlist-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.watchlist-alert-item {
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
 .podcast-player {
   margin-top: 0.6rem;
   display: flex;
@@ -889,7 +920,7 @@ a {
   border: 1px solid var(--border);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
-  color: var(--text);
+  color: var(--fg);
   padding: 0.25rem 0.7rem;
   font-size: 0.82rem;
   cursor: pointer;

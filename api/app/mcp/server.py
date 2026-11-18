@@ -11,7 +11,7 @@ Run modes:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from app.mcp import client as mcp_client
 from app.mcp.client import (
@@ -149,6 +149,60 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
             exchange=exchange,
             max_queries=max_queries,
             fetch_market_data=fetch_market_data,
+        )
+        return _loads(raw)
+
+    @mcp.tool()
+    async def market_news_wire(
+        symbols: list[str] | None = None,
+        lang: Literal["auto", "vi", "en"] = "auto",
+        categories: list[str] | None = None,
+        include_market_macro: bool = True,
+        max_age_days: int = 7,
+        max_items: int = 30,
+        seen_fingerprints: list[str] | None = None,
+        include_search_fallback: bool = False,
+    ) -> dict[str, Any]:
+        """Aggregate bilingual financial news wire across curated RSS/HTML/search feeds with
+        context-aware ticker disambiguation, syndication dedup, and stateless delta flags."""
+        raw = await mcp_client.market_news_wire(
+            symbols,
+            lang=lang,
+            categories=categories,
+            include_market_macro=include_market_macro,
+            max_age_days=max_age_days,
+            max_items=max_items,
+            seen_fingerprints=seen_fingerprints,
+            include_search_fallback=include_search_fallback,
+        )
+        return _loads(raw)
+
+    @mcp.tool()
+    async def market_events(
+        symbols: list[str] | None = None,
+        include_corporate_actions: bool = True,
+        include_calendar: bool = True,
+        include_listing: bool = True,
+        include_insider: bool = True,
+        include_regulatory: bool = True,
+        lookback_days: int = 365,
+        lookahead_days: int = 60,
+        reported_share_ratio: float | None = None,
+        seen_event_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Fetch structured corporate actions, ex-dividend calendar, listing/regulatory notices,
+        dilution alerts, and cumulative share-adjustment verification for target symbols."""
+        raw = await mcp_client.market_events(
+            symbols,
+            include_corporate_actions=include_corporate_actions,
+            include_calendar=include_calendar,
+            include_listing=include_listing,
+            include_insider=include_insider,
+            include_regulatory=include_regulatory,
+            lookback_days=lookback_days,
+            lookahead_days=lookahead_days,
+            reported_share_ratio=reported_share_ratio,
+            seen_event_ids=seen_event_ids,
         )
         return _loads(raw)
 

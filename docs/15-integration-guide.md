@@ -33,7 +33,12 @@ metasearch keys create my-system --rate-limit 600 --max-concurrent 16
 | Hậu kiểm `[n]` trong câu trả lời LLM của bạn | `POST /v1/citations/validate` | Xem `marker_valid` ở mục 3.4. |
 | Báo cáo nhiều vòng (30-180 s) | `POST /v1/research`, rồi `GET /v1/research/{id}` | Chạy nền, chỉ chủ job đọc được. |
 | Phân tích tâm lý cổ phiếu đa kênh song ngữ (VI/EN) | `POST /v1/market/sentiment` | Fan-out 5 lớp + cổng định lượng hoặc truyền `retrieved_documents`, `ohlcv_bars`, `market_proxies`, `fetch_market_data=true`; trả `benchmark_standards` (`nlp_telemetry`, `quantitative_telemetry`, 7-pillar checklist) không bịa số. |
+| Tổng hợp dòng tin tài chính/vĩ mô & khử trùng lặp | `POST /v1/market/news-wire` | Gom tin headless (Vietstock/CafeF RSS, VnEconomy/Stockbiz HTML, Google News fallback), nhận diện mã theo ngữ cảnh, lọc hiệu lực kép (`event_date` vs `published_at`) và gắn cờ `is_new` qua `seen_fingerprints`. |
+| Chuẩn hóa sự kiện doanh nghiệp & lịch GDKHQ | `POST /v1/market/events` | Tổng hợp CafeF corporate actions, lịch quyền CoTuc SSR, phân loại niêm yết/nội bộ/UBCKNN theo mức độ rủi ro và kiểm chứng hệ số điều chỉnh cổ phiếu tích lũy (`share_ratio_explanation`). |
 
+> **v3.3+ (2026-11-18):** OpenAPI snapshot bổ sung `POST /v1/market/news-wire` và
+> `POST /v1/market/events` (MCP tools: `market_news_wire`, `market_events`).
+>
 > **v3.2.0 (2026-11-15):** OpenAPI snapshot đổi: `POST /v1/context` thêm
 > `compression` và `skill` vào `include`; `AnswerResponse` thêm `compression`
 > và `skill`; thêm 8 endpoint mới (`/v1/llm/validate`, `/v1/llm/health`,
@@ -150,6 +155,7 @@ Danh sách engine đang bật và sức khỏe của chúng: `GET /v1/engines`, 
 
 | Ngày | Thay đổi |
 |---|---|
+| 2026-11-18 | Thêm `POST /v1/market/news-wire` (cost 3) và `POST /v1/market/events` (cost 3+symbols, tối đa 13) cùng MCP tools `market_news_wire`, `market_events`: tổng hợp dòng tin tài chính song ngữ, khử trùng lặp URL/fingerprint, nhận diện mã theo ngữ cảnh, lịch GDKHQ/cổ tức chuẩn hóa, phân loại niêm yết/cảnh báo/nội bộ/UBCKNN và chứng minh hệ số điều chỉnh cổ phiếu tích lũy. |
 | 2026-11-17 (wave đề xuất) | `POST /v1/market/sentiment` (`fetch_market_data=true`) bổ sung tự động lấy CBOE `^VIX`/`^VIX3M` từ Yahoo Finance chart cho mã quốc tế (hòa trộn không ghi đè `market_proxies` caller gửi) và Simplize fallback khi `fa_aggregator` thiếu chỉ số cơ bản VN. `GET /v1/digests` (`run_digest`) bổ sung tùy chọn tắt mặc định `SCHEDULER_LLM_SYNTHESIS_ENABLED=false` cho đoạn `## Tóm Tắt Điều Hành (AI Grounded)` có trích dẫn kiểm định và rào SEC-07. |
 | 2026-11-17 | `GET /v1/digests` phát hành thêm topic tổng hợp toàn đợt `run_digest` ("Bản tin chung", extractive từ nguồn thực). `POST /v1/market/sentiment` bổ sung `QUANT_FETCH_SKIPPED_BUDGET` vào `risk_circuit_breakers` khi `fetch_market_data=true` bị bỏ qua do ngân sách `< 0.8s`, giữ nguyên telemetry định lượng ngay cả khi chỉ có tin đồn chưa kiểm chứng, và lọc `top_verified_drivers[].url` chỉ giữ liên kết `http(s)` (scheme khác trả `null`). |
 | 2026-11-15 | `/v1/context` `include` thêm `compression`, `skill`; `AnswerResponse` thêm `compression`, `skill`. Thêm 8 endpoint: `POST /v1/llm/validate`, `GET /v1/llm/health`, `GET /v1/skills`, `GET /v1/ops/skills`, `GET /v1/memory/search`, `GET /v1/memory/timeline`, `POST /v1/memory/observations`, `POST /v1/market/sentiment`. MCP: thêm `memory_search`, `memory_timeline`, `memory_get_observations`, `equity_sentiment`. Hardening `docs/26`: `GET /v1/ops/status`, `GET /v1/ops/interleave`, `GET /v1/ops/skills`, `GET /v1/llm/health`, `POST /v1/podcast/briefing` yêu cầu `require_operator` (bắt buộc role `admin` khi `AUTH_ENABLED=true`, mở cho Lite `AUTH_ENABLED=false`); `/openapi.json`, `/docs`, `/metrics` và chi tiết nội bộ `/readyz` từ chối request có forwarding header (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`); toàn bộ request body/query/path có cận trên tường minh. |

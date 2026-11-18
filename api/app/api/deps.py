@@ -36,6 +36,14 @@ def get_fa_aggregator():
     return build_default_aggregator()
 
 
+@lru_cache(maxsize=1)
+def get_events_breaker_registry():
+    """Process-wide circuit breakers for market news-wire and corporate event sources."""
+    from app.retrieval.health import EngineBreakerRegistry
+
+    return EngineBreakerRegistry(threshold=3, timeout_threshold=5)
+
+
 def get_session_factory():
     """DB session factory as a patchable dependency (queries endpoint)."""
     from app.db.session import get_sessionmaker
@@ -155,6 +163,7 @@ def reset_pipelines() -> None:
         get_cache,
         get_tts_client,
         get_fa_aggregator,
+        get_events_breaker_registry,
     ):
         # Patched doubles in tests are plain functions without a cache.
         clear = getattr(provider, "cache_clear", None)
@@ -169,6 +178,7 @@ __all__ = [
     "get_cache",
     "get_embedder",
     "get_engine_store",
+    "get_events_breaker_registry",
     "get_fa_aggregator",
     "get_gateway",
     "get_health_registry",

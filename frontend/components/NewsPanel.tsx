@@ -23,6 +23,8 @@ import {
   addWatchlist,
   createPersonalPodcast,
   createPodcastBriefing,
+  fetchMarketEvents,
+  fetchMarketNewsWire,
   listWatchlist,
   personalPodcastLatestUrl,
   personalPodcastStatus,
@@ -35,9 +37,11 @@ import {
   search,
   ttsCapabilities,
   watchlistAlerts,
+  type MarketEventsResponse,
+  type MarketNewsWireResponse,
+  type PodcastBriefingStatus,
   type WatchlistAlertsResponse,
   type WatchlistItem,
-  type PodcastBriefingStatus,
 } from "../lib/api";
 import {
   dictationIsSupported,
@@ -189,6 +193,14 @@ export default function NewsPanel() {
   const podcastPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const podcastReqIdRef = useRef(0);
   const podcastAbortRef = useRef<AbortController | null>(null);
+  // Market news wire & corporate events inspector (POST /v1/market/news-wire + /events).
+  const [eventSymbolsInput, setEventSymbolsInput] = useState("");
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState("");
+  const [eventsData, setEventsData] = useState<MarketEventsResponse | null>(null);
+  const [wireData, setWireData] = useState<MarketNewsWireResponse | null>(null);
+  const eventsReqIdRef = useRef(0);
+  const eventsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     // Voices/SpeechSynthesis exist only client-side — gate after mount to
@@ -225,10 +237,52 @@ export default function NewsPanel() {
       ttsHandleRef.current?.cancel();
       abortRef.current?.abort();
       podcastAbortRef.current?.abort();
+      eventsAbortRef.current?.abort();
       micHandleRef.current?.stop();
       if (podcastPollRef.current) clearInterval(podcastPollRef.current);
     };
   }, []);
+
+  const loadCorporateIntelligence = useCallback(async () => {
+    const tokens = eventSymbolsInput
+      .split(/[\s,;]+/)
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean)
+      .slice(0, 10);
+    eventsAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    eventsAbortRef.current = ctrl;
+    const reqId = ++eventsReqIdRef.current;
+    setEventsLoading(true);
+    setEventsError("");
+    setEventsData(null);
+    setWireData(null);
+    try {
+      const [evRes, wireRes] = await Promise.allSettled([
+        fetchMarketEvents({ symbols: tokens, lookahead_days: 60 }, ctrl.signal),
+        fetchMarketNewsWire({ symbols: tokens, max_items: 15 }, ctrl.signal),
+      ]);
+      if (ctrl.signal.aborted || reqId !== eventsReqIdRef.current) return;
+      const errs: string[] = [];
+      if (evRes.status === "fulfilled") {
+        setEventsData(evRes.value);
+      } else {
+        errs.push(`Sự kiện: ${evRes.reason instanceof Error ? evRes.reason.message : String(evRes.reason)}`);
+      }
+      if (wireRes.status === "fulfilled") {
+        setWireData(wireRes.value);
+      } else {
+        errs.push(`Dòng tin: ${wireRes.reason instanceof Error ? wireRes.reason.message : String(wireRes.reason)}`);
+      }
+      if (errs.length > 0) {
+        setEventsError(errs.join(" · "));
+      }
+    } finally {
+      if (!ctrl.signal.aborted && reqId === eventsReqIdRef.current) {
+        setEventsLoading(false);
+      }
+    }
+  }, [eventSymbolsInput]);
 
   const toggleMic = () => {
     if (listening) {
@@ -809,6 +863,164 @@ export default function NewsPanel() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="watchlist-block">
+        <form
+          className="watchlist-head"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!eventsLoading) void loadCorporateIntelligence();
+          }}
+        >
+          <strong>Sự kiện doanh nghiệp &amp; Dòng tin cấu trúc</strong>
+          <input
+            type="text"
+            className="news-query-input"
+            value={eventSymbolsInput}
+            onChange={(e) => setEventSymbolsInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && e.nativeEvent.isComposing) {
+                e.preventDefault();
+              }
+            }}
+            disabled={eventsLoading}
+            placeholder="Mã CP (VD: FPT, VNM, HPG) — để trống xem toàn thị trường"
+            aria-label="Mã cổ phiếu tra cứu sự kiện và dòng tin"
+            style={{ maxWidth: "24rem" }}
+          />
+          <button
+            type="submit"
+            className="tts-btn"
+            disabled={eventsLoading}
+            aria-busy={eventsLoading}
+          >
+            {eventsLoading ? "Đang tải..." : "📅 Tra sự kiện & Dòng tin"}
+          </button>
+        </form>
+        {eventsError && <p className="error">Lỗi tra cứu sự kiện: {eventsError}</p>}
+        {(eventsData || wireData) && (
+          <div style={{ marginTop: "0.5rem" }}>
+            <p className="muted small">
+              {eventsData && (
+                <>
+                  Sự kiện: <strong>{eventsData.events.length}</strong> · Lịch GDKHQ sắp tới:{" "}
+                  <strong>{eventsData.upcoming_ex_dates.length}</strong> · Pha loãng:{" "}
+                  <strong>{eventsData.dilution_alerts.length}</strong> · Rủi ro:{" "}
+                  <strong>{eventsData.risk_alerts.length}</strong>
+                </>
+              )}
+              {wireData && (
+                <>
+                  {eventsData ? " · " : ""}Dòng tin khử trùng:{" "}
+                  <strong>
+                    {wireData.items.length}/{wireData.deduplicated_count || wireData.total_raw}
+                  </strong>
+                </>
+              )}
+              {(eventsData?.partial || wireData?.partial) && " · ⚠️ Một phần nguồn tạm gián đoạn"}
+            </p>
+            {(eventsData?.warnings.length || wireData?.warnings.length) ? (
+              <p className="muted small">
+                Lưu ý: {[...(eventsData?.warnings ?? []), ...(wireData?.warnings ?? [])].slice(0, 3).join(" | ")}
+              </p>
+            ) : null}
+            {eventsData && eventsData.upcoming_ex_dates.length > 0 && (
+              <ul className="watchlist-list" style={{ marginTop: "0.35rem" }}>
+                {eventsData.upcoming_ex_dates.slice(0, 4).map((ev) => {
+                  const href = ev.source_url ? safeHref(ev.source_url) : undefined;
+                  return (
+                    <li key={`ex-${ev.event_id}`} className="watchlist-alert-item">
+                      <span>
+                        <strong>{ev.symbol ?? "MKT"}</strong> [Lịch GDKHQ {ev.ex_date}]{" "}
+                        {href ? (
+                          <a href={href} target="_blank" rel="noreferrer">
+                            {ev.title}
+                          </a>
+                        ) : (
+                          ev.title
+                        )}{" "}
+                        <span className="muted small">
+                          {[
+                            ev.cash_dividend_pct ? `cổ tức ${ev.cash_dividend_pct}%` : null,
+                            ev.cash_per_share_vnd
+                              ? `${ev.cash_per_share_vnd.toLocaleString()}đ/cp`
+                              : null,
+                            ev.stock_ratio ? `tỷ lệ ${ev.stock_ratio}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {eventsData && eventsData.events.length > 0 && (
+              <ul className="watchlist-list" style={{ marginTop: "0.35rem" }}>
+                {eventsData.events.slice(0, 8).map((ev) => {
+                  const href = ev.source_url ? safeHref(ev.source_url) : undefined;
+                  return (
+                    <li key={ev.event_id} className="watchlist-alert-item">
+                      <span>
+                        <strong>{ev.symbol ?? "MKT"}</strong> [{ev.event_type}/{ev.event_subtype}]{" "}
+                        {href ? (
+                          <a href={href} target="_blank" rel="noreferrer">
+                            {ev.title}
+                          </a>
+                        ) : (
+                          ev.title
+                        )}{" "}
+                        <span className="muted small">
+                          {ev.ex_date ? `GDKHQ ${ev.ex_date}` : ev.event_date ?? "chưa rõ ngày"}
+                          {ev.share_factor ? ` · hệ số ${ev.share_factor}x` : ""}
+                          {ev.cash_dividend_pct ? ` · cổ tức ${ev.cash_dividend_pct}%` : ""}
+                          {ev.cash_per_share_vnd ? ` · ${ev.cash_per_share_vnd.toLocaleString()}đ/cp` : ""}
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {wireData && wireData.items.length > 0 && (
+              <ul className="watchlist-list" style={{ marginTop: "0.35rem" }}>
+                {wireData.items.slice(0, 6).map((item, idx) => {
+                  const href = item.url ? safeHref(item.url) : undefined;
+                  return (
+                    <li key={`${item.stable_id}-${idx}`} className="watchlist-alert-item">
+                      <span>
+                        <strong>{item.symbols[0] ?? item.scope.toUpperCase()}</strong> [
+                        {item.category}]{" "}
+                        {href ? (
+                          <a href={href} target="_blank" rel="noreferrer">
+                            {item.title}
+                          </a>
+                        ) : (
+                          item.title
+                        )}{" "}
+                        <span className="muted small">
+                          {item.source_id}
+                          {item.duplicate_count > 1 ? ` (+${item.duplicate_count - 1} nguồn)` : ""}
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {!eventsError &&
+              eventsData !== null &&
+              wireData !== null &&
+              eventsData.events.length === 0 &&
+              wireData.items.length === 0 && (
+              <p className="news-loading">
+                Không tìm thấy sự kiện hay dòng tin phù hợp cho điều kiện vừa tra cứu.
+              </p>
+            )}
           </div>
         )}
       </div>

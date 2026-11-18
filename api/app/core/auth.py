@@ -400,6 +400,7 @@ _STATIC_ROUTE_COSTS: tuple[tuple[str, str | None, int], ...] = (
     ("/graph/query", "POST", 2),  # optional LLM answer over the subgraph
     ("/market/ohlcv", "POST", 2),  # one upstream feed call + possible SSI fallback
     ("/market/sentiment", "POST", 8),  # PASS-2 P1-3: up to 22 pipeline sub-searches/fan-out
+    ("/market/news-wire", "POST", 3),  # multi-source RSS/HTML/search wire aggregation + dedup
     ("/hybrid", "POST", 2),  # F5: embeds query via upstream API when EMBEDDING_L2 != off
     ("/crawl", "POST", 8),  # crawl fans out to dozens of guarded fetches (also Spaces crawl)
     ("/map", "POST", 3),  # sitemap/HTML discovery
@@ -424,6 +425,8 @@ async def _route_cost(request: Request) -> int:
         # Payload-proportional (audit round 12): flat weights allowed 20 symbols for
         # 3 units - 10-40 upstream fetches.
         return 3 + min(await _request_item_count(request), 20)
+    if path.endswith("/market/events") and method == "POST":
+        return 3 + min(await _request_item_count(request), 10)
     if path.endswith("/watchlist/alerts"):
         # docs/29 DEFER-A + PASS-2 P3-1: scale GET weight linearly with
         # WATCHLIST_MAX_ITEMS so raising the cap cannot bypass weighted limits.
@@ -466,12 +469,12 @@ async def authenticate_and_rate_limit(request: Request, *, cost: int | None = No
                     state.rate_limit_headers = anon_headers
         return ctx
 
-    if cost is None:
-        cost = await _route_cost(request)
-
     raw_auth = request.headers.get("authorization", "").strip()
     bearer = raw_auth[7:].strip() if raw_auth[:7].lower() == "bearer " else raw_auth
     ctx = await authenticate(bearer)
+
+    if cost is None:
+        cost = await _route_cost(request)
     current_api_key_id.set(ctx.key_id)
     current_role.set(ctx.role)
     current_auth_context.set(ctx)

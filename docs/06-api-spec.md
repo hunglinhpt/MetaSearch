@@ -174,6 +174,10 @@ New endpoints:
   — cross-source fundamentals per symbol (provenance per field). Cost 3+N.
 - `POST /v1/market/ohlcv` `{symbol, days? (clamped to market_ohlcv_min/max_days)}`
   — daily candles (VNDIRECT primary, SSI fallback, shared strict parser). Cost 2.
+- `POST /v1/market/news-wire` `{symbols?, lang?, categories?, include_market_macro?, deduplicate?, max_age_days?, max_items?, seen_fingerprints?, raw_articles?, include_search_fallback?, timeout_ms?}`
+  — headless bilingual market news wire across Vietstock/CafeF RSS, VnEconomy/Stockbiz HTML, và Google News fallback; nhận diện mã theo ngữ cảnh (không loại nhầm mã trùng từ vĩ mô như `USD`/`CPI`/`TPP`), khử trùng lặp qua URL/fingerprint, lọc hiệu lực hai ngữ nghĩa (`event_date` vs `published_at` vs `undated`) và đánh dấu `is_new` không trạng thái qua `seen_fingerprints`. Cost 3.
+- `POST /v1/market/events` `{symbols?, include_corporate_actions?, include_calendar?, include_listing?, include_insider?, include_regulatory?, lookback_days?, lookahead_days?, reported_share_ratio?, observed_shares_high?, observed_shares_low?, ratio_tolerance?, seen_event_ids?, raw_notices?, timeout_ms?}`
+  — chuẩn hóa sự kiện doanh nghiệp (CafeF actions), lịch ngày GDKHQ & cổ tức (CoTuc SSR), trạng thái niêm yết (tách phục hồi giao dịch khỏi cảnh báo/kiểm soát và phát hiện pha loãng), tin nội bộ/UBCKNN theo mức độ nghiêm trọng, và chứng minh hệ số điều chỉnh số lượng cổ phiếu đơn/tích lũy (`share_ratio_explanation`). Cost 3+symbols (tối đa 13).
 - `GET/POST/DELETE /v1/watchlist`, `GET /v1/watchlist/alerts` — per-key
   watchlist (cap 20) + poll-on-demand alerts. Cost 1 / 1+N/4.
 - `POST /v1/tts/synthesize`, `GET /v1/tts/capabilities` — VoiceStudio server
@@ -217,4 +221,5 @@ New endpoints:
 
 Rate-limit weights (auth on): answer 5, context 3, research 20,
 tts/synthesize 5, podcast/briefing 5, fa/compare 3+symbols, market/ohlcv 2,
+market/news-wire 3, market/events 3+symbols (cap 13), market/sentiment 8,
 watchlist/alerts 1+items/4, everything else 1.

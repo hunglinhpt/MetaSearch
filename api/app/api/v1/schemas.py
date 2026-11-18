@@ -935,3 +935,252 @@ class GraphQueryResponse(BaseModel):
     nodes: list[dict[str, Any]] = Field(default_factory=list)
     edges: list[dict[str, Any]] = Field(default_factory=list)
     answer: str | None = None  # present when answer=true and the LLM answered
+
+
+# --- v3.3+ Market News Wire & Corporate Events Intelligence -------------------
+
+
+def _sanitize_http_url(v: Any) -> str | None:
+    if not isinstance(v, str):
+        return None
+    cleaned = v.strip()
+    if not cleaned or len(cleaned) > 2048:
+        return None
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+        return None
+    try:
+        parsed = urlsplit(cleaned)
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in ("http", "https"):
+        return None
+    if "@" in parsed.netloc or parsed.username is not None or parsed.password is not None:
+        return None
+    if not parsed.hostname:
+        return None
+    if port is not None and (port < 1 or port > 65535):
+        return None
+    return cleaned
+
+
+class MarketNewsRawInput(BaseModel):
+    """Caller-supplied article record for offline classification & deduplication."""
+
+    title: str = Field(min_length=1, max_length=600)
+    url: str | None = Field(default=None, max_length=2000)
+    snippet: str = Field(default="", max_length=4000)
+    source_id: str = Field(default="custom", max_length=64)
+    published_at: str | None = Field(default=None, max_length=64)
+    event_date: str | None = Field(default=None, max_length=32)
+    symbols: list[Annotated[str, StringConstraints(min_length=1, max_length=15)]] = Field(
+        default_factory=list, max_length=20
+    )
+    category: (
+        Literal[
+            "corporate_action",
+            "listing_status",
+            "insider_trade",
+            "regulatory",
+            "macro_policy",
+            "market_flow",
+            "general_finance",
+        ]
+        | None
+    ) = None
+    scope: Literal["ticker", "market", "policy", "sector", "general"] | None = None
+
+
+class MarketNewsWireRequest(BaseModel):
+    """POST /v1/market/news-wire — bilingual market news aggregation, entity matching & dedup."""
+
+    symbols: list[Annotated[str, StringConstraints(min_length=1, max_length=15)]] = Field(
+        default_factory=list, max_length=50
+    )
+    lang: Literal["auto", "vi", "en"] = "auto"
+    categories: (
+        list[
+            Literal[
+                "corporate_action",
+                "listing_status",
+                "insider_trade",
+                "regulatory",
+                "macro_policy",
+                "market_flow",
+                "general_finance",
+            ]
+        ]
+        | None
+    ) = Field(default=None, max_length=7)
+    include_market_macro: bool = True
+    deduplicate: bool = True
+    max_age_days: int = Field(default=7, ge=1, le=90)
+    max_items: int = Field(default=30, ge=1, le=100)
+    seen_fingerprints: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=500
+    )
+    raw_articles: list[MarketNewsRawInput] | None = Field(default=None, max_length=200)
+    include_search_fallback: bool = False
+    timeout_ms: int | None = Field(default=None, ge=500, le=30000)
+
+
+class MarketNewsWireItemOut(BaseModel):
+    title: str
+    url: str | None = None
+    source_id: str
+    snippet: str = ""
+    published_at: str | None = None
+    event_date: str | None = None
+    symbols: list[str] = Field(default_factory=list)
+    scope: Literal["ticker", "market", "policy", "sector", "general"] = "general"
+    category: Literal[
+        "corporate_action",
+        "listing_status",
+        "insider_trade",
+        "regulatory",
+        "macro_policy",
+        "market_flow",
+        "general_finance",
+    ] = "general_finance"
+    severity: Literal["critical", "high", "medium", "info"] = "info"
+    stable_id: str
+    fingerprint: str
+    date_status: Literal["event_date", "published_at", "undated"] = "undated"
+    duplicate_count: int = 1
+    also_reported_by: list[str] = Field(default_factory=list)
+    is_new: bool = True
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _clean_url(cls, v: Any) -> str | None:
+        return _sanitize_http_url(v)
+
+
+class MarketNewsWireResponse(BaseModel):
+    items: list[MarketNewsWireItemOut] = Field(default_factory=list)
+    new_count: int = 0
+    total_raw: int = 0
+    deduplicated_count: int = 0
+    sources_used: list[str] = Field(default_factory=list)
+    sources_failed: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    partial: bool = False
+    new_fingerprints: list[str] = Field(default_factory=list)
+    latency_ms: int = 0
+
+
+class MarketEventRawInput(BaseModel):
+    """Caller-supplied corporate notice or calendar record for structured classification."""
+
+    event_id: str | None = Field(default=None, max_length=64)
+    title: str = Field(min_length=1, max_length=600)
+    detail: str = Field(default="", max_length=4000)
+    symbol: str | None = Field(default=None, max_length=15)
+    exchange: str | None = Field(default=None, max_length=16)
+    event_type: (
+        Literal[
+            "corporate_action",
+            "dividend_calendar",
+            "listing",
+            "insider",
+            "regulatory",
+        ]
+        | None
+    ) = None
+    event_date: str | None = Field(default=None, max_length=32)
+    ex_date: str | None = Field(default=None, max_length=32)
+    record_date: str | None = Field(default=None, max_length=32)
+    payment_date: str | None = Field(default=None, max_length=32)
+    source_id: str = Field(default="custom", max_length=64)
+    source_url: str | None = Field(default=None, max_length=2000)
+    cash_dividend_pct: float | None = Field(default=None, ge=0.0, le=10_000.0)
+    cash_per_share_vnd: float | None = Field(default=None, ge=0.0, le=1_000_000.0)
+    stock_ratio: str | None = Field(default=None, max_length=64)
+
+
+class MarketEventsRequest(BaseModel):
+    """POST /v1/market/events — corporate actions, ex-date calendar & risk notices."""
+
+    symbols: list[Annotated[str, StringConstraints(min_length=1, max_length=15)]] = Field(
+        default_factory=list, max_length=30
+    )
+    include_corporate_actions: bool = True
+    include_calendar: bool = True
+    include_listing: bool = True
+    include_insider: bool = True
+    include_regulatory: bool = True
+    lookback_days: int = Field(default=365, ge=1, le=3650)
+    lookahead_days: int = Field(default=60, ge=1, le=365)
+    reported_share_ratio: float | None = Field(default=None, gt=0.0, le=1000.0)
+    observed_shares_high: float | None = Field(default=None, gt=0.0, le=1e15)
+    observed_shares_low: float | None = Field(default=None, gt=0.0, le=1e15)
+    ratio_tolerance: float = Field(default=0.08, gt=0.0, le=0.5)
+    seen_event_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=500
+    )
+    raw_notices: list[MarketEventRawInput] | None = Field(default=None, max_length=200)
+    timeout_ms: int | None = Field(default=None, ge=500, le=30000)
+
+
+class CorporateEventOut(BaseModel):
+    event_id: str
+    symbol: str | None = None
+    exchange: str | None = None
+    event_type: Literal[
+        "corporate_action",
+        "dividend_calendar",
+        "listing",
+        "insider",
+        "regulatory",
+    ]
+    event_subtype: str
+    severity: Literal["critical", "high", "medium", "info"]
+    risk_level: int
+    title: str
+    detail: str = ""
+    event_date: str | None = None
+    ex_date: str | None = None
+    record_date: str | None = None
+    payment_date: str | None = None
+    days_until: int | None = None
+    source_id: str = ""
+    source_url: str | None = None
+    is_share_changing: bool = False
+    share_factor: float | None = None
+    shares_delta: float | None = None
+    is_dilution: bool = False
+    cash_dividend_pct: float | None = None
+    cash_per_share_vnd: float | None = None
+    stock_ratio: str | None = None
+    date_mismatch_warning: str | None = None
+    is_new: bool = True
+
+    @field_validator("source_url", mode="before")
+    @classmethod
+    def _clean_source_url(cls, v: Any) -> str | None:
+        return _sanitize_http_url(v)
+
+
+class ShareRatioExplanationOut(BaseModel):
+    explained: bool
+    observed_ratio: float
+    matched_factor: float | None = None
+    residual_error_pct: float | None = None
+    matched_events: list[dict[str, Any]] = Field(default_factory=list)
+    explanation: str = ""
+
+
+class MarketEventsResponse(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+    events: list[CorporateEventOut] = Field(default_factory=list)
+    upcoming_ex_dates: list[CorporateEventOut] = Field(default_factory=list)
+    dilution_alerts: list[CorporateEventOut] = Field(default_factory=list)
+    risk_alerts: list[CorporateEventOut] = Field(default_factory=list)
+    share_ratio_explanation: ShareRatioExplanationOut | None = None
+    new_events_count: int = 0
+    new_event_ids: list[str] = Field(default_factory=list)
+    sources_used: list[str] = Field(default_factory=list)
+    sources_failed: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    partial: bool = False
+    latency_ms: int = 0
