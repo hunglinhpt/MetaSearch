@@ -48,6 +48,7 @@ from app.core.offload import run_cpu
 from app.extraction import pinning, ssrf
 from app.http import get_http_client
 from app.retrieval.adapters.google_news import GoogleNewsAdapter
+from app.retrieval.aliases import resolve_alias_tickers
 from app.retrieval.fa_sources.base import (
     BROWSER_HEADERS,
     MAX_RESPONSE_BYTES,
@@ -1145,6 +1146,17 @@ def extract_tickers_from_text(
                 break
     for _pos, sym in sorted(gl_hits):
         _add(sym)
+
+    # Stage B (docs/30): canonical bilingual company/brand alias resolver —
+    # "Vinamilk"→VNM, "Địa ốc Hoàng Quân"→HQC, "Thép Hòa Phát"→HPG, … High-
+    # precision by construction (unambiguous registry remainders + curated
+    # brands); merged after the structural passes, filtered by the same
+    # allowed-symbols contract.
+    alias_hits = resolve_alias_tickers(src)
+    for alias_sym in alias_hits:
+        if upper_allowed and alias_sym not in upper_allowed:
+            continue
+        _add(alias_sym)
 
     if upper_allowed:
         return [s for s in found if s in upper_allowed]

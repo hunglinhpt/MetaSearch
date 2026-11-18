@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added & Fixed — LLM Endpoint Privacy Policy + Bilingual Wire Entity Tagging (docs/30)
+
+- **Trusted-Only LLM Endpoint Allowlist (`api/app/llm/endpoint_policy.py`, `api/app/llm/gateway.py`, `api/app/main.py`, `api/app/config.py`)**: default-deny governance for every LLM base_url — enterprise zero-data-retention providers (Anthropic/OpenAI/Gemini/Vertex) and local/LAN self-hosted inference are trusted; unknown third-party endpoints (openrouter/pollinations/groq mirrors/spoofed suffixes) are rejected at runtime (`_candidates` guard on override-injected targets — BYO/request/runtime) and fail-fast at startup (`sweep_configured_endpoints` SystemExit in prod, warning in dev/test). Operator override: `LLM_ENDPOINT_POLICY=open` (SSRF validation still applies).
+- **Stage B Bilingual Entity Resolver (`api/app/retrieval/aliases.py`, `api/app/retrieval/events.py`)**: 1,020-alias canonical dictionary (unambiguous registry remainders + curated brands: Vinamilk→VNM, Địa ốc/Hoàng Quân→HQC, Thép/Tập đoàn Hòa Phát→HPG, Bia Sài Gòn→SAB, Long Châu→FRT, …) wired into `extract_tickers_from_text` — `/v1/market/news-wire` items with bare brand mentions ("Vinamilk chi cổ tức", "Hoàng Quân Địa ốc") now tag `tickers` correctly; ambiguous remainders ("Hòa Phát" across HTP/HPA/HPG) never indexed (anti-collision by construction); word-boundary matching O(text) single pass.
+- **14 verification tests** (`api/tests/test_v30_endpoint_policy_and_wire.py`) — enterprise/local trust matrix, suffix-spoof block, runtime enforcement + operator override, startup sweep, sliding-window expose, brand-alias resolution, allowed-symbols contract.
+
 ## [3.3.1] - 2026-11-18
 
 ### Added — Market News Wire & Corporate Events Intelligence (`POST /v1/market/news-wire`, `POST /v1/market/events`)

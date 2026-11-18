@@ -40,6 +40,7 @@ from app.config import Settings
 from app.core.logging import get_logger
 from app.core.metrics import LLM_COST, LLM_REQUESTS, LLM_TOKENS, LLM_TTFT, STAGE_DURATION
 from app.http import POOL_ACQUIRE_TIMEOUT_S, get_http_client
+from app.llm.endpoint_policy import llm_endpoint_is_trusted
 from app.llm.providers import (
     LLMOverride,
     ResolvedLLMTarget,
@@ -317,13 +318,40 @@ class LLMGateway:
         from app.llm.router import LLMInferenceRouter
 
         runtime_ov = get_runtime_llm_store().get_override() if self._use_runtime_store else None
-        return LLMInferenceRouter(self._settings).build_combo(
+        combo = LLMInferenceRouter(self._settings).build_combo(
             target,
             eff_model,
             task=task,
             request_override=self._request_override,
             runtime_override=runtime_ov,
         )
+        # docs/30 Part 1: LLM Endpoint Privacy Policy. The operator's STATIC
+        # configuration is fail-fast validated at startup (main.py sweep);
+        # this runtime guard gates the DYNAMIC surface — BYO / request /
+        # runtime overrides — so an injected untrusted endpoint can never
+        # receive a prompt. Static preset chains keep serving (they are the
+        # operator's explicit deployment choice, swept at startup).
+        policy = getattr(self._settings, "llm_endpoint_policy", "trusted_only")
+        override_injected = bool(runtime_ov or self._request_override)
+        if policy == "trusted_only" and override_injected:
+            trusted = [(t, u) for (t, u) in combo if llm_endpoint_is_trusted(t.base_url)]
+            if not trusted and combo:
+                logger.error(
+                    "llm_endpoint_policy_blocked_all",
+                    policy=policy,
+                    providers=[t.provider for t, _ in combo],
+                )
+                raise LLMError(
+                    "all override LLM endpoints rejected by the trusted-provider "
+                    "allowlist (docs/30 Part 1)"
+                )
+            if len(trusted) != len(combo):
+                logger.warning(
+                    "llm_endpoint_policy_dropped_candidates",
+                    dropped=[t.provider for t, _ in combo if (t, _) not in trusted],
+                )
+            combo = trusted
+        return combo
 
     async def stream(
         self,

@@ -64,6 +64,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             + " | ".join(problems)
             + " (bind 127.0.0.1 or set AUTH_ENABLED=true)"
         )
+
+    # docs/30 Part 1: LLM Endpoint Privacy Policy — fail-fast startup sweep.
+    # A misconfigured deployment must not boot quietly into a leaking state.
+    with contextlib.suppress(Exception):
+        from app.llm.endpoint_policy import sweep_configured_endpoints
+        from app.llm.providers import resolve_llm_target
+
+        configured_endpoints: list[str] = []
+        with contextlib.suppress(Exception):
+            configured_endpoints.append(resolve_llm_target(settings).base_url)
+        with contextlib.suppress(Exception):
+            configured_endpoints.append(settings.custom_llm_base_url)
+        violations = sweep_configured_endpoints(
+            [e for e in configured_endpoints if e],
+            policy=settings.llm_endpoint_policy,
+        )
+        if violations and settings.environment == "prod":
+            raise SystemExit(
+                "Refusing to start: untrusted LLM endpoints under "
+                f"LLM_ENDPOINT_POLICY=trusted_only: {violations} "
+                "(use enterprise zero-data-retention providers, local "
+                "inference, or set LLM_ENDPOINT_POLICY=open)"
+            )
+        if violations:
+            # dev/test: non-blocking diagnostics (fixtures use fake endpoints)
+            logger.warning(
+                "startup_llm_endpoint_policy_violations_dev",
+                endpoints=violations,
+            )
     if settings.database_url.startswith("sqlite"):
         from app.db.bootstrap import ensure_schema
 

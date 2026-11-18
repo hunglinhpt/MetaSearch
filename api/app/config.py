@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     llm_fallback_provider: str = ""
     # Multi-Endpoint LLM Council + Cross-Review + Dream-RSI settings
     llm_council_enabled: bool = False
+    # docs/30 Part 1: LLM Endpoint Privacy Policy — "trusted_only" (default)
+    # rejects any base_url not on the enterprise zero-data-retention
+    # allowlist or local/LAN self-hosted inference, before dispatch.
+    # "open" restores legacy behavior (SSRF validation still applies).
+    llm_endpoint_policy: Literal["trusted_only", "open"] = "trusted_only"
     llm_council_endpoints: str = "pollinations:openai,pollinations:mistral,pollinations:llama"
     llm_dream_rsi_enabled: bool = True
     llm_quick_model: str = "gpt-4o-mini"
