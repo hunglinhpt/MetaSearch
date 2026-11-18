@@ -325,15 +325,16 @@ class LLMGateway:
             request_override=self._request_override,
             runtime_override=runtime_ov,
         )
-        # docs/30 Part 1: LLM Endpoint Privacy Policy. The operator's STATIC
-        # configuration is fail-fast validated at startup (main.py sweep);
-        # this runtime guard gates the DYNAMIC surface — BYO / request /
-        # runtime overrides — so an injected untrusted endpoint can never
-        # receive a prompt. Static preset chains keep serving (they are the
-        # operator's explicit deployment choice, swept at startup).
+        # docs/30 Part 1 (P1-1): LLM Endpoint Privacy Policy gates EVERY
+        # candidate — static preset chains AND override-injected targets.
+        # The fallback chain (llm_fallback_provider / llm_fallback_chain /
+        # llm_auto_fallback) previously dispatched prompts to untrusted hosts
+        # (groq/openrouter/mistral/...) with no sweep and no runtime gate.
+        # Static config is ALSO fail-fast validated at startup (main.py sweep
+        # enumerates the full provider surface), so this runtime guard is
+        # defense-in-depth against hot-config drift.
         policy = getattr(self._settings, "llm_endpoint_policy", "trusted_only")
-        override_injected = bool(runtime_ov or self._request_override)
-        if policy == "trusted_only" and override_injected:
+        if policy == "trusted_only":
             trusted = [(t, u) for (t, u) in combo if llm_endpoint_is_trusted(t.base_url)]
             if not trusted and combo:
                 logger.error(
@@ -342,8 +343,9 @@ class LLMGateway:
                     providers=[t.provider for t, _ in combo],
                 )
                 raise LLMError(
-                    "all override LLM endpoints rejected by the trusted-provider "
-                    "allowlist (docs/30 Part 1)"
+                    "all LLM endpoints rejected by the trusted-provider allowlist "
+                    "(docs/30 Part 1); configure an enterprise/local provider or "
+                    "set LLM_ENDPOINT_POLICY=open"
                 )
             if len(trusted) != len(combo):
                 logger.warning(

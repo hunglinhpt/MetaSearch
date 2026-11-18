@@ -100,7 +100,7 @@ def test_site_map_and_crawl_routes(
     monkeypatch.setattr(
         persist_mod,
         "persist_pages",
-        lambda pages, chunks: persisted_batches.append((len(pages), len(chunks))),
+        lambda pages, chunks, **kw: persisted_batches.append((len(pages), len(chunks))),
     )
 
     with TestClient(create_app()) as client:

@@ -433,3 +433,12 @@ async def test_monitor_ignores_a_patched_asyncio_sleep(monkeypatch):
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     assert calls == []
+
+
+@pytest.fixture(autouse=True)
+def _open_llm_endpoint_policy(monkeypatch):
+    """docs/30 Part 1: gateway-mechanics tests exercise breaker/retry/stream
+    behavior over non-trusted fixture endpoints — run with the privacy
+    policy open (policy itself is covered in test_v30_endpoint_policy_and_wire)."""
+
+    monkeypatch.setattr("app.llm.gateway.llm_endpoint_is_trusted", lambda url: True)

@@ -597,3 +597,12 @@ class TestHalfOpenThroughRealGateway:
         await asyncio.sleep(0.1)
         assert breaker.half_open_in_flight is False
         await self._next_request_succeeds()
+
+
+@pytest.fixture(autouse=True)
+def _open_llm_endpoint_policy(monkeypatch):
+    """docs/30 Part 1: gateway-mechanics tests exercise breaker/retry/stream
+    behavior over non-trusted fixture endpoints — run with the privacy
+    policy open (policy itself is covered in test_v30_endpoint_policy_and_wire)."""
+
+    monkeypatch.setattr("app.llm.gateway.llm_endpoint_is_trusted", lambda url: True)

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
@@ -129,6 +130,15 @@ def _strip_generic(tokens: list[str]) -> list[str]:
     return tokens
 
 
+def _fold(text: str) -> str:
+    """Case-fold + strip diacritics (NFD, drop combining marks) so EN /
+    diacritic-stripped wire copy ("Hoa Phat", "Bia Sai Gon", "Sua Viet Nam")
+    matches the Vietnamese originals (PASS-2 audit item 4 — bilingual means
+    both orthographies)."""
+    lowered = unicodedata.normalize("NFD", text).casefold()
+    return "".join(ch for ch in lowered if not unicodedata.combining(ch))
+
+
 def _distinctive(tokens: list[str]) -> bool:
     """A remainder is distinctive enough for exact matching."""
     if len(tokens) >= 2:
@@ -141,14 +151,14 @@ def _build_index() -> tuple[dict[str, str], re.Pattern[str]]:
     alias_to_symbol: dict[str, str] = {}
 
     def _add(alias: str, symbol: str) -> None:
-        folded = alias.strip().lower()
+        folded = _fold(alias)
         if len(folded) < 5 or not folded:
             return  # never index short/bare-word aliases (Stage C territory)
         existing = alias_to_symbol.get(folded)
         if existing is None:
             alias_to_symbol[folded] = symbol
         elif existing != symbol:
-            # ambiguous remainder (e.g. bare "Hòa Phát" across HTP/HPA/HPG)
+            # ambiguous remainder (e.g. bare "Hoa Phat" across HTP/HPA/HPG)
             del alias_to_symbol[folded]
             alias_to_symbol[folded] = "\0ambiguous\0"
 
@@ -168,8 +178,9 @@ def _build_index() -> tuple[dict[str, str], re.Pattern[str]]:
         logger.warning("alias_index_registry_load_failed", error=type(exc).__name__)
 
     for alias, symbol in _CURATED_ALIASES:
-        # curated wins over auto (ambiguity resolved by the explicit entry)
-        alias_to_symbol[alias.strip().lower()] = symbol
+        # curated wins over auto (ambiguity resolved by the explicit entry);
+        # folded so ASCII orthographies match too
+        alias_to_symbol[_fold(alias)] = symbol
 
     # purge ambiguity placeholders
     aliases = {a: s for a, s in alias_to_symbol.items() if s != "\0ambiguous\0"}
@@ -197,8 +208,8 @@ def resolve_alias_tickers(text: str) -> list[str]:
     aliases, matcher = _alias_index()
     out: list[str] = []
     seen: set[str] = set()
-    for match in matcher.finditer(text.lower()):
-        symbol = aliases.get(match.group(0).lower())
+    for match in matcher.finditer(_fold(text)):
+        symbol = aliases.get(_fold(match.group(0)))
         if symbol and symbol not in seen:
             seen.add(symbol)
             out.append(symbol)

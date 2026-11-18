@@ -275,8 +275,17 @@ async def _persist_search_all(
         await session.commit()
 
 
-async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> None:
+async def _persist_documents(
+    pages: list[PageContent],
+    chunks: list[Chunk],
+    *,
+    owner: str | None = None,
+) -> None:
     """Insert scraped documents + their chunks (skip URLs already stored).
+
+    docs/30 P1-2: rows are stamped with the producing tenant
+    (``owner`` else ``current_api_key_id``); nullable = operator/global public
+    row. /v1/hybrid filters chunk reads by this column.
 
     docs/29 P1-4 (audit findings #4/#10): the embedding fan-out (up to
     10-15 s of awaited HTTP per page) runs BEFORE the SQLite write lock —
@@ -338,6 +347,8 @@ async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> N
                     "fetched_at": page.fetched_at,
                     "fetch_status": "ok",
                     "extractor_used": page.extractor_used,
+                    # docs/30 P1-2: producing tenant for /v1/hybrid tenancy.
+                    "api_key_id": owner if owner is not None else current_api_key_id.get(),
                 }
             )
         # Index under requested, final, and canonical URL so chunk lookup
@@ -447,6 +458,8 @@ async def _persist_documents(pages: list[PageContent], chunks: list[Chunk]) -> N
                     # Python by retrieval/hybrid).
                     "tsv": func.to_tsvector("simple", chunk.content) if is_pg else chunk.content,
                     "embedding": embeddings_by_doc.get(chunk_doc_id, {}).get(chunk.position),
+                    # docs/30 P1-2: producing tenant for /v1/hybrid tenancy.
+                    "api_key_id": owner if owner is not None else current_api_key_id.get(),
                 }
             )
         if chunk_values:
@@ -583,14 +596,18 @@ async def persist_answer(
     )
 
 
-def persist_pages(pages: list[PageContent], chunks: list[Chunk]) -> None:
-    _spawn_task("documents", _persist_documents(pages, chunks))
+def persist_pages(
+    pages: list[PageContent], chunks: list[Chunk], *, owner: str | None = None
+) -> None:
+    _spawn_task("documents", _persist_documents(pages, chunks, owner=owner))
 
 
-async def persist_pages_async(pages: list[PageContent], chunks: list[Chunk]) -> None:
+async def persist_pages_async(
+    pages: list[PageContent], chunks: list[Chunk], *, owner: str | None = None
+) -> None:
     """Awaitable variant of ``persist_pages`` so answer/research pipelines can
     ensure chunks exist before writing ``citations.chunk_id`` foreign keys."""
-    await _run("documents", _persist_documents(pages, chunks))
+    await _run("documents", _persist_documents(pages, chunks, owner=owner))
 
 
 async def _persist_report(

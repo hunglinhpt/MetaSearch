@@ -25,6 +25,7 @@ from app.api.v1.schemas import (
 )
 from app.config import get_settings
 from app.core.admission import admit
+from app.core.auth import current_api_key_id
 from app.core.budget import create_budget_for_route, use_budget
 from app.extraction.chunker import late_chunk_markdown
 from app.extraction.scraper import PageContent, PageFailure
@@ -114,7 +115,7 @@ async def crawl_site(scraper, request: CrawlRequest) -> CrawlResponse:
                     page.markdown, document_url=page.url, source_title=page.title or ""
                 )
             )
-        persist.persist_pages(ok_pages, chunks)
+        persist.persist_pages(ok_pages, chunks, owner=current_api_key_id.get())
         indexed = True
 
     return CrawlResponse(

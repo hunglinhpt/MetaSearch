@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from app.config import Settings
+from app.core.auth import current_api_key_id
 from app.core.logging import get_logger
 from app.core.offload import run_cpu
 from app.extraction.chunker import Chunk, chunk_markdown
@@ -823,7 +824,7 @@ class ResearchPipeline:
             ]
             accepted = pack.merge(new_chunks, sources)
             if ok_pages and accepted:
-                persist.persist_pages(ok_pages, accepted)
+                persist.persist_pages(ok_pages, accepted, owner=current_api_key_id.get())
 
             learnings, gaps, usage = await self._extract(
                 question,

@@ -119,6 +119,8 @@ async def hybrid_chunk_search(
     urls: list[str] | None = None,
     domains: list[str] | None = None,
     candidate_limit: int = _CANDIDATE_LIMIT,
+    owner: str | None = None,
+    include_global: bool = True,
 ) -> list[dict[str, Any]]:
     """Return the top-k chunks for ``query`` fused dense+sparse (RRF).
 
@@ -142,6 +144,10 @@ async def hybrid_chunk_search(
         .order_by(ChunkRow.created_at.desc())
         .limit(max(candidate_limit, k))
     )
+    # docs/30 P1-2: tenant scoping — a non-admin caller reads only chunks its
+    # own key produced plus operator/global (NULL-owner) rows. Admin bypass.
+    if owner is not None:
+        stmt = stmt.where(or_(ChunkRow.api_key_id == owner, ChunkRow.api_key_id.is_(None)))
     # Audit Pass 1 P2#3: the domain filter MUST run in SQL before the limit —
     # a Python-side-only filter on the newest-1000 window silently misses every
     # target-domain chunk outside it (wrong "no results" for Spaces).

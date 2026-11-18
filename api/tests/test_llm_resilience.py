@@ -641,3 +641,12 @@ class TestExpiredKey:
         with pytest.raises(MetaSearchError) as excinfo:
             await auth_mod.authenticate("msk_expired")
         assert excinfo.value.status_code == 401
+
+
+@pytest.fixture(autouse=True)
+def _open_llm_endpoint_policy(monkeypatch):
+    """docs/30 Part 1: gateway-mechanics tests exercise breaker/retry/stream
+    behavior over non-trusted fixture endpoints — run with the privacy
+    policy open (policy itself is covered in test_v30_endpoint_policy_and_wire)."""
+
+    monkeypatch.setattr("app.llm.gateway.llm_endpoint_is_trusted", lambda url: True)

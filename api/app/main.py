@@ -65,34 +65,83 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             + " (bind 127.0.0.1 or set AUTH_ENABLED=true)"
         )
 
-    # docs/30 Part 1: LLM Endpoint Privacy Policy — fail-fast startup sweep.
-    # A misconfigured deployment must not boot quietly into a leaking state.
-    with contextlib.suppress(Exception):
-        from app.llm.endpoint_policy import sweep_configured_endpoints
-        from app.llm.providers import resolve_llm_target
+    # docs/30 Part 1 (P1-1): LLM Endpoint Privacy Policy — fail-fast startup
+    # sweep over the FULL provider surface: primary target, custom base_url,
+    # fallback provider, explicit fallback chain, council panel endpoints and
+    # the embedding API. Resolution errors are fail-closed in prod (an
+    # unresolvable endpoint is not an unconfigured one).
+    from app.llm.endpoint_policy import sweep_configured_endpoints
 
-        configured_endpoints: list[str] = []
-        with contextlib.suppress(Exception):
-            configured_endpoints.append(resolve_llm_target(settings).base_url)
-        with contextlib.suppress(Exception):
-            configured_endpoints.append(settings.custom_llm_base_url)
-        violations = sweep_configured_endpoints(
-            [e for e in configured_endpoints if e],
-            policy=settings.llm_endpoint_policy,
+    sweep_targets: list[str] = []
+    sweep_errors: list[str] = []
+
+    def _sweep_url(label: str, resolver) -> None:
+        try:
+            sweep_targets.append(resolver())
+        except Exception as exc:
+            sweep_errors.append(f"{label}: {type(exc).__name__}")
+
+    with contextlib.suppress(Exception):
+        from app.llm.providers import LLM_PROVIDER_PRESETS, resolve_llm_target
+
+        _sweep_url("primary", lambda: resolve_llm_target(settings).base_url)
+        if settings.custom_llm_base_url:
+            sweep_targets.append(settings.custom_llm_base_url)
+        # fallback provider + explicit chain: resolve each via a request
+        # override so the same preset logic builds the base_url.
+        for pid in ([settings.llm_fallback_provider] if settings.llm_fallback_provider else []) + [
+            s.strip().split(":", 1)[0] for s in settings.llm_fallback_chain.split(",") if s.strip()
+        ]:
+            if not pid or pid not in LLM_PROVIDER_PRESETS:
+                continue
+            try:
+                from app.llm.providers import LLMOverride
+
+                t = resolve_llm_target(
+                    settings,
+                    request_override=LLMOverride(provider=pid),  # type: ignore[arg-type]
+                )
+                sweep_targets.append(t.base_url)
+            except Exception as exc:
+                sweep_errors.append(f"fallback:{pid}: {type(exc).__name__}")
+        # council panel endpoints — only when the council is actually enabled
+        # (the default pollinations specs would otherwise fail every boot).
+        if settings.llm_council_enabled:
+            with contextlib.suppress(Exception):
+                from app.llm.providers import parse_council_endpoint_specs
+
+                for ep in parse_council_endpoint_specs(settings.llm_council_endpoints, settings):
+                    with contextlib.suppress(Exception):
+                        t = resolve_llm_target(settings, request_override=ep)
+                        sweep_targets.append(t.base_url)
+        # embedding endpoint — only when the L2 backend actually dispatches
+        # (raw query text + chunk text flow here).
+        if settings.embedding_l2 != "off" and settings.embedding_api_base_url:
+            sweep_targets.append(settings.embedding_api_base_url)
+
+    violations = sweep_configured_endpoints(
+        [u for u in sweep_targets if u], policy=settings.llm_endpoint_policy
+    )
+    if sweep_errors and settings.environment == "prod":
+        raise SystemExit(
+            "Refusing to start: LLM endpoint sweep could not resolve "
+            f"{sweep_errors} under LLM_ENDPOINT_POLICY=trusted_only "
+            "(fail-closed: unresolvable is not unconfigured)"
         )
-        if violations and settings.environment == "prod":
-            raise SystemExit(
-                "Refusing to start: untrusted LLM endpoints under "
-                f"LLM_ENDPOINT_POLICY=trusted_only: {violations} "
-                "(use enterprise zero-data-retention providers, local "
-                "inference, or set LLM_ENDPOINT_POLICY=open)"
-            )
-        if violations:
-            # dev/test: non-blocking diagnostics (fixtures use fake endpoints)
-            logger.warning(
-                "startup_llm_endpoint_policy_violations_dev",
-                endpoints=violations,
-            )
+    if violations and settings.environment == "prod":
+        raise SystemExit(
+            "Refusing to start: untrusted LLM endpoints under "
+            f"LLM_ENDPOINT_POLICY=trusted_only: {violations} "
+            "(use enterprise zero-data-retention providers, local "
+            "inference, or set LLM_ENDPOINT_POLICY=open)"
+        )
+    if violations or sweep_errors:
+        # dev/test: non-blocking diagnostics (fixtures use fake endpoints)
+        logger.warning(
+            "startup_llm_endpoint_policy_violations_dev",
+            endpoints=violations,
+            resolution_errors=sweep_errors,
+        )
     if settings.database_url.startswith("sqlite"):
         from app.db.bootstrap import ensure_schema
 

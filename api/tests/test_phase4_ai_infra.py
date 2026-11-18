@@ -819,3 +819,12 @@ async def test_phase5_profile_override_isolation_and_timeline(monkeypatch, tmp_p
     assert anchored["anchor_found"] is True
     assert [it["title"] for it in anchored["items"]] == ["Obs 504", "Obs 505", "Obs 506"]
     await dispose_engine()
+
+
+@pytest.fixture(autouse=True)
+def _open_llm_endpoint_policy(monkeypatch):
+    """docs/30 Part 1: gateway-mechanics tests exercise breaker/retry/stream
+    behavior over non-trusted fixture endpoints — run with the privacy
+    policy open (policy itself is covered in test_v30_endpoint_policy_and_wire)."""
+
+    monkeypatch.setattr("app.llm.gateway.llm_endpoint_is_trusted", lambda url: True)

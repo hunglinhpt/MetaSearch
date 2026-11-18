@@ -82,6 +82,8 @@ class Document(UUIDPrimaryKeyMixin, Base):
 
     canonical_url: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     url_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # docs/30 P1-2: producing tenant (nullable = operator/global public row).
+    api_key_id: Mapped[str | None] = mapped_column(Text, index=True)
     title: Mapped[str | None] = mapped_column(Text)
     domain: Mapped[str | None] = mapped_column(Text)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -120,6 +122,8 @@ class Chunk(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     # docs/20 P1-4: sparse side of the hybrid index (tsvector on Postgres,
     # plain text on SQLite — see TSVType). Nullable so old rows stay valid.
     tsv: Mapped[str | None] = mapped_column(TSVType)
+    # docs/30 P1-2: producing tenant (nullable = operator/global public row).
+    api_key_id: Mapped[str | None] = mapped_column(Text, index=True)
 
     document: Mapped[Document] = relationship(back_populates="chunks")
 

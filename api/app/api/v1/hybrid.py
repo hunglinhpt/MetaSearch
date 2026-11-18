@@ -11,13 +11,13 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, StringConstraints
 
 from app.api import deps
 from app.config import get_settings
 from app.core.admission import admit
-from app.core.auth import current_api_key_id
+from app.core.auth import AuthContext, current_api_key_id, require_api_key
 from app.core.budget import create_budget_for_route, use_budget
 from app.core.errors import ErrorCode, MetaSearchError
 from app.llm.embeddings import EmbeddingError
@@ -43,7 +43,9 @@ class HybridRequest(BaseModel):
 
 
 @router.post("/hybrid")
-async def hybrid_search(request: HybridRequest) -> dict[str, Any]:
+async def hybrid_search(
+    request: HybridRequest, ctx: AuthContext = Depends(require_api_key)
+) -> dict[str, Any]:
     settings = get_settings()
     if not settings.hybrid_search_enabled:
         raise MetaSearchError(
@@ -74,6 +76,8 @@ async def hybrid_search(request: HybridRequest) -> dict[str, Any]:
                         embedding = None  # sparse-only fallback, never fail
 
             async with deps.get_session_factory()() as session:
+                # docs/30 P1-2: tenant scoping — non-admin callers read only
+                # chunks their key produced plus operator/global rows.
                 chunks = await hybrid_chunk_search(
                     session,
                     request.query,
@@ -81,6 +85,8 @@ async def hybrid_search(request: HybridRequest) -> dict[str, Any]:
                     embedding=embedding,
                     urls=request.urls,
                     domains=domains or None,
+                    owner=None if ctx.role == "admin" else ctx.key_id,
+                    include_global=True,
                 )
     return {
         "query": request.query,

@@ -288,7 +288,7 @@ async def _crawl_space_admitted(
                     )
                 )
             if ok_pages:
-                persist.persist_pages(ok_pages, chunks)
+                persist.persist_pages(ok_pages, chunks, owner=row.api_key_id)
             for p in pages:
                 if isinstance(p, PageContent):
                     results.append({"url": p.url, "status": "ok", "title": p.title or ""})
