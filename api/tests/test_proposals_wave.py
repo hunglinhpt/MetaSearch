@@ -740,3 +740,23 @@ def test_tracing_otel_enabled_missing_and_present(monkeypatch: pytest.MonkeyPatc
 
     assert setup_tracing(SimpleNamespace()) is True
     assert called == ["set", "fastapi", "httpx"]
+
+
+async def test_yahoo_response_size_cap_and_global_symbols() -> None:
+    """PASS-2 P2-4 & P3-8: cap Yahoo response bytes and accept BRK.B / BTC-USD / ^GSPC."""
+    from app.retrieval.fa_sources.base import MAX_RESPONSE_BYTES, ensure_global_symbol
+    from app.retrieval.sentiment_quant import _fetch_yahoo_chart_series
+
+    assert ensure_global_symbol("BRK.B") == "BRK.B"
+    assert ensure_global_symbol("BTC-USD") == "BTC-USD"
+    assert ensure_global_symbol("^GSPC") == "^GSPC"
+    assert ensure_global_symbol("../etc") is None
+
+    def oversized_handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * (MAX_RESPONSE_BYTES + 1))
+
+    async with _client(oversized_handler) as cli:
+        bars, as_of = await _fetch_yahoo_chart_series(
+            "BRK.B", range_str="1y", timeout_s=2.0, client=cli
+        )
+    assert bars == [] and as_of is None

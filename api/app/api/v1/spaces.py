@@ -313,6 +313,7 @@ async def _crawl_space_admitted(
 
 _graph_jobs: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _GRAPH_JOBS_MAX = 64
+_GRAPH_JOBS_HARD_MAX = _GRAPH_JOBS_MAX * 4
 _graph_tasks: set[asyncio.Task[None]] = set()
 _graph_inflight: set[str] = set()
 
@@ -321,6 +322,23 @@ def reset_graph_state() -> None:
     """Test isolation: drop the graph job registry."""
     _graph_jobs.clear()
     _graph_inflight.clear()
+
+
+def _prune_graph_jobs() -> None:
+    """Protect active builds up to _GRAPH_JOBS_MAX while enforcing _GRAPH_JOBS_HARD_MAX."""
+    if len(_graph_jobs) <= _GRAPH_JOBS_MAX:
+        return
+    for candidate in list(_graph_jobs.keys()):
+        if len(_graph_jobs) <= _GRAPH_JOBS_MAX:
+            break
+        if candidate not in _graph_inflight and _graph_jobs[candidate].get("status") not in (
+            "pending",
+            "running",
+        ):
+            _graph_jobs.pop(candidate, None)
+    while len(_graph_jobs) > _GRAPH_JOBS_HARD_MAX:
+        evicted_key, _ = _graph_jobs.popitem(last=False)
+        _graph_inflight.discard(evicted_key)
 
 
 def _graph_key(owner: str, slug: str) -> str:
@@ -438,16 +456,7 @@ async def build_graph(slug: str = Path(max_length=120)) -> GraphBuildResponse:
         "edges": 0,
     }
     _graph_jobs.move_to_end(key)
-    if len(_graph_jobs) > _GRAPH_JOBS_MAX:
-        # docs/29 DEFER-B (audit B#17): never evict an active build from _graph_jobs.
-        for candidate in list(_graph_jobs.keys()):
-            if len(_graph_jobs) <= _GRAPH_JOBS_MAX:
-                break
-            if candidate not in _graph_inflight and _graph_jobs[candidate].get("status") not in (
-                "pending",
-                "running",
-            ):
-                _graph_jobs.pop(candidate, None)
+    _prune_graph_jobs()
     task = asyncio.create_task(_run_graph_build(owner, slug))
     _graph_tasks.add(task)
     task.add_done_callback(_graph_tasks.discard)

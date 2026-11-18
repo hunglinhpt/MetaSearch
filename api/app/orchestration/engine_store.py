@@ -707,6 +707,9 @@ class DbEngineStore:
             logger.warning("engine_update_db_failed", error=type(exc).__name__)
             self._cache_gen += 1
             self._cache = None
+            # PASS-2 P3-5: suppress flapping DB reads across the next cooldown
+            # window so snapshot() uses the fallback update we are about to write.
+            self._db_error_until = time.monotonic() + 30.0
             return await self._fallback.update(engine_id, changes)
         # docs/29 DEFER-A (audit B#6): bump the generation so any in-flight
         # revalidator cannot publish pre-update rows over the fresh cache.
@@ -747,6 +750,11 @@ class DbEngineStore:
         return await self._fallback.recent_windows()
 
     async def _record_db(self, engine_id: str, *, ok: bool) -> bool:
+        """Direct DB health persistence helper (kept tested for DB timeout guards).
+
+        Note: ``record_result`` intentionally keeps search hot paths 0-SQL in
+        memory (WP-03) and does not call ``_record_db`` on live requests.
+        """
         window_start = _window_start()
         async with sqlite_write_lock(), self._get_sm()() as session:
             row = (

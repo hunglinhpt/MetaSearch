@@ -73,7 +73,7 @@ def _csv_safe_cell(val: object) -> str:
     if isinstance(val, (int, float)):
         return str(val)
     text = "" if val is None else str(val)
-    if text and text.lstrip(" ")[0:1] in ("=", "+", "-", "@", "\t", "\r"):
+    if text and text.lstrip()[0:1] in ("=", "+", "-", "@", "\t", "\r"):
         return f"'{text}"
     if text.startswith(("\t", "\r")):
         return f"'{text}"
@@ -567,10 +567,14 @@ async def market_sentiment(request: MarketSentimentRequest) -> MarketSentimentRe
             fundamentals: FundamentalSnapshotInput | None = None
             quant_skipped_budget = False
             # docs/29 ISSUE-4: per-ticker isolation — VN tickers get their own
-            # VNDIRECT OHLCV/quant by default (proven live, keyless), so two
-            # different tickers never converge on the same market-wide
-            # payload. Callers still opt out with fetch_market_data=false.
-            effective_fetch = request.fetch_market_data or entity.is_vietnam
+            # VNDIRECT OHLCV/quant by default (proven live, keyless) unless the
+            # caller explicitly opts out via `"fetch_market_data": false`.
+            explicit_fetch_off = (
+                "fetch_market_data" in request.model_fields_set and not request.fetch_market_data
+            )
+            effective_fetch = request.fetch_market_data or (
+                entity.is_vietnam and not explicit_fetch_off
+            )
             if effective_fetch:
                 rem = budget.remaining() if budget else 4.0
                 if rem >= 0.8:

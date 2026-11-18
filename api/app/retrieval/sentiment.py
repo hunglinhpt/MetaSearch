@@ -1230,6 +1230,8 @@ def analyze_omni_channel_sentiment(
                 ohlcv_metrics=ohlcv_metrics,
                 proxy_metrics=proxy_metrics,
                 fundamentals=fundamentals_dict,
+                hits_retrieved=len(hits),
+                hits_after_filter=len(valid_hits),
             )
         return _insufficient_data_payload(
             entity,
@@ -1373,6 +1375,8 @@ def analyze_omni_channel_sentiment(
                 seeding_collapsed_count=seeding_collapsed_count,
                 unverified_rumor_count=unverified_rumor_count,
                 all_hits=scored_hits,
+                hits_retrieved=len(hits),
+                hits_after_filter=len(valid_hits),
             )
         return _insufficient_data_payload(
             entity,
@@ -2156,20 +2160,28 @@ def _quant_only_payload(
     seeding_collapsed_count: int = 0,
     unverified_rumor_count: int = 0,
     all_hits: list[ScoredSentimentHit] | None = None,
+    hits_retrieved: int = 0,
+    hits_after_filter: int = 0,
 ) -> dict[str, Any]:
     """Return strictly grounded quantitative sentiment when OHLCV/proxies/FA exist."""
     hits_all = all_hits or []
     vn_social_hits = [s for s in hits_all if s.ecosystem == "vn_social"]
     global_social_hits = [s for s in hits_all if s.ecosystem == "global_social"]
-    social_hits = vn_social_hits + global_social_hits
-    social_total_w = sum(s.effective_weight for s in social_hits)
+    # PASS-2 P2-1: unverified rumors / collapsed seeding MUST NOT enter social_score
+    # or Fear & Greed composite; retain them only for hit counts / platform reporting.
+    verified_social_hits = [
+        s
+        for s in (vn_social_hits + global_social_hits)
+        if not s.is_unverified_rumor and not s.is_seeding
+    ]
+    social_total_w = sum(s.effective_weight for s in verified_social_hits)
     social_score = (
         round(
             max(
                 -1.0,
                 min(
                     1.0,
-                    sum(s.polarity_score * s.effective_weight for s in social_hits)
+                    sum(s.polarity_score * s.effective_weight for s in verified_social_hits)
                     / social_total_w,
                 ),
             ),
@@ -2182,7 +2194,7 @@ def _quant_only_payload(
     bs = _build_benchmark_standards(
         factual_hits=[],
         official_hits=[],
-        social_hits=social_hits,
+        social_hits=verified_social_hits,
         all_hits=hits_all,
         official_score=0.0,
         social_score=social_score,
@@ -2279,6 +2291,8 @@ def _quant_only_payload(
         },
         "top_verified_drivers": [],
         "risk_circuit_breakers": breakers,
+        "hits_retrieved": hits_retrieved,
+        "hits_after_collision_filter": hits_after_filter,
     }
 
 

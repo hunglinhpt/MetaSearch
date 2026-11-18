@@ -328,3 +328,119 @@ class TestSentimentPerTickerIsolation:
         assert entity.is_vietnam is True
         # the gate: request.fetch_market_data or entity.is_vietnam
         assert (req.fetch_market_data or entity.is_vietnam) is True
+
+    async def test_market_sentiment_honors_explicit_fetch_false_opt_out(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit `"fetch_market_data": false` opts out of VN live quant fetch."""
+        from types import SimpleNamespace
+
+        from fastapi.testclient import TestClient
+
+        import app.api.deps as deps
+        import app.api.v1.market as market_mod
+        from app.main import create_app
+
+        quant_calls: list[str] = []
+
+        async def _spy_quant(ticker: str, **_kw: Any) -> tuple[list[Any], None, None, None, None]:
+            quant_calls.append(ticker)
+            return [], None, None, None, None
+
+        monkeypatch.setattr(market_mod, "fetch_sentiment_quant_context", _spy_quant)
+        monkeypatch.setattr(
+            deps,
+            "get_search_pipeline",
+            lambda: SimpleNamespace(
+                run=lambda _p: asyncio.sleep(0, result=SimpleNamespace(results=[]))
+            ),
+        )
+        with TestClient(create_app()) as client:
+            resp = client.post(
+                "/v1/market/sentiment",
+                json={"ticker": "FPT", "fetch_market_data": False, "retrieved_documents": []},
+            )
+        assert resp.status_code == 200
+        assert quant_calls == []
+
+
+class TestSimplizeAndDdgEdgeFixes:
+    async def test_simplize_eps_ratio_low_roe_percent_and_404(self) -> None:
+        """Live Simplize uses epsRatio, percentage ROE (e.g. 0.52 = 0.52%), and 404 = None."""
+        import httpx
+
+        from app.retrieval.fa_sources.simplize import SimplizeFASource
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            sym = request.url.path.rsplit("/", 1)[-1]
+            if sym == "MISSING":
+                return httpx.Response(404, json={"status": 404, "data": None})
+            return httpx.Response(
+                200,
+                json={
+                    "status": 200,
+                    "data": {
+                        "peRatio": 17.08,
+                        "pbRatio": 0.19,
+                        "roe": 0.52,
+                        "roa": 0.31,
+                        "epsRatio": 108.3,
+                        "eps": None,
+                        "marketCap": 1.159e12,
+                    },
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as cli:
+            src = SimplizeFASource(client=cli)
+            hqc = await src.fetch_financials("HQC")
+            miss = await src.fetch_financials("MISSING")
+
+        assert miss is None  # 404 does not raise FASourceError / trip breaker
+        assert hqc is not None
+        assert hqc.fields["roe_pct"] == pytest.approx(0.52)  # NOT 52.0!
+        assert hqc.fields["roa_pct"] == pytest.approx(0.31)
+        assert hqc.fields["eps_vnd"] == pytest.approx(108.3)
+
+    async def test_ddg_retries_5xx_once_with_backoff(self) -> None:
+        """DDG retries once on transient HTTP 502 and recovers cleanly."""
+        calls = {"n": 0}
+
+        class _Client502:
+            async def post(self, *args: Any, **kwargs: Any):
+                calls["n"] += 1
+                resp = type("R", (), {})()
+                if calls["n"] == 1:
+                    resp.status_code = 502
+                    resp.text = "bad gateway"
+                    return resp
+                resp.status_code = 200
+                resp.text = '<a class="result__a" href="https://ok.example/1">Recovered</a>'
+                return resp
+
+        adapter = ddg_mod.DuckDuckGoAdapter(client=_Client502())  # type: ignore[arg-type]
+        results = await adapter.search("test", timeout_s=0.5)
+        assert calls["n"] == 2
+        assert results and results[0].url == "https://ok.example/1"
+
+    async def test_ddg_5xx_then_timeout_surfaces_timeout_not_stale_5xx(self) -> None:
+        """Retry attempt raising HTTPError must not fall back to stale attempt-0 5xx resp."""
+        import httpx
+
+        calls = {"n": 0}
+
+        class _Client502ThenTimeout:
+            async def post(self, *args: Any, **kwargs: Any):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    resp = type("R", (), {})()
+                    resp.status_code = 502
+                    resp.text = "bad gateway"
+                    return resp
+                raise httpx.ReadTimeout("timed out on retry")
+
+        adapter = ddg_mod.DuckDuckGoAdapter(client=_Client502ThenTimeout())  # type: ignore[arg-type]
+        with pytest.raises(AdapterError) as exc:
+            await adapter.search("test", timeout_s=0.5)
+        assert calls["n"] == 2
+        assert exc.value.kind == Outcome.TIMEOUT

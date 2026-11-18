@@ -23,6 +23,7 @@ from app.retrieval.health import Outcome
 
 # Symbols are interpolated into hardcoded API URL paths; only plain codes pass.
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,15}\Z")  # \Z: $ matches before a trailing newline
+_GLOBAL_SYMBOL_RE = re.compile(r"^[A-Z0-9^][A-Z0-9.\-^]{0,14}\Z")
 
 
 def ensure_symbol(symbol: str) -> str | None:
@@ -33,6 +34,14 @@ def ensure_symbol(symbol: str) -> str | None:
     """
     sym = (symbol or "").strip().upper()
     return sym if _SYMBOL_RE.match(sym) else None
+
+
+def ensure_global_symbol(symbol: str) -> str | None:
+    """Normalized global/Yahoo symbol (allows ``.``, ``-``, leading ``^``; blocks ``..``)."""
+    sym = (symbol or "").strip().upper()
+    if not sym or ".." in sym:
+        return None
+    return sym if _GLOBAL_SYMBOL_RE.match(sym) else None
 
 
 # Canonical normalized field names every adapter maps into. A source only emits

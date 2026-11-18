@@ -425,11 +425,10 @@ async def _route_cost(request: Request) -> int:
         # 3 units - 10-40 upstream fetches.
         return 3 + min(await _request_item_count(request), 20)
     if path.endswith("/watchlist/alerts"):
-        # docs/29 DEFER-A (AppSec F4): this GET has no body, so the old
-        # payload-proportional formula always charged 1 unit while the
-        # handler fans out one full pipeline search per watched item
-        # (cap 20). Flat weight covers the worst case.
-        return 6
+        # docs/29 DEFER-A + PASS-2 P3-1: scale GET weight linearly with
+        # WATCHLIST_MAX_ITEMS so raising the cap cannot bypass weighted limits.
+        cap = int(getattr(get_settings(), "watchlist_max_items", 20) or 20)
+        return min(6 + max(0, cap - 20) // 10, 12)
     return static_route_cost(method, path) or 1
 
 

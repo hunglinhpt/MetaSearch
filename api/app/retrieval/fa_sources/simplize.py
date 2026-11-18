@@ -14,6 +14,7 @@ never a fabricated number.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -71,6 +72,8 @@ class SimplizeFASource:
 
         from app.retrieval.fa_sources.base import FASourceError
 
+        if resp.status_code == 404:
+            return None  # small-cap / unlisted ticker without Simplize coverage
         if resp.status_code != 200:
             raise FASourceError(self.source_id, "upstream_error", f"status_{resp.status_code}")
         check_payload_size(resp, self.source_id)
@@ -79,7 +82,9 @@ class SimplizeFASource:
         except ValueError as exc:
             raise FASourceError(self.source_id, "upstream_error", "bad_json") from exc
 
-        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get("status") not in (None, 200):
+            return None
+        data = body.get("data")
         if not isinstance(data, dict):
             return None  # healthy response, no coverage for this symbol
 
@@ -87,10 +92,13 @@ class SimplizeFASource:
 
         def _num(key: str) -> float | None:
             value = data.get(key)
+            if isinstance(value, bool):
+                return None
             try:
-                return float(value) if value is not None else None
+                val = float(value) if value is not None else None
             except (TypeError, ValueError):
                 return None
+            return val if val is not None and math.isfinite(val) else None
 
         pe = _num("peRatio")
         if pe is not None and pe > 0:
@@ -98,14 +106,20 @@ class SimplizeFASource:
         pb = _num("pbRatio")
         if pb is not None and pb > 0:
             fields["pb"] = round(pb, 2)
+        # Live Simplize summary API returns `roe` and `roa` already in percent (1.19 = 1.19%).
         roe = _num("roe")
         if roe is not None:
-            fields["roe_pct"] = round(roe * (100.0 if abs(roe) <= 1.0 else 1.0), 2)
+            fields["roe_pct"] = round(roe, 2)
+        roa = _num("roa")
+        if roa is not None:
+            fields["roa_pct"] = round(roa, 2)
         mc_raw = _num("marketCap")
         if mc_raw is not None and mc_raw > 0:
             # Simplize reports VND; the canonical field is billions VND.
             fields["market_cap_vnd_bil"] = round(mc_raw / 1e9, 2)
-        eps = _num("eps")
+        eps = _num("epsRatio")
+        if eps is None:
+            eps = _num("eps")
         if eps is not None and eps > 0:
             fields["eps_vnd"] = round(eps, 2)
 

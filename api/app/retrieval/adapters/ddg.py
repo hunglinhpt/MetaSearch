@@ -156,31 +156,31 @@ class DuckDuckGoAdapter:
         if wait > 0:
             await asyncio.sleep(wait)
         headers = {
-            "User-Agent": _UA_POOL[_UA_INDEX % len(_UA_POOL)],
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
         }
+        base_ua = _UA_INDEX
         _UA_INDEX += 1
         client = self._client or get_http_client("search")
-        # ISSUE-1: one jittered retry on TRANSIENT failures only — bot-blocks
-        # (202/403/429/challenge) are hard failures and are never retried.
+        # ISSUE-1: one jittered retry on TRANSIENT failures (transport/timeout/5xx)
+        # only — bot-blocks (202/403/429/challenge) and 4xx never retry.
         import random as _random
 
         last_exc: AdapterError | None = None
         resp: httpx.Response | None = None
         for attempt in range(2):
+            resp = None
             try:
                 resp = await client.post(
                     self.base_url,
                     data=params,
                     headers={
                         **headers,
-                        "User-Agent": _UA_POOL[(_UA_INDEX + attempt) % len(_UA_POOL)],
+                        "User-Agent": _UA_POOL[(base_ua + attempt) % len(_UA_POOL)],
                     },
                     follow_redirects=True,
                     timeout=timeout_s,
                 )
-                break
             except httpx.HTTPError as exc:
                 # NOTE: `X = AdapterError(...) from exc` is invalid syntax —
                 # exception chaining is attached via __cause__ (ISSUE-1).
@@ -195,6 +195,12 @@ class DuckDuckGoAdapter:
                 if attempt == 0:
                     await asyncio.sleep(_random.uniform(0.15, 0.4))  # nosec B311 - backoff timing
                     continue
+                break
+            if resp.status_code >= 500 and attempt == 0:
+                last_exc = AdapterError(f"ddg HTTP {resp.status_code}", kind=Outcome.UPSTREAM_ERROR)
+                await asyncio.sleep(_random.uniform(0.15, 0.4))  # nosec B311 - backoff timing
+                continue
+            break
         if resp is None:
             assert last_exc is not None  # nosec B101 - invariant guard
             raise last_exc
@@ -207,7 +213,11 @@ class DuckDuckGoAdapter:
                 retryable=False,
             )
         if resp.status_code != 200:
-            raise AdapterError(f"ddg HTTP {resp.status_code}", kind=Outcome.UPSTREAM_ERROR)
+            raise AdapterError(
+                f"ddg HTTP {resp.status_code}",
+                kind=Outcome.UPSTREAM_ERROR,
+                retryable=resp.status_code >= 500,
+            )
         if "anomaly" in resp.text[:2000].lower() or "captcha" in resp.text[:2000].lower():
             raise AdapterError("ddg challenge page (bot detection)", retryable=False)
 

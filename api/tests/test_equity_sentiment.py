@@ -909,6 +909,17 @@ def test_rumor_only_preserves_quant_payload() -> None:
     assert out["benchmark_standards"]["quantitative_telemetry"]["ohlcv"]["bars_count"] == 30
     assert out["social_integrity_audit"]["unverified_rumor_count"] == 1
     assert "UNVERIFIED_RUMOR_SPIKE" in out["risk_circuit_breakers"]
+    # PASS-2 P2-1: unverified rumors must NOT drive dumb_money or Pillar 6 social score
+    assert out["benchmark_standards"]["dumb_money_confidence"] is None
+    social_pillar = next(
+        p
+        for p in out["benchmark_standards"]["seven_pillar_checklist"]
+        if p["pillar_id"] == "retail_social_and_buzz_velocity"
+    )
+    assert social_pillar["score_0_100"] == 50
+    assert social_pillar["status"] == "INSUFFICIENT_DATA"
+    assert out["hits_retrieved"] == 1
+    assert out["hits_after_collision_filter"] == 1
 
 
 def test_s_score_upgrades_elevated_buzz_to_viral_surge() -> None:

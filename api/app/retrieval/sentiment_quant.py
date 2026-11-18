@@ -28,7 +28,11 @@ from app.retrieval.adapters.viet_stock import (
     fetch_vndirect_ohlcv_series,
 )
 from app.retrieval.adapters.yahoo_finance import DEFAULT_CHART_URL as YAHOO_CHART_URL
-from app.retrieval.fa_sources.base import ensure_symbol
+from app.retrieval.fa_sources.base import (
+    MAX_RESPONSE_BYTES,
+    ensure_global_symbol,
+    ensure_symbol,
+)
 from app.retrieval.technical_analysis import _calc_ema_series, calc_wilder_rsi
 
 logger = logging.getLogger(__name__)
@@ -822,6 +826,14 @@ async def _fetch_yahoo_chart_series(
             timeout=timeout_s,
         )
         if resp.status_code == 200:
+            raw_bytes = resp.content or b""
+            if len(raw_bytes) > MAX_RESPONSE_BYTES:
+                logger.warning(
+                    "Yahoo Finance chart payload too large for %s (%d bytes)",
+                    symbol,
+                    len(raw_bytes),
+                )
+                return [], None
             return parse_yahoo_chart_bars(resp.json())
     except Exception as exc:
         logger.debug("Yahoo Finance chart fetch failed for %s: %s", symbol, exc)
@@ -837,7 +849,7 @@ async def fetch_live_market_proxies(
     yahoo_chart_url: str = YAHOO_CHART_URL,
 ) -> MarketProxiesInput | None:
     """Fetch real CBOE ^VIX / ^VIX3M volatility term structure for global equities (fail-open)."""
-    sym = ensure_symbol(ticker)
+    sym = ensure_global_symbol(ticker)
     if is_vietnam or sym is None:
         return None
     eff_timeout = max(0.8, min(6.0, float(timeout_s)))
@@ -890,7 +902,7 @@ async def fetch_sentiment_quant_context(
     FundamentalSnapshotInput | None,
 ]:
     """Fetch real OHLCV & FA fundamentals concurrently when requested (fail-open)."""
-    sym = ensure_symbol(ticker)
+    sym = ensure_symbol(ticker) if is_vietnam else ensure_global_symbol(ticker)
     if sym is None:
         return [], None, None, None, None
     ticker = sym

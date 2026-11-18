@@ -59,6 +59,7 @@ logger = get_logger(__name__)
 # on disk is the durable artifact — after a restart, status re-derives from it).
 _jobs: OrderedDict[str, dict[str, Any]] = OrderedDict()
 _JOBS_MAX = 32
+_JOBS_HARD_MAX = _JOBS_MAX * 4
 _tasks: set[asyncio.Task[None]] = set()
 
 
@@ -88,12 +89,15 @@ def _prune_jobs(retention_days: int) -> None:
         if _jobs[key].get("status") not in ("pending", "running"):
             del _jobs[key]
     if len(_jobs) > _JOBS_MAX:
-        # docs/29 DEFER-B (audit B#18): never evict active in-flight jobs.
+        # docs/29 DEFER-B (audit B#18): never evict active in-flight jobs unless
+        # count breaches secondary hard ceiling (_JOBS_HARD_MAX) under spam.
         for key in list(_jobs.keys()):
             if len(_jobs) <= _JOBS_MAX:
                 break
             if _jobs[key].get("status") not in ("pending", "running"):
                 _jobs.pop(key, None)
+        while len(_jobs) > _JOBS_HARD_MAX:
+            _jobs.popitem(last=False)
 
 
 def _latest_day() -> date | None:

@@ -412,3 +412,95 @@ async def test_fa_aggregator_fetch_ohlcv_short_circuits_on_primary_hit() -> None
     assert res.source_id == "primary"
     assert primary.calls == 1
     assert secondary.calls == 0
+
+
+async def test_active_job_hard_caps_csv_unicode_and_watchlist_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PASS-2 P2-3, P3-1, P3-2, P3-5, P3-7 coverage completions."""
+    from starlette.requests import Request
+
+    from app.core.auth import _route_cost
+
+    # 1. Podcast & Spaces enforce secondary hard caps even with all-active spam
+    podcast_mod.reset_podcast_state()
+    spaces_mod.reset_graph_state()
+    try:
+        today_iso = datetime.now(UTC).date().isoformat()
+        for i in range(podcast_mod._JOBS_HARD_MAX + 6):
+            podcast_mod._jobs[f"personal-k{i}:{today_iso}"] = {
+                "status": "running",
+                "date": today_iso,
+            }
+        podcast_mod._prune_jobs(7)
+        assert len(podcast_mod._jobs) == podcast_mod._JOBS_HARD_MAX
+        assert f"personal-k{podcast_mod._JOBS_HARD_MAX + 5}:{today_iso}" in podcast_mod._jobs
+
+        for i in range(spaces_mod._GRAPH_JOBS_HARD_MAX + 5):
+            k = f"u:slug-{i}"
+            spaces_mod._graph_inflight.add(k)
+            spaces_mod._graph_jobs[k] = {"status": "running"}
+        spaces_mod._prune_graph_jobs()
+        assert len(spaces_mod._graph_jobs) == spaces_mod._GRAPH_JOBS_HARD_MAX
+        assert "u:slug-0" not in spaces_mod._graph_inflight
+    finally:
+        podcast_mod.reset_podcast_state()
+        spaces_mod.reset_graph_state()
+
+    # 2. CSV unicode leading whitespace cannot bypass injection neutralization
+    assert _csv_safe_cell("\u00a0=SUM(A1)") == "'\u00a0=SUM(A1)"
+
+    # 3. Watchlist alerts cost scales cleanly with watchlist_max_items
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/v1/watchlist/alerts",
+        "headers": [],
+        "query_string": b"",
+    }
+    req = Request(scope)
+    monkeypatch.setattr(get_settings(), "watchlist_max_items", 20)
+    assert await _route_cost(req) == 6
+    monkeypatch.setattr(get_settings(), "watchlist_max_items", 50)
+    assert await _route_cost(req) == 9
+    monkeypatch.setattr(get_settings(), "watchlist_max_items", 100)
+    assert await _route_cost(req) == 12
+
+    # 4. _LocalTTLCache heap compaction & DbEngineStore fallback cooldown + TOCTOU guard
+    ttl_cache = _LocalTTLCache()
+    for i in range(300):
+        ttl_cache.set(f"k-{i % 10}", {"v": i}, ttl_s=60)
+    # 300 overwrites compacted automatically past 256 down to <= 60 entries (not 300)
+    assert len(ttl_cache._expiry_heap) < 100
+    assert len(ttl_cache._data) == 10
+
+    store = DbEngineStore()
+
+    async def _fail_guarded(_coro: Any) -> Any:
+        _coro.close()
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(store, "_guarded", _fail_guarded)
+    updated = await store.update("ddg", {"weight": 0.4})
+    assert updated is not None and updated.weight == 0.4
+    assert store._db_error_until > time.monotonic()
+
+    # Stale _revalidate_background must NOT overwrite newer cache updates (gen guard)
+    from app.retrieval.models import EngineConfig
+
+    stale_row = EngineConfig(id="ddg", name="DDG", category="general", weight=1.0)
+    fresh_row = EngineConfig(id="ddg", name="DDG", category="general", weight=0.4)
+    store._cache = {"ddg": fresh_row}
+
+    async def _stale_load() -> dict[str, EngineConfig]:
+        store._cache_gen += 1
+        return {"ddg": stale_row}
+
+    async def _pass_guarded(coro: Any) -> Any:
+        return await coro
+
+    monkeypatch.setattr(store, "_guarded", _pass_guarded)
+    monkeypatch.setattr(store, "_load_rows", _stale_load)
+    await store._revalidate_background()
+    assert store._cache is not None
+    assert store._cache["ddg"].weight == 0.4
