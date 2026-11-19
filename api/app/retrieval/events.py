@@ -3240,11 +3240,19 @@ async def fetch_market_news_wire(
         if it.is_new:
             new_fps.append(it.fingerprint)
 
+    # docs/30 BP-3: ticker-tagging coverage telemetry (docs/27 measurement
+    # standard) — operators see tagged/total per wire run to catch resolver
+    # regressions or source layout changes same-day.
+    tagged_items = sum(1 for it in filtered if it.symbols)
+    tagged_ratio = round(tagged_items / len(filtered), 4) if filtered else 0.0
+
     return {
         "items": filtered,
         "new_count": len(new_fps),
         "total_raw": total_raw,
         "deduplicated_count": deduplicated_count,
+        "tagged_count": tagged_items,
+        "tagged_ratio": tagged_ratio,
         "sources_used": sources_used,
         "sources_failed": sources_failed,
         "warnings": warnings,

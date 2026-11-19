@@ -27,6 +27,10 @@ class Chunk:
     content: str
     word_count: int
     source_title: str = ""
+    # docs/30 BP-3: source freshness hint rendered into the synthesis prompt
+    # ("published 2026-11-02 · 3d ago") so the LLM can prefer recent sources
+    # and state as-of dates instead of treating a 2019 post like today's wire.
+    date_hint: str = ""
 
 
 def _new_chunk(

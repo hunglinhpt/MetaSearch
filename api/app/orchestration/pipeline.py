@@ -997,7 +997,14 @@ def _score_chunks_sync(
         ):
             md_body = f"{matched_res.snippet}\n\n{md_body}"
         page_chunks = chunk_markdown(md_body, document_url=page.url, source_title=page.title)
+        # docs/30 BP-3: stamp source freshness onto each chunk for the prompt.
+        pub = matched_res.published_at if matched_res else None
+        date_hint = ""
+        if pub is not None:
+            age_days = max(0, (datetime.now(UTC) - pub).days)
+            date_hint = f"published {pub.strftime('%Y-%m-%d')} · {age_days}d ago"
         for chunk in page_chunks:
+            chunk.date_hint = date_hint
             score = heuristic_chunk_score(query, chunk.content, result_score, chunk.position)
             scored_chunks.append((score, chunk))
 
@@ -1013,7 +1020,13 @@ def _score_chunks_sync(
         fallback_chunks = chunk_markdown(
             fallback_md, document_url=r.url, source_title=r.title or r.url
         )
+        pub = r.published_at
+        date_hint = ""
+        if pub is not None:
+            age_days = max(0, (datetime.now(UTC) - pub).days)
+            date_hint = f"published {pub.strftime('%Y-%m-%d')} · {age_days}d ago"
         for chunk in fallback_chunks:
+            chunk.date_hint = date_hint
             score = heuristic_chunk_score(query, chunk.content, r.score, chunk.position)
             scored_chunks.append((score, chunk))
 
@@ -1551,8 +1564,15 @@ class AnswerPipeline:
             for c in check.citations
         ]
         # v2.5 P0-4: claim-level support check — reported, never stripped silently.
+        # docs/30 perf: O(sentences * cited chunks * tokens) of regex tokenization
+        # runs off the event loop via run_cpu (the biggest post-stream stall).
         claims = (
-            check_claims(check.text, included, threshold=self.settings.claim_entailment_threshold)
+            await run_cpu(
+                check_claims,
+                check.text,
+                included,
+                threshold=self.settings.claim_entailment_threshold,
+            )
             if self.settings.claim_check_enabled
             else ClaimCheck(unsupported_markers=[], flagged_sentences=[])
         )

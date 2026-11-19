@@ -590,7 +590,9 @@ def test_podcast_feed_rejects_forged_scheme_in_public_base_url(client, monkeypat
     monkeypatch.setattr(get_settings(), "podcast_data_dir", str(tmp_path))
     monkeypatch.setattr(get_settings(), "public_base_url", "javascript://evil.example")
     podcast.reset_podcast_state()
-    day = date(2026, 11, 12)
+    # dynamic date — the hardcoded 2026-11-12 hit the 7-day retention
+    # boundary on 2026-11-19 and started failing every run after that.
+    day = date.today() - timedelta(days=1)
     briefing.write_briefing(tmp_path, day, b"ID3")
     resp = client.get("/v1/podcast/briefing/feed.xml")
     assert resp.status_code == 200
