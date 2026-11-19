@@ -109,12 +109,12 @@ class MarketOhlcvResponse(BaseModel):
 
 
 class MarketPeerOut(BaseModel):
-    """One discovered peer: same-exchange ticker sharing a distinctive
-    company-name token with the target (registry-derived, deterministic)."""
+    """One discovered peer: same-exchange ticker sharing a RARE identity token
+    (parent-affiliate / brand overlap; IDF-weighted, registry-derived)."""
 
     symbol: str = Field(max_length=15)
     shared_context: str = Field(max_length=200)
-    score: int = Field(ge=0, le=100)
+    score: float = Field(ge=0, le=1000)  # sum of inverse-df weights of shared tokens
 
 
 class MarketPeersResponse(BaseModel):
@@ -734,6 +734,10 @@ class AnswerResponse(BaseModel):
     status: str = "complete"
     cached: bool = False
     complete: bool = True
+    # docs/30 BP-1 (audit R2): when thread carry rewrote the follow-up, JSON
+    # consumers get the query actually searched (SSE clients see the
+    # thread_rewrite event instead). None when no rewrite happened.
+    rewritten_query: str | None = Field(default=None, max_length=200)
     council: dict[str, Any] | None = None
     skill: dict[str, Any] | None = None
     compression: dict[str, Any] | None = None

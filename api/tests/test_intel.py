@@ -21,12 +21,55 @@ from app.retrieval.intel import (
 # ---------------------------------------------------------------------------
 
 _TICKERS = {
-    "VCB": {"company_name": "Ngân hàng TMCP Quân đội", "exchange": "HOSE"},
-    "BID": {"company_name": "Ngân hàng TMCP Đầu tư và Phát triển", "exchange": "HOSE"},
-    "CTG": {"company_name": "Ngân hàng TMCP Công Thương", "exchange": "HOSE"},
-    "FPT": {"company_name": "Công ty Cổ phần FPT", "exchange": "HOSE"},
-    "HPG": {"company_name": "Công ty Cổ phần Tập đoàn Hòa Phát", "exchange": "HOSE"},
+    # Mirrors the real registry shape (company_name + short_name + exchange).
+    "VCB": {
+        "company_name": "Ngân hàng TMCP Ngoại thương Việt Nam",
+        "short_name": "Vietcombank",
+        "exchange": "HOSE",
+    },
+    "BID": {
+        "company_name": "Ngân hàng TMCP Đầu tư và Phát triển Việt Nam",
+        "short_name": "Ngân hàng BIDV",
+        "exchange": "HOSE",
+    },
+    "CTG": {
+        "company_name": "Ngân hàng TMCP Công Thương Việt Nam",
+        "short_name": "VietinBank",
+        "exchange": "HOSE",
+    },
+    # Parent-affiliate pair of BID (real-world: BSI = Chứng khoán BIDV).
+    "BSI": {
+        "company_name": "Công ty Cổ phần Chứng khoán BIDV",
+        "short_name": "Chứng khoán BIDV",
+        "exchange": "HOSE",
+    },
+    "FPT": {"company_name": "Công ty Cổ phần FPT", "short_name": "FPT", "exchange": "HOSE"},
+    "HPG": {
+        "company_name": "Công ty Cổ phần Tập đoàn Hòa Phát",
+        "short_name": "Hòa Phát",
+        "exchange": "HOSE",
+    },
+    # A different-domain company whose name shares the generic verb "phát":
+    # must NOT surface as a peer of HPG (audit R2 P1 — generic-token bridge).
+    "BIDV-BRIDGE": {
+        "company_name": "Công ty Đầu tư và Phát triển Generic",
+        "short_name": "Generic",
+        "exchange": "HOSE",
+    },
 }
+
+
+def _with_phat_fillers(n: int = 15) -> dict:
+    """Pad the registry with 'phát'-named firms so the generic token 'phat'
+    exceeds the df ceiling exactly like the real registry (df 95/1518)."""
+    tickers = dict(_TICKERS)
+    for i in range(n):
+        tickers[f"F{i:03d}"] = {
+            "company_name": f"Công ty Đầu tư và Phát triển Filler {i}",
+            "short_name": f"Filler {i}",
+            "exchange": "HOSE",
+        }
+    return tickers
 
 
 def _make_bars(
@@ -66,13 +109,46 @@ def _make_bars(
 
 
 class TestPeerDiscovery:
-    def test_banks_cluster_together(self):
-        group = discover_peers(_TICKERS, "VCB", max_peers=5)
+    def test_parent_affiliate_link_via_short_name(self):
+        """The bank and its securities arm share the rare brand token 'bidv'
+        (from short_name) — the identity signal the feature is built for."""
+        group = discover_peers(_TICKERS, "BID", max_peers=5)
         symbols = [p["symbol"] for p in group.peers]
-        # All 3 bank peers share "ngân" token — but VCB itself must be excluded
-        assert "VCB" not in symbols
-        assert set(symbols) == {"BID", "CTG"}
-        assert all(p["score"] >= 1 for p in group.peers)
+        assert "BID" not in symbols
+        assert "BSI" in symbols
+        assert all(p["score"] > 0 for p in group.peers)
+
+    def test_generic_token_cannot_bridge_domains(self):
+        """A generic folded token ('phat' — high df across the registry) must
+        never link HPG (steel) with unrelated 'Đầu tư và Phát triển' firms —
+        on the real registry this was presenting banks as steel peers (R2 P1).
+        The padded registry makes df(phat)=17 exceed max_df=2 while 'bidv'
+        (df=2) stays a qualifying identity token."""
+        reg = _with_phat_fillers(15)
+        group = discover_peers(reg, "HPG", max_peers=8)
+        symbols = [p["symbol"] for p in group.peers]
+        assert "BIDV-BRIDGE" not in symbols
+        assert "BSI" not in symbols
+        assert not any(s.startswith("F") and s[1:].isdigit() for s in symbols)
+        # The same df ceiling keeps the genuine link alive for BID.
+        assert "BSI" in [p["symbol"] for p in discover_peers(reg, "BID").peers]
+
+    def test_no_qualifying_token_returns_empty(self):
+        """Honest empty beats fabricated clusters: a name whose only overlaps
+        are stop-worded corporate vocabulary yields no peers."""
+        group = discover_peers(_TICKERS, "CTG", max_peers=5)
+        assert group.peers == []
+
+    def test_diacritic_folding_matches_variants(self):
+        tickers = dict(_TICKERS)
+        # ASCII spelling of the same brand must still match the folded form.
+        tickers["BSI"] = {
+            "company_name": "Cong ty Co phan Chung khoan BIDV",
+            "short_name": "Chung khoan BIDV",
+            "exchange": "HOSE",
+        }
+        group = discover_peers(tickers, "BID", max_peers=5)
+        assert "BSI" in [p["symbol"] for p in group.peers]
 
     def test_unknown_target_returns_empty(self):
         group = discover_peers(_TICKERS, "NOPE")
@@ -80,13 +156,17 @@ class TestPeerDiscovery:
         assert group.peers == []
 
     def test_max_peers_cap(self):
-        group = discover_peers(_TICKERS, "VCB", max_peers=1)
+        group = discover_peers(_TICKERS, "BID", max_peers=1)
         assert len(group.peers) <= 1
 
     def test_index_symbols_skipped(self):
         tickers = dict(_TICKERS)
-        tickers["^VNINDEX"] = {"company_name": "Ngân hàng VN-Index", "exchange": "HOSE"}
-        group = discover_peers(tickers, "VCB")
+        tickers["^VNINDEX"] = {
+            "company_name": "BIDV VN-Index",
+            "short_name": "",
+            "exchange": "HOSE",
+        }
+        group = discover_peers(tickers, "BID")
         assert "^VNINDEX" not in [p["symbol"] for p in group.peers]
 
 
@@ -130,7 +210,7 @@ class TestAlertEngine:
         bars = _make_bars(25, drift=0.01)
         alerts = evaluate_alert_conditions("FPT", bars)
         conditions = {a.condition for a in alerts}
-        assert "NEAR_20D_HIGH" in conditions
+        assert "NEAR_20D_CLOSE_HIGH" in conditions
 
     def test_rsi_wilder_math(self):
         # Monotonic up closes → RSI = 100 (avg_loss = 0)

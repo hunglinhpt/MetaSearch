@@ -19,6 +19,7 @@ import re
 import time
 import unicodedata
 import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -1198,6 +1199,39 @@ _FLIGHT_DONE = object()
 _FLIGHT_IDLE_TIMEOUT_S = 60.0
 
 
+class _BoundedMemo:
+    """Tiny process-local LRU for thread-rewrite results.
+
+    Keyed by (prior_answer_id, raw follow-up) so resending the same threaded
+    turn reuses the SAME rewritten query — deterministic for the an:v4 cache
+    key and free of an extra LLM call (audit R2: the un-memoized rewrite both
+    under-counted tokens and made every resend a cache miss).
+    """
+
+    __slots__ = ("_data", "_max")
+
+    def __init__(self, max_entries: int = 256) -> None:
+        self._data: OrderedDict[tuple[str, str], str] = OrderedDict()
+        self._max = max_entries
+
+    def get(self, key: tuple[str, str]) -> str | None:
+        value = self._data.pop(key, None)
+        if value is not None:
+            self._data[key] = value  # re-insert as most-recently used
+        return value
+
+    def put(self, key: tuple[str, str], value: str) -> None:
+        self._data[key] = value
+        while len(self._data) > self._max:
+            self._data.popitem(last=False)
+
+    def clear(self) -> None:
+        self._data.clear()
+
+
+_REWRITE_MEMO = _BoundedMemo()
+
+
 class _AnswerFlight:
     """One running answer shared by identical concurrent requests.
 
@@ -1330,26 +1364,51 @@ class AnswerPipeline:
         effective_model = override_model or model or default_model
         use_council = council_mode or bool(council_endpoints) or self.settings.llm_council_enabled
 
-        # docs/30 BP-1: thread carry — rewrite the follow-up query using the
-        # prior answer as context (one cheap LLM call).
+        # docs/30 BP-1: thread carry. Order matters (audit R2): cache-check the
+        # RAW follow-up first so a cacheable query never pays the rewrite hop;
+        # the rewrite (one cheap LLM call) runs only on a miss and is memoized
+        # by (prior_answer_id, follow-up) so resending the same turn yields the
+        # same an:v4 cache key instead of defeating the cache.
+        cacheable = llm_override is None and not use_council
+        if cacheable:
+            replay = await self._cache_hit(params, effective_model, domain=domain)
+            if replay is not None:
+                async for event in replay:
+                    yield event
+                return
+
         if thread_context and thread_context.get("prior_question"):
             try:
-                rewrite_prompt = (
-                    f"Previous question: {thread_context['prior_question']}\n"
-                    f"Previous answer (truncated): "
-                    f"{thread_context.get('prior_answer_md', '')[:500]}\n"
-                    f"Follow-up question: {params.query}\n"
-                    "Rewrite the follow-up as a STANDALONE search query (keyword-style, "
-                    "<=15 words, same language, include entities from context). "
-                    "Output ONLY the rewritten query text, nothing else."
+                memo_key = (
+                    thread_context.get("prior_answer_id") or "",
+                    params.query,
                 )
-                rewritten, _u = await gateway.complete(
-                    [{"role": "user", "content": rewrite_prompt}],
-                    max_tokens=60,
-                    task="thread_rewrite",
-                )
-                rewritten = rewritten.strip().strip('"')
-                if rewritten and len(rewritten) > 3:
+                rewritten = _REWRITE_MEMO.get(memo_key)
+                if rewritten is None:
+                    rewrite_prompt = (
+                        f"Previous question: {thread_context['prior_question']}\n"
+                        f"Previous answer (truncated): "
+                        f"{thread_context.get('prior_answer_md', '')[:500]}\n"
+                        f"Follow-up question: {params.query}\n"
+                        "Rewrite the follow-up as a STANDALONE search query (keyword-style, "
+                        "<=15 words, same language, include entities from context). "
+                        "Output ONLY the rewritten query text, nothing else."
+                    )
+                    rewritten, usage = await gateway.complete(
+                        [{"role": "user", "content": rewrite_prompt}],
+                        max_tokens=60,
+                        task="thread_rewrite",
+                    )
+                    record_usage(effective_model, usage)
+                    # Sanitize: the rewrite is unsanitized LLM text that becomes
+                    # a retrieval query AND a cache key — collapse whitespace,
+                    # drop control chars, hard-cap length.
+                    rewritten = " ".join(rewritten.strip().strip('"').split())[:200]
+                    if rewritten and len(rewritten) > 3:
+                        _REWRITE_MEMO.put(memo_key, rewritten)
+                    else:
+                        rewritten = None
+                if rewritten:
                     original_query = params.query
                     params = dataclasses.replace(params, query=rewritten)
                     # Yielded (not on_event) so every consumer — direct run()
@@ -1358,18 +1417,16 @@ class AnswerPipeline:
                         "thread_rewrite",
                         {"original": original_query, "rewritten": rewritten},
                     )
+                    # The rewritten query is the one being searched: give it its
+                    # own cache lookup (a memoized rewrite replays instantly).
+                    if cacheable:
+                        replay = await self._cache_hit(params, effective_model, domain=domain)
+                        if replay is not None:
+                            async for event in replay:
+                                yield event
+                            return
             except Exception as exc:
                 logger.warning("thread_rewrite_failed", error=type(exc).__name__)
-
-        replay = (
-            await self._cache_hit(params, effective_model, domain=domain)
-            if (llm_override is None and not use_council)
-            else None
-        )
-        if replay is not None:
-            async for event in replay:
-                yield event
-            return
 
         flight_key = _build_answer_flight_key(
             params,
@@ -1721,9 +1778,11 @@ class AnswerPipeline:
         usage = Usage()
         finish_reasons: set[str] = set()
         try:
-            # docs/30 BP-4: citation_map sent INSIDE the try (before the stream
-            # loop) so the client can render clickable citation chips instantly
-            # and a failing LLM dispatch doesn't emit a dangling map.
+            # docs/30 BP-4: citation_map is sent BEFORE the stream loop so the
+            # client can render clickable citation chips instantly. On an LLM
+            # dispatch failure the map may dangle (an error event follows) —
+            # harmless by contract: the map is provisional, the final validated
+            # `citations` event supersedes it, and JSON mode ignores it.
             if included:
                 yield (
                     "citation_map",

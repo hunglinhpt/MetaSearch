@@ -329,6 +329,18 @@
             "title": "Model",
             "type": "string"
           },
+          "rewritten_query": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rewritten Query"
+          },
           "skill": {
             "anyOf": [
               {
@@ -3591,13 +3603,13 @@
         "type": "object"
       },
       "MarketPeerOut": {
-        "description": "One discovered peer: same-exchange ticker sharing a distinctive\ncompany-name token with the target (registry-derived, deterministic).",
+        "description": "One discovered peer: same-exchange ticker sharing a RARE identity token\n(parent-affiliate / brand overlap; IDF-weighted, registry-derived).",
         "properties": {
           "score": {
-            "maximum": 100.0,
+            "maximum": 1000.0,
             "minimum": 0.0,
             "title": "Score",
-            "type": "integer"
+            "type": "number"
           },
           "shared_context": {
             "maxLength": 200,
@@ -8479,7 +8491,7 @@
     },
     "/v1/market/alerts": {
       "post": {
-        "description": "Technical alert engine (docs/30 Part 2): RSI-14 bands, volume spike,\n5-day MA cross, 20-day-high proximity — evaluated over freshly fetched\nOHLCV. Only triggered conditions are returned; a symbol without usable\ncandles yields an empty alert list with no source (never fabricated).",
+        "description": "Technical alert engine (docs/30 Part 2): RSI-14 bands, volume spike,\n5-day MA cross, 20-day closing-high proximity — evaluated over freshly\nfetched OHLCV. Only triggered conditions are returned; a symbol without\nusable candles yields an empty alert list with no source (never\nfabricated); one bad symbol never fails the whole surface.",
         "operationId": "market_alerts_v1_market_alerts_post",
         "requestBody": {
           "content": {

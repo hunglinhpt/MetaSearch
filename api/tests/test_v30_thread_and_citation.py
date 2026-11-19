@@ -136,6 +136,23 @@ class TestLoadThreadContext:
         ctx = await _load_thread_context("not-a-uuid")
         assert ctx is None  # invalid id never raises — thread carry is best-effort
 
+    async def test_anonymous_mode_is_one_shared_tenant(self, mem_db):
+        """EXPLICIT posture pin (audit R2 F1): with auth off every keyless
+        caller shares the literal 'anonymous' owner string, so thread carry
+        CAN load another anonymous caller's prior answer. This is consistent
+        with the rest of the anonymous surface (queries list, loopback-only
+        binding) — if you ever change this behavior, change the docs claim in
+        docs/31 §5 too."""
+        engine, factory = mem_db
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        other_id = await _seed_answer(factory, "anonymous", "câu hỏi của người khác", "nội dung A")
+        current_api_key_id.set("anonymous")
+
+        ctx = await _load_thread_context(other_id)
+        assert ctx is not None  # shared bucket — documented, not accidental
+        assert "nội dung A" in ctx["prior_answer_md"]
+
 
 # --- BP-1: pipeline thread rewrite ----------------------------------------------
 
@@ -234,6 +251,77 @@ class TestThreadRewrite:
         assert "thread_rewrite" not in names  # rewrite failed silently
         assert "done" in names  # the answer still completed
 
+    async def test_rewrite_memoized_same_turn(self, stack, monkeypatch):
+        """Resending the SAME threaded turn must reuse the memoized rewrite —
+        one gateway.complete for thread_rewrite total, same rewritten query,
+        so the an:v4 cache key stays deterministic (audit R2)."""
+        s = stack
+        s.adapters.append(
+            FakeAdapter("fake", [raw("https://vnm.example/", title="VNM", snippet="VNM")])
+        )
+        s.pages["https://vnm.example/"] = _page("https://vnm.example/", "VNM", "# VNM\ncontent")
+        s.install()
+        pipeline = deps.get_answer_pipeline()
+        gateway = _RewriteGateway()
+        monkeypatch.setattr(pipeline, "gateway", gateway)
+        pl = __import__("app.orchestration.pipeline", fromlist=["_REWRITE_MEMO"])._REWRITE_MEMO
+        pl.clear()
+        thread_context = {
+            "prior_answer_id": "a-1",
+            "prior_question": "VNM là gì?",
+            "prior_answer_md": "VNM là Vinamilk [1].",
+        }
+
+        async def _drive() -> list[str]:
+            rewritten: list[str] = []
+            async for ev in pipeline.run(
+                SearchParams(query="còn cổ tức thì sao"), thread_context=thread_context
+            ):
+                if ev[0] == "thread_rewrite":
+                    rewritten.append(ev[1]["rewritten"])
+            return rewritten
+
+        first = await _drive()
+        second = await _drive()
+        rewrite_calls = [1 for task, _ in gateway.complete_calls if task == "thread_rewrite"]
+        assert len(rewrite_calls) == 1, (
+            f"memo must serve the second identical turn (got {len(rewrite_calls)} calls)"
+        )
+        assert first and first == second
+
+    async def test_rewrite_output_sanitized(self, stack, monkeypatch):
+        """The rewrite becomes a retrieval query AND a cache key: control
+        characters are collapsed and the text is hard-capped at 200 chars."""
+
+        class _MessyGateway(_RewriteGateway):
+            async def complete(self, messages, **kw):
+                return "VNM\tvinamilk\ncổ tức\n\n2026  " + "x" * 300, Usage(
+                    input_tokens=10, output_tokens=8
+                )
+
+        s = stack
+        s.adapters.append(FakeAdapter("fake", [raw("https://y.example/", title="y", snippet="y")]))
+        s.pages["https://y.example/"] = _page("https://y.example/", "y", "# y\ncontent")
+        s.install()
+        pipeline = deps.get_answer_pipeline()
+        gateway = _MessyGateway()
+        monkeypatch.setattr(pipeline, "gateway", gateway)
+        pl = __import__("app.orchestration.pipeline", fromlist=["_REWRITE_MEMO"])._REWRITE_MEMO
+        pl.clear()
+
+        data = None
+        async for ev in pipeline.run(
+            SearchParams(query="hỏi tiếp"),
+            thread_context={"prior_question": "q", "prior_answer_md": "a"},
+        ):
+            if ev[0] == "thread_rewrite":
+                data = ev[1]
+        assert data is not None
+        rewritten: str = data["rewritten"]
+        assert "\n" not in rewritten and "\t" not in rewritten  # whitespace collapsed
+        assert len(rewritten) <= 200
+        assert rewritten.startswith("VNM vinamilk cổ tức 2026")
+
 
 # --- BP-4: citation_map precedes the token stream -------------------------------
 
@@ -296,3 +384,44 @@ class TestCitationMapSse:
         assert resp.status_code == 200
         events = _parse_sse_events(resp.text)
         assert all(name != "citation_map" for name, _ in events)
+
+
+class TestJsonRewrittenQuery:
+    async def test_json_response_carries_rewritten_query(self, client, stack, mem_db, monkeypatch):
+        """Audit R2 F7: JSON consumers can't see SSE events — the rewritten
+        query surfaces on AnswerResponse.rewritten_query instead."""
+        engine, factory = mem_db
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        current_api_key_id.set("anonymous")
+        answer_id = await _seed_answer(factory, "anonymous")
+
+        s = stack
+        s.adapters.append(
+            FakeAdapter("fake", [raw("https://vnm.example/", title="VNM", snippet="VNM")])
+        )
+        s.pages["https://vnm.example/"] = _page("https://vnm.example/", "VNM", "# VNM\ncontent")
+        s.install()
+        pipeline = deps.get_answer_pipeline()
+        gateway = _RewriteGateway()
+        monkeypatch.setattr(pipeline, "gateway", gateway)
+        pl = __import__("app.orchestration.pipeline", fromlist=["_REWRITE_MEMO"])._REWRITE_MEMO
+        pl.clear()
+
+        resp = client.post(
+            "/v1/answer",
+            json={"query": "còn cổ tức thì sao", "thread_id": answer_id, "stream": False},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body.get("rewritten_query") == "VNM Vinamilk cổ tức 2026"
+
+    async def test_json_response_no_rewrite_field_without_thread(self, client, stack, monkeypatch):
+        s = stack
+        s.adapters.append(FakeAdapter("fake", [raw("https://q.example/", title="q", snippet="q")]))
+        s.pages["https://q.example/"] = _page("https://q.example/", "q", "# q\ncontent")
+        s.install()
+        resp = client.post("/v1/answer", json={"query": "plain query", "stream": False})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body.get("rewritten_query") is None

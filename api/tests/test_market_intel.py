@@ -66,7 +66,7 @@ def test_alerts_triggered_on_rising_series(client, monkeypatch):
     assert r["as_of"].startswith("20")
     # Steadily rising series: 20-day-high proximity should fire
     conditions = {a["condition"] for a in r["alerts"]}
-    assert "NEAR_20D_HIGH" in conditions
+    assert "NEAR_20D_CLOSE_HIGH" in conditions
     assert all(a["triggered"] for a in r["alerts"])
 
 

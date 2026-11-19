@@ -518,9 +518,10 @@ async def _fetch_alert_candles(
 )
 async def market_alerts(request: MarketAlertsRequest) -> MarketAlertsResponse:
     """Technical alert engine (docs/30 Part 2): RSI-14 bands, volume spike,
-    5-day MA cross, 20-day-high proximity — evaluated over freshly fetched
-    OHLCV. Only triggered conditions are returned; a symbol without usable
-    candles yields an empty alert list with no source (never fabricated)."""
+    5-day MA cross, 20-day closing-high proximity — evaluated over freshly
+    fetched OHLCV. Only triggered conditions are returned; a symbol without
+    usable candles yields an empty alert list with no source (never
+    fabricated); one bad symbol never fails the whole surface."""
     settings = get_settings()
     symbols = _normalize_market_symbols(request.symbols)[:5]
     days = request.days if request.days is not None else settings.market_ohlcv_default_days
@@ -571,7 +572,26 @@ async def market_alerts(request: MarketAlertsRequest) -> MarketAlertsResponse:
                     else None,
                 )
 
-            results = list(await asyncio.gather(*(one(s) for s in symbols)))
+            # Same contract as fa/compare: one shared wall-clock cap over the
+            # whole fan-out, per-symbol isolation (return_exceptions) — an
+            # unexpected failure degrades to an empty bundle, never a 500,
+            # and sibling fetches are not orphaned.
+            gathered: list[MarketSymbolAlertsOut | BaseException] = []
+            try:
+                async with asyncio.timeout(timeout_s * 2 + 2.0):
+                    gathered = list(
+                        await asyncio.gather(*(one(s) for s in symbols), return_exceptions=True)
+                    )
+            except TimeoutError:
+                gathered = [TimeoutError()] * len(symbols)
+
+            for sym, item in zip(symbols, gathered, strict=False):
+                if isinstance(item, BaseException):
+                    logger.warning(
+                        "market_alerts_symbol_failed", symbol=sym, error=type(item).__name__
+                    )
+                    item = MarketSymbolAlertsOut(symbol=sym, alerts=[])
+                results.append(item)
 
     return MarketAlertsResponse(
         results=results, latency_ms=int((time.perf_counter() - started) * 1000)

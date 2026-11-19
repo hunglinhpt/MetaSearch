@@ -7,7 +7,7 @@ import contextlib
 import json
 import math
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter
@@ -132,12 +132,6 @@ async def answer(request: AnswerRequest):
     # Fail fast when no LLM provider, fallback, override, or council is configured.
     fallback_provider = getattr(settings, "llm_fallback_provider", "") or "none"
     run_kwargs = _extra_run_kwargs(request)
-    # docs/30 BP-1: thread carry — load the prior answer for query rewrite.
-    thread_context: dict[str, str] | None = None
-    if request.thread_id:
-        thread_context = await _load_thread_context(request.thread_id)
-        if thread_context:
-            run_kwargs["thread_context"] = thread_context
     if (
         not has_override
         and not is_council
@@ -153,9 +147,18 @@ async def answer(request: AnswerRequest):
 
     budget = create_budget_for_route("answer", timeout_ms=request.timeout_ms)
     max_s = settings.answer_stream_max_s
+    # docs/30 BP-1 (audit R2): the threaded-context DB read runs INSIDE the
+    # admitted region (the answer tier bounds it like every other answer-path
+    # cost) — resolved lazily by the JSON body or the SSE producer below.
+    thread_id = request.thread_id
+    thread_loader = (lambda: _load_thread_context(thread_id)) if thread_id else None
     if not request.stream:
         async with admit("answer"):
             with use_budget(budget):
+                if thread_loader is not None:
+                    thread_context = await thread_loader()
+                    if thread_context:
+                        run_kwargs["thread_context"] = thread_context
                 deadline = asyncio.timeout(max_s)
                 try:
                     async with deadline:
@@ -177,6 +180,7 @@ async def answer(request: AnswerRequest):
                 run_kwargs,
                 budget=budget,
                 max_s=max_s,
+                thread_loader=thread_loader,
             ),
             slot=slot,
         )
@@ -197,10 +201,15 @@ async def _json(
     error: dict | None = None
     follow_ups: list[str] = []  # v2.5 P0-5
     unsupported_markers: list[int] = []  # v2.5 P0-4
+    rewritten_query: str | None = None  # docs/30 BP-1 (audit R2)
 
     async for event, data in deps.get_answer_pipeline().run(params, **run_kwargs):
         if event == "token":
             answer_md_parts.append(data["t"])
+        elif event == "thread_rewrite":
+            # JSON mode: surface the substitution on the response object (SSE
+            # clients see the thread_rewrite event directly).
+            rewritten_query = str(data.get("rewritten") or "") or None
         elif event == "citations":
             citations = [
                 CitationItem(
@@ -256,6 +265,7 @@ async def _json(
         status=meta.get("status", "complete"),
         cached=bool(meta.get("cached", False)),
         complete=bool(meta.get("complete", True)),
+        rewritten_query=rewritten_query,
         council=council_data,
         skill=meta.get("skill"),
         compression=meta.get("compression"),
@@ -268,6 +278,7 @@ async def _sse(
     *,
     budget: RequestBudget | None = None,
     max_s: float | None = None,
+    thread_loader: Callable[[], Awaitable[dict[str, str] | None]] | None = None,
 ) -> AsyncIterator[dict]:
     """Bridge pipeline events + mid-flight engine_done callbacks into SSE."""
     queue: asyncio.Queue[Event | None] = asyncio.Queue()
@@ -280,6 +291,10 @@ async def _sse(
             b_ctx = use_budget(budget) if budget is not None else contextlib.nullcontext()
             with b_ctx:
                 kwargs = dict(run_kwargs)
+                if thread_loader is not None:
+                    thread_context = await thread_loader()
+                    if thread_context:
+                        kwargs["thread_context"] = thread_context
                 kwargs["on_event"] = on_event
                 async for event in deps.get_answer_pipeline().run(params, **kwargs):
                     await queue.put(event)

@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.1.1] - 2026-11-19
+
+### Fixed — Round-2 adversarial audit of the v4.1.0 wave (2 read-only auditors + live-registry probes; details in `docs/31` §5.1)
+
+- **Peer discovery precision [P1]** (`api/app/retrieval/intel.py`): on the real 1518-ticker registry, generic folded tokens (`phát` df=95, `thương` df=98, `công` df=1464) bridged wrong domains — VCB surfaced a fintech, HPG surfaced banks. Now: diacritic-folded tokens from `company_name`+`short_name`, IDF-weighted with a df ceiling (`max_df_fraction=0.01`, floor 2), corporate-vocabulary stop list applied on FOLDED forms. Verified on real data: BID→BSI/BIC (Chứng khoán/Bảo hiểm BIDV), FPT→FRT/FTS; honest empty when no rare identity token exists. Scope documented: identity links, not sector clusters (registry has no sector field).
+- **Thread carry cost & cache correctness [P2]** (`api/app/orchestration/pipeline.py`): cache-check the raw follow-up BEFORE the rewrite (cacheable queries no longer pay the hop); rewrite memoized by `(prior_answer_id, follow-up)` in a bounded 256-entry LRU so resending the same turn reuses the SAME query (deterministic `an:v4` key instead of guaranteed miss); rewrite `Usage` recorded via `record_usage`; rewritten text sanitized (whitespace/control-char collapse, 200-char hard cap). `thread_rewrite` now also surfaces in JSON mode as `AnswerResponse.rewritten_query` (null when no rewrite).
+- **Answer surface hygiene [P3]**: `_load_thread_context` DB read moved INSIDE the admitted region (lazily resolved by the JSON body / SSE producer); false "no dangling citation_map" comment corrected to the provisional-map contract.
+- **Anonymous tenancy posture pinned [P2]**: auth-off sets the owner literal `"anonymous"` — thread carry can load another anonymous caller's prior answer (consistent with the loopback-only anonymous surface); behavior now pinned by `test_anonymous_mode_is_one_shared_tenant` and documented instead of being left accidental.
+- **Alerts endpoint hardening [P2]** (`api/app/api/v1/market.py`): `POST /v1/market/alerts` gather runs under one outer wall-clock cap with per-symbol isolation (`return_exceptions=True`) — an unexpected failure degrades to an empty bundle, never a 500, and sibling fetches are not orphaned.
+- **Event-impact honesty [P2]** (`intel.py`): forward truncation no longer mislabels the horizon — window return is `null` when `bars_used < window_days`; tz-aware event dates convert via `astimezone` (not re-labeled); dchart 00:00-UTC bar-timestamp convention pinned in comments.
+- **Alert condition naming & series integrity [P2/P3]**: `NEAR_20D_HIGH` → `NEAR_20D_CLOSE_HIGH` (computed on closes, honestly named); closes/volumes filtered once per bar so RSI and volume windows can never desync on a malformed bar.
+- Tests: 12 thread/citation (incl. rewrite memoization, sanitization, anonymous bucket pin), 28 intel/market (IDF peers on padded registry, renamed condition, horizon honesty); OpenAPI snapshot regenerated (`rewritten_query`, float peer `score`).
+
 ## [4.1.0] - 2026-11-19
 
 ### Added — Answer Quality Wave (docs/30 BP-1/BP-3/BP-4) + Market Intelligence Orchestration Layer
