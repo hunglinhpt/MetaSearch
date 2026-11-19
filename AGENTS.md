@@ -13,7 +13,14 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-19 — v4.1.0: Answer Quality Wave (BP-1/BP-4) + Market Intelligence Orchestration Layer, trên nền v4.0.0 Search/Retrieval + Sentiment v3 + Deep Research v2 — xem [docs/31-v40-audit-and-upgrade-architecture.md](docs/31-v40-audit-and-upgrade-architecture.md) §5)
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-19 — v4.1.1: Round-2 adversarial audit fixes (docs/31 §5.1), trên nền v4.1.0 Answer Quality + Market Intel Layer và v4.0.0 Search/Retrieval + Sentiment v3 + Deep Research v2 — xem [docs/31-v40-audit-and-upgrade-architecture.md](docs/31-v40-audit-and-upgrade-architecture.md))
+
+- ✅ **v4.1.1 Round-2 Audit Fixes (commit `e044440`, `docs/31` §5.1)**: 2 auditor read-only đối kháng diff v4.1.0 + live probes registry/VNDIRECT thật → 16 findings, 0 P0, 1 P1 đã fix:
+  - **[P1] Peer discovery chính xác trên registry thật**: IDF-weighted identity tokens (df ceiling 1%, floor 2), stop-list fold trước khi match, merge `short_name` — token chung "phát"/"thương" (df 95/98) không còn bridge sai domain; verified live: BID→BSI/BIC (nhóm BIDV), FPT→FRT (FPT Retail); scope trung thực: identity links, KHÔNG phải sector cluster (registry không có trường ngành).
+  - **[P2] Thread carry hiệu quả + cache đúng**: cache-check raw follow-up trước, rewrite chỉ chạy khi miss; memo 256-entry theo (prior_answer_id, follow-up) → key `an:v4` deterministic; `record_usage` cho hop; sanitize output (200-char cap); JSON mode nhận `AnswerResponse.rewritten_query`.
+  - **[P2] Alerts surface không bao giờ 500**: gather 1 outer cap + per-symbol isolation; event-impact null khi forward truncation; `NEAR_20D_CLOSE_HIGH` đặt tên trung thực; close/volume lọc 1 lần/bar chống desync.
+  - **[P2] Anonymous tenancy pinned**: auth-off = 1 bucket "anonymous" chung (loopback-only theo startup validation) — behavior pin bằng test + docs, không còn accidental.
+  - **Cài lại local (Lite, port 8000) + live smoke 100%**: meta=4.1.1; meta/full keyless/garbage→401, admin→200 (admin key mới `msk_8fb5ba26…` cho chủ); peers BID→BIC/BSI; alerts 200 VNDIRECT; answer hoạt động sau khi fix 2 vấn đề config local: (1) policy `trusted_only` chặn `LLM_PROVIDER=pollinations` → đã thêm `LLM_ENDPOINT_POLICY=open` vào `api/.env.lbs` (operator override, SSRF validator vẫn chạy); (2) pollinations bỏ model `openai-large` → đổi `LLM_REPORT_MODEL=openai-fast` (catalog chỉ còn `openai-fast`, aliases: openai/gpt-oss).
 
 - ✅ **v4.1.0 Answer Quality & Market Intel Layer (`docs/31` §5, `CHANGELOG.md`)**:
   - **BP-1 Thread carry**: `AnswerRequest.thread_id` → load câu trả lời trước (owner-checked, fail-open) → 1 LLM rẻ viết lại follow-up thành query standalone trước retrieval; event `thread_rewrite` là yielded event (mọi consumer thấy được); rewrite lỗi → fail-open. Test `tests/test_v30_thread_and_citation.py`.
