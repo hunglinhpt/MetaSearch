@@ -52,7 +52,7 @@ COSTED_POST = {
     "/v1/spaces/{slug}/graph/query": 2,
 }
 # Payload-proportional (computed in _route_cost), so not in the static table.
-DYNAMIC_COST_POST = {"/v1/fa/compare", "/v1/market/events"}
+DYNAMIC_COST_POST = {"/v1/fa/compare", "/v1/market/events", "/v1/market/alerts"}
 # Reviewed on purpose: cheap (DB/CPU only, one upstream call) or admin-gated.
 UNIT_COST_POST = {
     "/v1/search",

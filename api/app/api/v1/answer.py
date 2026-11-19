@@ -6,19 +6,26 @@ import asyncio
 import contextlib
 import json
 import math
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter
+from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
 from app.api import deps
 from app.api.v1.schemas import AnswerRequest, AnswerResponse, CitationItem
 from app.core.admission import acquire_admit_slot, admit
+from app.core.auth import current_api_key_id
 from app.core.budget import RequestBudget, create_budget_for_route, get_current_budget, use_budget
 from app.core.errors import ErrorCode, MetaSearchError
+from app.core.logging import get_logger
+from app.db.models import Answer, Query
 from app.llm.providers import coerce_council_endpoints
 from app.orchestration.pipeline import Event, SearchParams
+
+logger = get_logger(__name__)
 
 router = APIRouter(tags=["answer"])
 
@@ -61,6 +68,45 @@ def _params(request: AnswerRequest) -> SearchParams:
     )
 
 
+async def _load_thread_context(thread_id: str) -> dict[str, str] | None:
+    """docs/30 BP-1: load the prior turn's answer + question for follow-up
+    query rewrite. Returns None when the thread_id is invalid/not owned."""
+    try:
+        prior_id = uuid.UUID(thread_id)
+    except ValueError:
+        return None
+    try:
+        async with deps.get_session_factory()() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(Answer).where(
+                            Answer.id == prior_id,
+                            Answer.api_key_id == current_api_key_id.get(),
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if row is None or not row.content_md:
+                return None
+            prior_q = ""
+            if row.query_id:
+                q_row = (
+                    await session.execute(select(Query.raw_text).where(Query.id == row.query_id))
+                ).scalar()
+                prior_q = q_row or ""
+            return {
+                "prior_answer_id": str(row.id),
+                "prior_question": prior_q[:200],
+                "prior_answer_md": row.content_md[:2000],
+            }
+    except Exception as exc:
+        logger.warning("thread_context_load_failed", error=type(exc).__name__)
+        return None
+
+
 def _extra_run_kwargs(request: AnswerRequest) -> dict[str, Any]:
     kwargs: dict[str, Any] = {"model": request.model}
     if request.llm is not None:
@@ -86,6 +132,12 @@ async def answer(request: AnswerRequest):
     # Fail fast when no LLM provider, fallback, override, or council is configured.
     fallback_provider = getattr(settings, "llm_fallback_provider", "") or "none"
     run_kwargs = _extra_run_kwargs(request)
+    # docs/30 BP-1: thread carry — load the prior answer for query rewrite.
+    thread_context: dict[str, str] | None = None
+    if request.thread_id:
+        thread_context = await _load_thread_context(request.thread_id)
+        if thread_context:
+            run_kwargs["thread_context"] = thread_context
     if (
         not has_override
         and not is_council

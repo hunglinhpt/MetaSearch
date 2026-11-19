@@ -425,6 +425,10 @@ async def _route_cost(request: Request) -> int:
         # Payload-proportional (audit round 12): flat weights allowed 20 symbols for
         # 3 units - 10-40 upstream fetches.
         return 3 + min(await _request_item_count(request), 20)
+    if path.endswith("/market/alerts") and method == "POST":
+        # docs/30 Part 2: each symbol fetches OHLCV (VNDIRECT + fallback) —
+        # 2 units base + 1 per symbol, capped at 5 (schema cap).
+        return 2 + min(await _request_item_count(request), 5)
     if path.endswith("/market/events") and method == "POST":
         return 3 + min(await _request_item_count(request), 10)
     if path.endswith("/watchlist/alerts"):

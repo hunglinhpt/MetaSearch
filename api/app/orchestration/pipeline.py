@@ -1315,6 +1315,7 @@ class AnswerPipeline:
         council_mode: bool = False,
         council_endpoints: list[LLMOverride] | None = None,
         domain: str = "auto",
+        thread_context: dict[str, str] | None = None,
         on_event: OnEvent = None,
     ) -> AsyncIterator[Event]:
         gateway = (
@@ -1328,6 +1329,37 @@ class AnswerPipeline:
         override_model = llm_override.model if llm_override and llm_override.model else None
         effective_model = override_model or model or default_model
         use_council = council_mode or bool(council_endpoints) or self.settings.llm_council_enabled
+
+        # docs/30 BP-1: thread carry — rewrite the follow-up query using the
+        # prior answer as context (one cheap LLM call).
+        if thread_context and thread_context.get("prior_question"):
+            try:
+                rewrite_prompt = (
+                    f"Previous question: {thread_context['prior_question']}\n"
+                    f"Previous answer (truncated): "
+                    f"{thread_context.get('prior_answer_md', '')[:500]}\n"
+                    f"Follow-up question: {params.query}\n"
+                    "Rewrite the follow-up as a STANDALONE search query (keyword-style, "
+                    "<=15 words, same language, include entities from context). "
+                    "Output ONLY the rewritten query text, nothing else."
+                )
+                rewritten, _u = await gateway.complete(
+                    [{"role": "user", "content": rewrite_prompt}],
+                    max_tokens=60,
+                    task="thread_rewrite",
+                )
+                rewritten = rewritten.strip().strip('"')
+                if rewritten and len(rewritten) > 3:
+                    original_query = params.query
+                    params = dataclasses.replace(params, query=rewritten)
+                    # Yielded (not on_event) so every consumer — direct run()
+                    # and the SSE bridge alike — observes the rewrite.
+                    yield (
+                        "thread_rewrite",
+                        {"original": original_query, "rewritten": rewritten},
+                    )
+            except Exception as exc:
+                logger.warning("thread_rewrite_failed", error=type(exc).__name__)
 
         replay = (
             await self._cache_hit(params, effective_model, domain=domain)
@@ -1689,6 +1721,24 @@ class AnswerPipeline:
         usage = Usage()
         finish_reasons: set[str] = set()
         try:
+            # docs/30 BP-4: citation_map sent INSIDE the try (before the stream
+            # loop) so the client can render clickable citation chips instantly
+            # and a failing LLM dispatch doesn't emit a dangling map.
+            if included:
+                yield (
+                    "citation_map",
+                    {
+                        "map": [
+                            {
+                                "n": i + 1,
+                                "url": chunk.document_url,
+                                "title": chunk.source_title,
+                                "chunk_id": chunk.id,
+                            }
+                            for i, (_score, chunk) in enumerate(included)
+                        ]
+                    },
+                )
             async for delta in gateway.stream(messages, model=model):
                 if delta.text:
                     text_parts.append(delta.text)

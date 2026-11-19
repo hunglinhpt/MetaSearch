@@ -314,6 +314,12 @@ export type AnswerHandlers = {
   onSources?: (sources: SourceItem[]) => void;
   onToken?: (text: string) => void;
   onCitations?: (citations: Citation[]) => void;
+  // docs/30 BP-4: the full citation map arrives BEFORE the token stream, so the
+  // UI can render clickable chips immediately while `[n]` markers stream in.
+  onCitationMap?: (map: Citation[]) => void;
+  // docs/30 BP-1: the follow-up question was rewritten standalone using the
+  // prior thread answer (lets the UI show what was actually searched).
+  onThreadRewrite?: (original: string, rewritten: string) => void;
   onCouncil?: (verdict: CouncilVerdict) => void;
   onFollowUps?: (items: string[]) => void;
   onDone?: (meta: AnswerMeta) => void;
@@ -673,6 +679,12 @@ export async function streamAnswer(
         break;
       case "citations":
         handlers.onCitations?.((d.citations as Citation[]) ?? []);
+        break;
+      case "citation_map":
+        handlers.onCitationMap?.((d.map as Citation[]) ?? []);
+        break;
+      case "thread_rewrite":
+        handlers.onThreadRewrite?.(String(d.original ?? ""), String(d.rewritten ?? ""));
         break;
       case "council":
         handlers.onCouncil?.(d as unknown as CouncilVerdict);

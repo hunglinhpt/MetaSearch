@@ -105,6 +105,62 @@ class MarketOhlcvResponse(BaseModel):
     latency_ms: int = 0
 
 
+# --- Market Intelligence Orchestration Layer (docs/30 Part 2) ------------------
+
+
+class MarketPeerOut(BaseModel):
+    """One discovered peer: same-exchange ticker sharing a distinctive
+    company-name token with the target (registry-derived, deterministic)."""
+
+    symbol: str = Field(max_length=15)
+    shared_context: str = Field(max_length=200)
+    score: int = Field(ge=0, le=100)
+
+
+class MarketPeersResponse(BaseModel):
+    """GET /v1/market/peers — peer auto-discovery from the VN ticker registry."""
+
+    symbol: str = Field(max_length=15)
+    peers: list[MarketPeerOut]
+
+
+class MarketAlertsRequest(BaseModel):
+    """POST /v1/market/alerts — technical alert evaluation over fetched OHLCV."""
+
+    symbols: list[Annotated[str, StringConstraints(max_length=15)]] = Field(
+        min_length=1, max_length=5
+    )
+    days: int | None = Field(default=None, ge=1, le=3650)
+    timeout_ms: int | None = Field(default=None, ge=500, le=30000)
+
+
+class MarketAlertOut(BaseModel):
+    """One evaluated alert condition (triggered ones only are returned)."""
+
+    ticker: str = Field(max_length=15)
+    condition: str = Field(max_length=64)
+    triggered: bool
+    current_value: float | None = None
+    detail: str = Field(default="", max_length=300)
+
+
+class MarketSymbolAlertsOut(BaseModel):
+    """Per-symbol alert bundle with feed provenance."""
+
+    symbol: str = Field(max_length=15)
+    alerts: list[MarketAlertOut]
+    source_name: str | None = None
+    as_of: str | None = None
+
+
+class MarketAlertsResponse(BaseModel):
+    """POST /v1/market/alerts response — symbols without usable OHLCV are
+    reported with empty alerts and no source (never fabricated)."""
+
+    results: list[MarketSymbolAlertsOut]
+    latency_ms: int = 0
+
+
 # --- Omni-Channel Bilingual Equity Sentiment Engine (VI / EN) ------------------
 
 
@@ -606,6 +662,9 @@ class CitationItem(BaseModel):
 
 class AnswerRequest(SearchRequest):
     stream: bool = False
+    # docs/30 BP-1: thread carry — the answer_id of the previous turn so
+    # follow-up queries are rewritten with conversation context.
+    thread_id: str | None = Field(default=None, max_length=64)
     # DAT-10 valve (docs/18): bounds acceptable answer staleness; presence
     # allows financial answers to be cached with ttl = min(answer_ttl, this).
     max_age_s: int | None = Field(default=None, ge=30, le=86_400)

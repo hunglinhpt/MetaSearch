@@ -54,3 +54,19 @@
   - `evals/sentiment_golden.json` (64 bilingual cases) + `app/eval_sentiment.py` + `scripts/eval_sentiment.py` (Macro-F1 >= 0.85 gate).
   - `evals/search_offline_ir.json` (offline IR retrieval & rerank diversity benchmark).
   - `evals/research_golden.json` + `app/eval_research.py` + `scripts/eval_research.py` (FACT report evaluator).
+
+---
+
+## 5. Wave 5 — Answer Quality & Market Intelligence Orchestration Layer (docs/30 BP follow-through, 2026-11-19)
+
+| Area | Change | Verification |
+|---|---|---|
+| BP-1 Thread carry | `AnswerRequest.thread_id` → owner-checked prior-answer load (`_load_thread_context`, fail-open on invalid id) → one cheap LLM hop rewrites the follow-up as a standalone keyword query before retrieval; `thread_rewrite` event `{original, rewritten}` is a yielded pipeline event (observable by direct `run()` and the SSE bridge alike); broken rewrite fails open. | `tests/test_v30_thread_and_citation.py::TestLoadThreadContext`, `::TestThreadRewrite` |
+| BP-4 Citation streaming | `citation_map` SSE event (`n/url/title/chunk_id`) emitted inside the try-block BEFORE the token stream — the UI renders clickable citation chips immediately; the final validated `citations` event supersedes it. Frontend: `onCitationMap`/`onThreadRewrite` handlers (`frontend/lib/api.ts`), wired in `page.tsx`. | `tests/test_v30_thread_and_citation.py::TestCitationMapSse` + `frontend/lib/api.test.ts` |
+| Intel: peer discovery | `retrieval/intel.py::discover_peers` — same-exchange distinctive company-name token overlap over `vn_tickers`, deterministic, capped. | `tests/test_intel.py::TestPeerDiscovery` |
+| Intel: alert engine | `evaluate_alert_conditions` — Wilder RSI-14 bands, volume spike (≥2.5× prior-10-day avg), 5-day MA cross, 20-day-high proximity with flat-series guard; ≥10 bars required else no alerts (fail-open, no fabrication). | `tests/test_intel.py::TestAlertEngine` |
+| Intel: event impact | `compute_event_impact` — 1-day + N-day return + volume ratio around a tagged event date; missing/invalid data → `null`/`None`, never fabricated. | `tests/test_intel.py::TestEventImpact` |
+| API surface | `GET /v1/market/peers?symbol=` (registry CPU only) + `POST /v1/market/alerts` (1..5 symbols; VNDIRECT→FA-aggregator fallback under one wall-clock cap; empty alerts + no source when no candles). Rate-limit payload-proportional `2 + min(symbols, 5)`; OpenAPI snapshot regenerated. | `tests/test_market_intel.py` + `tests/test_w5_guardrails.py` |
+| Fix | `thread_rewrite` originally emitted via `on_event` only — direct `run()` consumers could not observe it; now yielded. | covered by `TestThreadRewrite` |
+
+Deferred (docs/30 backlog): BP-2 query decomposition (sub-question fan-out), alert *rules* persistence + push delivery (current surface is poll-on-demand evaluation), portfolio P&L positions model, event-impact batch endpoint over the wire/events feed, thread carry UI (send `thread_id` from follow-up chips).

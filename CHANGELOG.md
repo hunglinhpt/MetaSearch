@@ -1,5 +1,26 @@
 # Changelog
 
+## [4.1.0] - 2026-11-19
+
+### Added — Answer Quality Wave (docs/30 BP-1/BP-3/BP-4) + Market Intelligence Orchestration Layer
+
+- **BP-1 Thread carry (`api/app/api/v1/answer.py`, `api/app/api/v1/schemas.py`, `api/app/orchestration/pipeline.py`)**: `AnswerRequest.thread_id` loads the caller's prior answer (owner-checked, 404 semantics → fail-open `None`) and one cheap LLM hop rewrites the follow-up into a standalone keyword query before retrieval; `thread_rewrite` event reports `{original, rewritten}` (yielded — observed by every consumer); broken rewrite fails open. Tests: `tests/test_v30_thread_and_citation.py`.
+- **BP-4 Citation streaming (`pipeline.py`, `frontend/lib/api.ts`, `frontend/app/page.tsx`)**: `citation_map` SSE event (n/url/title/chunk_id) is emitted inside the try-block BEFORE the token stream so the UI renders clickable citation chips immediately; the final validated `citations` event supersedes it. UI handlers `onCitationMap`/`onThreadRewrite` wired in `AnswerHandlers` + `page.tsx`.
+- **Market Intelligence Orchestration Layer (`api/app/retrieval/intel.py` — new)**: peer auto-discovery (`discover_peers`: same-exchange distinctive company-name token overlap over the VN registry, deterministic), technical alert engine (`evaluate_alert_conditions`: Wilder RSI-14 bands, volume spike ≥2.5× prior-10-day average, 5-day MA cross, 20-day-high proximity guarded against flat sideways noise), and news-to-price event impact (`compute_event_impact`: 1-day + N-day return + volume ratio around an event date — missing candles → `null`, never fabricated). Tests: `tests/test_intel.py` (16), `tests/test_market_intel.py` (9).
+- **New endpoints (`api/app/api/v1/market.py`)**: `GET /v1/market/peers?symbol=` (pure registry CPU, bounded `max_peers`) and `POST /v1/market/alerts` (1..5 symbols, OHLCV fetched VNDIRECT→FA-aggregator fallback with one shared wall-clock cap; symbols without usable candles report empty alerts and no source). Rate-limit: payload-proportional `2 + min(symbols, 5)` (`auth.py`), `DYNAMIC_COST_POST` updated (`test_w5_guardrails.py`).
+- **Thread-rewrite observation fix**: `thread_rewrite` moved from `on_event`-only emission to a yielded pipeline event so direct `run()` consumers see it too.
+
+### Fixed — `/v1/meta/full` keyless access + sentiment regime/confidence calibration
+
+- **`/v1/meta/full` now always requires a real admin API key (`api/app/core/auth.py::require_admin_key`, `api/app/api/v1/router.py`)**: previously `AUTH_ENABLED=false` + `DEV_ANON_ADMIN=true` (Lite profile) made the endpoint answer `200` to keyless callers. Now keyless/invalid key → `401`, non-admin key → `403`, admin key → `200` regardless of the Lite flags. `/v1/meta` (name + version) stays public. Regression test: `api/tests/test_v40_meta_full_auth.py` (3 auth/anon-admin matrices).
+- **Sentiment regime & confidence calibration (`api/app/retrieval/sentiment.py`)**: `EVENT_DRIVEN_BINARY` is no longer the catch-all (any one positive + one negative headline, or a plain neutral book); polarization now needs each side to hold >= 30% of the evidence weight and weak catalyst-free evidence maps to `LOW_SIGNAL_NOISE`. Confidence is reduced when the text and quant pillars point in opposite directions instead of reading pure evidence volume as certainty. Test: `test_v40_sentiment_upgrade.py::test_regime_not_binary_for_weak_unpolarized_and_confidence_penalizes_conflict`.
+
+### Added & Fixed — LLM Endpoint Privacy Policy + Bilingual Wire Entity Tagging (docs/30)
+
+- **Trusted-Only LLM Endpoint Allowlist (`api/app/llm/endpoint_policy.py`, `api/app/llm/gateway.py`, `api/app/main.py`, `api/app/config.py`)**: default-deny governance for every LLM base_url — enterprise zero-data-retention providers (Anthropic/OpenAI/Gemini/Vertex) and local/LAN self-hosted inference are trusted; unknown third-party endpoints (openrouter/pollinations/groq mirrors/spoofed suffixes) are rejected at runtime (`_candidates` guard on override-injected targets — BYO/request/runtime) and fail-fast at startup (`sweep_configured_endpoints` SystemExit in prod, warning in dev/test). Operator override: `LLM_ENDPOINT_POLICY=open` (SSRF validation still applies).
+- **Stage B Bilingual Entity Resolver (`api/app/retrieval/aliases.py`, `api/app/retrieval/events.py`)**: 1,020-alias canonical dictionary (unambiguous registry remainders + curated brands: Vinamilk→VNM, Địa ốc/Hoàng Quân→HQC, Thép/Tập đoàn Hòa Phát→HPG, Bia Sài Gòn→SAB, Long Châu→FRT, …) wired into `extract_tickers_from_text` — `/v1/market/news-wire` items with bare brand mentions ("Vinamilk chi cổ tức", "Hoàng Quân Địa ốc") now tag `tickers` correctly; ambiguous remainders ("Hòa Phát" across HTP/HPA/HPG) never indexed (anti-collision by construction); word-boundary matching O(text) single pass.
+- **14 verification tests** (`api/tests/test_v30_endpoint_policy_and_wire.py`) — enterprise/local trust matrix, suffix-spoof block, runtime enforcement + operator override, startup sweep, sliding-window expose, brand-alias resolution, allowed-symbols contract.
+
 ## [4.0.0] - 2026-11-19
 
 ### Added & Upgraded — Search/Retrieval Overhaul, Institutional Sentiment Engine v3, Deep Research v2 & Eval Benchmarks (`docs/31`)
@@ -21,17 +42,6 @@
   - Added `evals/sentiment_golden.json` (64 bilingual cases) + `scripts/eval_sentiment.py`, `evals/search_offline_ir.json`, and `evals/research_golden.json` + `scripts/eval_research.py`.
 
 ## [Unreleased]
-
-### Fixed — `/v1/meta/full` keyless access + sentiment regime/confidence calibration
-
-- **`/v1/meta/full` now always requires a real admin API key (`api/app/core/auth.py::require_admin_key`, `api/app/api/v1/router.py`)**: previously `AUTH_ENABLED=false` + `DEV_ANON_ADMIN=true` (Lite profile) made the endpoint answer `200` to keyless callers. Now keyless/invalid key → `401`, non-admin key → `403`, admin key → `200` regardless of the Lite flags. `/v1/meta` (name + version) stays public. Regression test: `api/tests/test_v40_meta_full_auth.py` (3 auth/anon-admin matrices).
-- **Sentiment regime & confidence calibration (`api/app/retrieval/sentiment.py`)**: `EVENT_DRIVEN_BINARY` is no longer the catch-all (any one positive + one negative headline, or a plain neutral book); polarization now needs each side to hold >= 30% of the evidence weight and weak catalyst-free evidence maps to `LOW_SIGNAL_NOISE`. Confidence is reduced when the text and quant pillars point in opposite directions instead of reading pure evidence volume as certainty. Test: `test_v40_sentiment_upgrade.py::test_regime_not_binary_for_weak_unpolarized_and_confidence_penalizes_conflict`.
-
-### Added & Fixed — LLM Endpoint Privacy Policy + Bilingual Wire Entity Tagging (docs/30)
-
-- **Trusted-Only LLM Endpoint Allowlist (`api/app/llm/endpoint_policy.py`, `api/app/llm/gateway.py`, `api/app/main.py`, `api/app/config.py`)**: default-deny governance for every LLM base_url — enterprise zero-data-retention providers (Anthropic/OpenAI/Gemini/Vertex) and local/LAN self-hosted inference are trusted; unknown third-party endpoints (openrouter/pollinations/groq mirrors/spoofed suffixes) are rejected at runtime (`_candidates` guard on override-injected targets — BYO/request/runtime) and fail-fast at startup (`sweep_configured_endpoints` SystemExit in prod, warning in dev/test). Operator override: `LLM_ENDPOINT_POLICY=open` (SSRF validation still applies).
-- **Stage B Bilingual Entity Resolver (`api/app/retrieval/aliases.py`, `api/app/retrieval/events.py`)**: 1,020-alias canonical dictionary (unambiguous registry remainders + curated brands: Vinamilk→VNM, Địa ốc/Hoàng Quân→HQC, Thép/Tập đoàn Hòa Phát→HPG, Bia Sài Gòn→SAB, Long Châu→FRT, …) wired into `extract_tickers_from_text` — `/v1/market/news-wire` items with bare brand mentions ("Vinamilk chi cổ tức", "Hoàng Quân Địa ốc") now tag `tickers` correctly; ambiguous remainders ("Hòa Phát" across HTP/HPA/HPG) never indexed (anti-collision by construction); word-boundary matching O(text) single pass.
-- **14 verification tests** (`api/tests/test_v30_endpoint_policy_and_wire.py`) — enterprise/local trust matrix, suffix-spoof block, runtime enforcement + operator override, startup sweep, sliding-window expose, brand-alias resolution, allowed-symbols contract.
 
 ## [3.3.1] - 2026-11-18
 

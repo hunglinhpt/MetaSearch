@@ -718,7 +718,16 @@ export default function HomePage() {
             onEngineDone: (info) => setEngines((prev) => [...prev, info]),
             onSources: (items) => setSources(items),
             onToken: (text) => setAnswerMd((prev) => prev + text),
+            // docs/30 BP-4: citation_map precedes the token stream — render
+            // chips immediately; the final `citations` event (validated set)
+            // supersedes it when it arrives.
+            onCitationMap: (items) => setCitations(items),
             onCitations: (items) => setCitations(items),
+            onThreadRewrite: (original, rewritten) => {
+              if (rewritten && rewritten !== original) {
+                setStage(`đã mở rộng câu hỏi: "${original}" → "${rewritten}"`);
+              }
+            },
             onCouncil: (verdict) => setCouncilVerdict(verdict),
             onFollowUps: (items) => setFollowUps(items),
             onDone: (m) => {

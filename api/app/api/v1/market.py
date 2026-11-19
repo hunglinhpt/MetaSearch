@@ -18,7 +18,7 @@ from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Query, Response
 
 from app.api import deps
 from app.api.v1.schemas import (
@@ -27,6 +27,9 @@ from app.api.v1.schemas import (
     FaCompareResponse,
     FaFieldOut,
     FaSymbolResult,
+    MarketAlertOut,
+    MarketAlertsRequest,
+    MarketAlertsResponse,
     MarketEventsRequest,
     MarketEventsResponse,
     MarketNewsWireItemOut,
@@ -34,8 +37,11 @@ from app.api.v1.schemas import (
     MarketNewsWireResponse,
     MarketOhlcvRequest,
     MarketOhlcvResponse,
+    MarketPeerOut,
+    MarketPeersResponse,
     MarketSentimentRequest,
     MarketSentimentResponse,
+    MarketSymbolAlertsOut,
     OhlcvCandle,
     ShareRatioExplanationOut,
 )
@@ -44,9 +50,11 @@ from app.core.admission import admit
 from app.core.budget import create_budget_for_route, use_budget
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
+from app.core.offload import run_cpu
 from app.core.singleflight import SingleFlight
 from app.retrieval.adapters.viet_stock import fetch_vndirect_ohlcv_series
 from app.retrieval.fa_sources.base import ensure_global_symbol, ensure_symbol
+from app.retrieval.intel import discover_peers, evaluate_alert_conditions
 from app.retrieval.sentiment_quant import (
     FundamentalSnapshotInput,
     MarketProxiesInput,
@@ -399,6 +407,174 @@ async def market_ohlcv(request: MarketOhlcvRequest) -> MarketOhlcvResponse:
         as_of=datetime.fromtimestamp(last_ts, tz=UTC).isoformat(),
         days=days,
         latency_ms=int((time.perf_counter() - started) * 1000),
+    )
+
+
+@router.get("/market/peers", response_model=MarketPeersResponse, response_model_exclude_none=True)
+async def market_peers(symbol: str = Query(min_length=1, max_length=15)) -> MarketPeersResponse:
+    """Peer auto-discovery (docs/30 Part 2): same-exchange tickers sharing a
+    distinctive company-name token with the target, from the local VN ticker
+    registry. Pure CPU over curated data — no upstream fetch, deterministic."""
+    sym = ensure_symbol(symbol)
+    if sym is None:
+        raise MetaSearchError(
+            ErrorCode.INVALID_REQUEST, f"invalid symbol: {symbol!r}", status_code=400
+        )
+    registry = load_vn_tickers()
+    group = await run_cpu(discover_peers, registry, sym, max_peers=8)
+    return MarketPeersResponse(
+        symbol=sym,
+        peers=[
+            MarketPeerOut(symbol=p["symbol"], shared_context=p["shared_context"], score=p["score"])
+            for p in group.peers
+        ],
+    )
+
+
+async def _fetch_alert_candles(
+    sym: str, days: int, timeout_s: float
+) -> tuple[list[OhlcvCandle], str] | None:
+    """Fetch a daily OHLCV series for alert evaluation (VNDIRECT primary,
+    FA-aggregator fallback). Returns (candles, source_name) or None — the
+    caller reports 'no data', never fabricates. One shared wall-clock cap
+    over both legs (same remaining-budget rule as /market/ohlcv)."""
+    try:
+        async with asyncio.timeout(timeout_s * 2 + 2.0):
+            primary_t0 = time.perf_counter()
+            series: dict[str, Any] | None = None
+            source_name = "VNDIRECT"
+            try:
+                series = await fetch_vndirect_ohlcv_series(sym, days=days, timeout_s=timeout_s)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                series = None
+            if series is None:
+                elapsed = time.perf_counter() - primary_t0
+                fallback_timeout = min(timeout_s, max(0.5, timeout_s * 2 + 2.0 - elapsed - 0.25))
+                try:
+                    src = await deps.get_fa_aggregator().fetch_ohlcv(
+                        sym, timeout_s=fallback_timeout
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "market_alerts_fallback_failed", symbol=sym, error=type(exc).__name__
+                    )
+                    src = None
+                if src is not None and src.n:
+                    series = {
+                        "times": src.times,
+                        "opens": src.opens,
+                        "highs": src.highs,
+                        "lows": src.lows,
+                        "closes": src.closes,
+                        "volumes": src.volumes,
+                        "last_ts": src.last_ts,
+                    }
+                    source_name = src.source_id.upper()
+    except TimeoutError:
+        # A blown wall clock is "no data for this symbol" here — the alert
+        # surface reports an empty bundle, it never 500s one bad feed.
+        return None
+    if not series or not series.get("closes"):
+        return None
+    times = series.get("times") or []
+    closes = series["closes"]
+    opens, highs, lows, volumes = (
+        series["opens"],
+        series["highs"],
+        series["lows"],
+        series["volumes"],
+    )
+    if not times or not (
+        len(times) == len(closes) == len(opens) == len(highs) == len(lows) == len(volumes)
+    ):
+        return None
+    try:
+        candles = [
+            OhlcvCandle(
+                time=int(t),
+                open=float(op),
+                high=float(hi),
+                low=float(lo),
+                close=float(cl),
+                volume=float(vo),
+            )
+            for t, op, hi, lo, cl, vo in zip(
+                times, opens, highs, lows, closes, volumes, strict=True
+            )
+        ]
+    except (TypeError, ValueError):
+        return None
+    return (candles[-days:] if len(candles) > days else candles, source_name)
+
+
+@router.post(
+    "/market/alerts",
+    response_model=MarketAlertsResponse,
+    response_model_exclude_none=True,
+)
+async def market_alerts(request: MarketAlertsRequest) -> MarketAlertsResponse:
+    """Technical alert engine (docs/30 Part 2): RSI-14 bands, volume spike,
+    5-day MA cross, 20-day-high proximity — evaluated over freshly fetched
+    OHLCV. Only triggered conditions are returned; a symbol without usable
+    candles yields an empty alert list with no source (never fabricated)."""
+    settings = get_settings()
+    symbols = _normalize_market_symbols(request.symbols)[:5]
+    days = request.days if request.days is not None else settings.market_ohlcv_default_days
+    days = max(settings.market_ohlcv_min_days, min(settings.market_ohlcv_max_days, days))
+
+    budget = create_budget_for_route("market_alerts", timeout_ms=request.timeout_ms)
+    remaining = budget.remaining() if budget else settings.market_ohlcv_timeout_s
+    timeout_s = min(settings.market_ohlcv_timeout_s, remaining)
+    started = time.perf_counter()
+
+    results: list[MarketSymbolAlertsOut] = []
+
+    async with admit("market"):
+        with use_budget(budget):
+
+            async def one(sym: str) -> MarketSymbolAlertsOut:
+                fetched = await _fetch_alert_candles(sym, days, timeout_s)
+                if fetched is None:
+                    return MarketSymbolAlertsOut(symbol=sym, alerts=[])
+                candles, source_name = fetched
+                bars = [
+                    {
+                        "time": c.time,
+                        "open": c.open,
+                        "high": c.high,
+                        "low": c.low,
+                        "close": c.close,
+                        "volume": c.volume,
+                    }
+                    for c in candles
+                ]
+                evals = await run_cpu(evaluate_alert_conditions, sym, bars)
+                return MarketSymbolAlertsOut(
+                    symbol=sym,
+                    alerts=[
+                        MarketAlertOut(
+                            ticker=e.ticker,
+                            condition=e.condition,
+                            triggered=e.triggered,
+                            current_value=e.current_value,
+                            detail=e.detail,
+                        )
+                        for e in evals
+                    ],
+                    source_name=source_name,
+                    as_of=datetime.fromtimestamp(candles[-1].time, tz=UTC).isoformat()
+                    if candles
+                    else None,
+                )
+
+            results = list(await asyncio.gather(*(one(s) for s in symbols)))
+
+    return MarketAlertsResponse(
+        results=results, latency_ms=int((time.perf_counter() - started) * 1000)
     )
 
 

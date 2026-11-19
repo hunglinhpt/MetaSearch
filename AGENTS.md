@@ -13,7 +13,13 @@ Chiến lược **giants-first** (ADR-007): tự viết tối thiểu (orchestra
 đứng trên SearXNG/crawl4ai/trafilatura/FastMCP. Engine đổi cấu trúc → nâng image,
 orchestration không đổi.
 
-## 2. Trạng thái hiện tại (cập nhật: 2026-11-19 — v4.0.0: Search/Retrieval Overhaul, Institutional Sentiment Engine v3, Deep Research v2 & Council Debiasing, Full Offline Evaluation Suite — xem [docs/31-v40-audit-and-upgrade-architecture.md](docs/31-v40-audit-and-upgrade-architecture.md))
+## 2. Trạng thái hiện tại (cập nhật: 2026-11-19 — v4.1.0: Answer Quality Wave (BP-1/BP-4) + Market Intelligence Orchestration Layer, trên nền v4.0.0 Search/Retrieval + Sentiment v3 + Deep Research v2 — xem [docs/31-v40-audit-and-upgrade-architecture.md](docs/31-v40-audit-and-upgrade-architecture.md) §5)
+
+- ✅ **v4.1.0 Answer Quality & Market Intel Layer (`docs/31` §5, `CHANGELOG.md`)**:
+  - **BP-1 Thread carry**: `AnswerRequest.thread_id` → load câu trả lời trước (owner-checked, fail-open) → 1 LLM rẻ viết lại follow-up thành query standalone trước retrieval; event `thread_rewrite` là yielded event (mọi consumer thấy được); rewrite lỗi → fail-open. Test `tests/test_v30_thread_and_citation.py`.
+  - **BP-4 Citation streaming**: event SSE `citation_map` (n/url/title/chunk_id) phát TRƯỚC token stream để UI render chip citation ngay; event `citations` cuối (đã validate) ghi đè. UI: `onCitationMap`/`onThreadRewrite` trong `frontend/lib/api.ts` + `page.tsx`.
+  - **Market Intelligence Orchestration Layer (`retrieval/intel.py` mới)**: peer auto-discovery (token tên công ty same-exchange), alert engine kỹ thuật (RSI-14 Wilder, volume spike, MA5 cross, near-20d-high có guard dãy phẳng), event-impact (return 1d/Nd + volume ratio quanh ngày sự kiện — thiếu nến → null, không bịa). Test `tests/test_intel.py` + `tests/test_market_intel.py`.
+  - **Endpoint mới**: `GET /v1/market/peers` (registry CPU) + `POST /v1/market/alerts` (1..5 mã, VNDIRECT→FA fallback 1 wall-clock cap; thiếu nến → alerts rỗng + không khai source). Rate-limit payload-proportional `2 + min(symbols, 5)`; OpenAPI snapshot regen; version bump 4.1.0 (api + frontend).
 
 - ✅ **v4.0.0 Full-Stack Upgrade (`docs/31`, `CHANGELOG.md`)**:
   - **Wave 1 (Search & Retrieval)**: 3 adapter mới (`bing_news`, `vn_wire`, `fin_rss`), sửa lỗi `ddg.py`, nâng cấp `scoring.py`/`tiers.py`/`merger.py` (wrapper `_effective_domain`, RRF rank normalization, batch IDF, multi-term relevance gate, Title Jaccard `>= 0.72` folding), `router.py` implicit freshness, `HybridBM25ChunkReranker` + `LLMListwiseReranker`, test `tests/test_v40_search_upgrade.py`.

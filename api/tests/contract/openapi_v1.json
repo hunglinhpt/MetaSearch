@@ -229,6 +229,18 @@
             "title": "Stream",
             "type": "boolean"
           },
+          "thread_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
           "timeout_ms": {
             "anyOf": [
               {
@@ -2475,6 +2487,117 @@
         "title": "MapResponse",
         "type": "object"
       },
+      "MarketAlertOut": {
+        "description": "One evaluated alert condition (triggered ones only are returned).",
+        "properties": {
+          "condition": {
+            "maxLength": 64,
+            "title": "Condition",
+            "type": "string"
+          },
+          "current_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Value"
+          },
+          "detail": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Detail",
+            "type": "string"
+          },
+          "ticker": {
+            "maxLength": 15,
+            "title": "Ticker",
+            "type": "string"
+          },
+          "triggered": {
+            "title": "Triggered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ticker",
+          "condition",
+          "triggered"
+        ],
+        "title": "MarketAlertOut",
+        "type": "object"
+      },
+      "MarketAlertsRequest": {
+        "description": "POST /v1/market/alerts — technical alert evaluation over fetched OHLCV.",
+        "properties": {
+          "days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days"
+          },
+          "symbols": {
+            "items": {
+              "maxLength": 15,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Symbols",
+            "type": "array"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 30000.0,
+                "minimum": 500.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          }
+        },
+        "required": [
+          "symbols"
+        ],
+        "title": "MarketAlertsRequest",
+        "type": "object"
+      },
+      "MarketAlertsResponse": {
+        "description": "POST /v1/market/alerts response — symbols without usable OHLCV are\nreported with empty alerts and no source (never fabricated).",
+        "properties": {
+          "latency_ms": {
+            "default": 0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/MarketSymbolAlertsOut"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "MarketAlertsResponse",
+        "type": "object"
+      },
       "MarketEventRawInput": {
         "description": "Caller-supplied corporate notice or calendar record for structured classification.",
         "properties": {
@@ -3465,6 +3588,57 @@
           "days"
         ],
         "title": "MarketOhlcvResponse",
+        "type": "object"
+      },
+      "MarketPeerOut": {
+        "description": "One discovered peer: same-exchange ticker sharing a distinctive\ncompany-name token with the target (registry-derived, deterministic).",
+        "properties": {
+          "score": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "integer"
+          },
+          "shared_context": {
+            "maxLength": 200,
+            "title": "Shared Context",
+            "type": "string"
+          },
+          "symbol": {
+            "maxLength": 15,
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "shared_context",
+          "score"
+        ],
+        "title": "MarketPeerOut",
+        "type": "object"
+      },
+      "MarketPeersResponse": {
+        "description": "GET /v1/market/peers — peer auto-discovery from the VN ticker registry.",
+        "properties": {
+          "peers": {
+            "items": {
+              "$ref": "#/components/schemas/MarketPeerOut"
+            },
+            "title": "Peers",
+            "type": "array"
+          },
+          "symbol": {
+            "maxLength": 15,
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "peers"
+        ],
+        "title": "MarketPeersResponse",
         "type": "object"
       },
       "MarketProxiesSchemaInput": {
@@ -4629,6 +4803,51 @@
           "social_integrity_audit"
         ],
         "title": "MarketSentimentResponse",
+        "type": "object"
+      },
+      "MarketSymbolAlertsOut": {
+        "description": "Per-symbol alert bundle with feed provenance.",
+        "properties": {
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/MarketAlertOut"
+            },
+            "title": "Alerts",
+            "type": "array"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Name"
+          },
+          "symbol": {
+            "maxLength": 15,
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "alerts"
+        ],
+        "title": "MarketSymbolAlertsOut",
         "type": "object"
       },
       "MemoryCreateRequest": {
@@ -8258,6 +8477,49 @@
         ]
       }
     },
+    "/v1/market/alerts": {
+      "post": {
+        "description": "Technical alert engine (docs/30 Part 2): RSI-14 bands, volume spike,\n5-day MA cross, 20-day-high proximity — evaluated over freshly fetched\nOHLCV. Only triggered conditions are returned; a symbol without usable\ncandles yields an empty alert list with no source (never fabricated).",
+        "operationId": "market_alerts_v1_market_alerts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketAlertsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketAlertsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Market Alerts",
+        "tags": [
+          "v1",
+          "market"
+        ]
+      }
+    },
     "/v1/market/events": {
       "post": {
         "description": "Structured corporate actions, ex-dividend calendar, risk notices & ratio proof.",
@@ -8380,6 +8642,52 @@
           }
         },
         "summary": "Market Ohlcv",
+        "tags": [
+          "v1",
+          "market"
+        ]
+      }
+    },
+    "/v1/market/peers": {
+      "get": {
+        "description": "Peer auto-discovery (docs/30 Part 2): same-exchange tickers sharing a\ndistinctive company-name token with the target, from the local VN ticker\nregistry. Pure CPU over curated data — no upstream fetch, deterministic.",
+        "operationId": "market_peers_v1_market_peers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "symbol",
+            "required": true,
+            "schema": {
+              "maxLength": 15,
+              "minLength": 1,
+              "title": "Symbol",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketPeersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Market Peers",
         "tags": [
           "v1",
           "market"

@@ -1,3 +1,3 @@
 """MetaSearch AI API package."""
 
-__version__ = "3.3.1"
+__version__ = "4.1.0"
