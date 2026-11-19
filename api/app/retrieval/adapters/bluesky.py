@@ -86,10 +86,11 @@ class BlueskyAdapter:
             if not (handle and rkey) or not text:
                 continue
             url = f"https://bsky.app/profile/{handle}/post/{rkey}"
+            title_snip = " ".join(text.split())[:80].rstrip()
             results.append(
                 RawResult(
                     url=url,
-                    title=f"@{author} on Bluesky",
+                    title=f"@{author}: {title_snip}" if title_snip else f"@{author} on Bluesky",
                     snippet=text[:500],
                     adapter=self.id,
                     source_engines=["bluesky"],

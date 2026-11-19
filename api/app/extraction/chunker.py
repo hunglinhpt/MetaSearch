@@ -115,6 +115,45 @@ def _pack_section(
         para_words = para.split()
         if len(para_words) > TARGET_WORDS:
             position = flush()
+            if "\n" in para:
+                lines = para.splitlines()
+                is_table = (
+                    len(lines) >= 2 and lines[0].lstrip().startswith("|") and "---" in lines[1]
+                )
+                header = lines[:2] if is_table else []
+                body_lines = lines[2:] if is_table else lines
+                header_words = sum(len(h.split()) for h in header)
+                cur: list[str] = list(header)
+                cur_words = header_words
+                for ln in body_lines:
+                    lw = len(ln.split())
+                    if cur and cur_words + lw > TARGET_WORDS and len(cur) > len(header):
+                        chunks.append(
+                            _new_chunk(
+                                document_url,
+                                position + 1,
+                                heading_path,
+                                "\n".join(cur),
+                                source_title,
+                            )
+                        )
+                        position += 1
+                        cur = list(header)
+                        cur_words = header_words
+                    cur.append(ln)
+                    cur_words += lw
+                if cur and (not header or len(cur) > len(header)):
+                    chunks.append(
+                        _new_chunk(
+                            document_url,
+                            position + 1,
+                            heading_path,
+                            "\n".join(cur),
+                            source_title,
+                        )
+                    )
+                    position += 1
+                continue
             for start in range(0, len(para_words), TARGET_WORDS - OVERLAP_WORDS):
                 window = para_words[start : start + TARGET_WORDS]
                 chunks.append(
@@ -130,8 +169,29 @@ def _pack_section(
             continue
 
         if buffer and buffer_words + len(para_words) > TARGET_WORDS:
-            keep = min(OVERLAP_WORDS, buffer_words)
-            tail = " ".join(" ".join(buffer).split()[-keep:]) if keep else ""
+            # Preserve line/table formatting in overlap instead of flattening "\n".
+            tail_lines: list[str] = []
+            tail_words = 0
+            for ln in reversed("\n\n".join(buffer).splitlines()):
+                words = ln.split()
+                lw = len(words)
+                if not tail_lines and lw > OVERLAP_WORDS:
+                    tail_lines.append(" ".join(words[-OVERLAP_WORDS:]))
+                    break
+                if tail_lines and tail_words + lw > OVERLAP_WORDS:
+                    if not (ln.lstrip().startswith("|") or ln.lstrip().startswith("```")):
+                        need = OVERLAP_WORDS - tail_words
+                        if need > 0:
+                            tail_lines.append(" ".join(words[-need:]))
+                    break
+                tail_lines.append(ln)
+                tail_words += lw
+                if tail_words >= OVERLAP_WORDS:
+                    break
+            tail = "\n".join(reversed(tail_lines)).strip()
+            if not tail and buffer_words > 0:
+                keep = min(OVERLAP_WORDS, buffer_words)
+                tail = " ".join(" ".join(buffer).split()[-keep:])
             position = flush()
             if tail:
                 buffer.append(tail)

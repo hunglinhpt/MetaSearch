@@ -70,6 +70,10 @@ ADAPTER_PATHS = {
     "crossref": "app.retrieval.adapters.crossref:CrossrefAdapter",
     "europepmc": "app.retrieval.adapters.europepmc:EuropePmcAdapter",
     "gdelt": "app.retrieval.adapters.gdelt:GdeltAdapter",
+    # v4.0 keyless high-signal live feeds
+    "bing_news": "app.retrieval.adapters.bing_news:BingNewsAdapter",
+    "vn_wire": "app.retrieval.adapters.vn_financial_wire:VnFinancialWireAdapter",
+    "fin_rss": "app.retrieval.adapters.financial_rss:GlobalFinancialRssAdapter",
 }
 
 
@@ -391,6 +395,40 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             max_results=15,
             requires_key=False,
             adapter_path=ADAPTER_PATHS["gdelt"],
+        ),
+        # --- v4.0 keyless verified live feeds ---
+        "bing_news": EngineConfig(
+            id="bing_news",
+            name="Bing News RSS (real publisher URLs, VI + EN)",
+            category="news",
+            weight=1.25,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=15,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["bing_news"],
+        ),
+        "vn_wire": EngineConfig(
+            id="vn_wire",
+            name="Vietnam Corporate Wire & Research (Simplize/CafeF/HOSE)",
+            category="financial",
+            weight=1.35,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=12,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["vn_wire"],
+        ),
+        "fin_rss": EngineConfig(
+            id="fin_rss",
+            name="Financial News RSS Wire (VnExpress/VnEconomy/CNBC/MarketWatch/Yahoo)",
+            category="news",
+            weight=1.2,
+            enabled=True,
+            timeout_ms=4000,
+            max_results=12,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["fin_rss"],
         ),
     }
 

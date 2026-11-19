@@ -21,7 +21,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.core.logging import get_logger
 from app.core.offload import run_cpu
@@ -172,7 +172,32 @@ async def hybrid_chunk_search(
             except Exception:
                 canon_urls.append(u)
         stmt = stmt.where(Document.canonical_url.in_(canon_urls))
-    rows = (await session.execute(stmt)).all()
+
+    dialect_name = getattr(getattr(getattr(session, "bind", None), "dialect", None), "name", "")
+    if dialect_name == "postgresql":
+        # Push sparse tsvector + dense pgvector candidate retrieval into Postgres indexes.
+        pg_filters = []
+        cleaned_q = " ".join(tokenize(query))
+        if cleaned_q:
+            pg_filters.append(ChunkRow.tsv.op("@@")(func.plainto_tsquery("simple", cleaned_q)))
+        if embedding is not None:
+            pg_stmt = stmt.order_by(ChunkRow.embedding.cosine_distance(embedding))
+            if pg_filters:
+                pg_stmt = pg_stmt.where(pg_filters[0])
+            try:
+                rows = (await session.execute(pg_stmt)).all()
+            except Exception:
+                rows = []
+            if not rows:
+                rows = (await session.execute(stmt)).all()
+        elif pg_filters:
+            rows = (await session.execute(stmt.where(pg_filters[0]))).all()
+            if not rows:
+                rows = (await session.execute(stmt)).all()
+        else:
+            rows = (await session.execute(stmt)).all()
+    else:
+        rows = (await session.execute(stmt)).all()
 
     # Python-side domain suffix filter (Document.domain may keep "www.").
     if domains:

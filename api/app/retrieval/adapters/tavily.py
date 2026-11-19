@@ -53,6 +53,9 @@ class TavilyAdapter:
         freshness_days: int | None = None,
         max_results: int = 15,
         timeout_s: float = 3.0,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+        **kwargs: Any,
     ) -> list[RawResult]:
         payload: dict[str, Any] = {
             "query": query,
@@ -65,6 +68,10 @@ class TavilyAdapter:
             payload["topic"] = "news"
         if freshness_days:
             payload["days"] = min(freshness_days, 365)
+        if include_domains:
+            payload["include_domains"] = list(include_domains)[:20]
+        if exclude_domains:
+            payload["exclude_domains"] = list(exclude_domains)[:20]
 
         last_error: AdapterError | None = None
         for _attempt in (1, 2):  # roadmap Phase 1 semantics: 1 retry

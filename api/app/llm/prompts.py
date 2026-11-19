@@ -78,19 +78,28 @@ def build_context(
     *,
     budget: int,
     count: Callable[[str], int] | None = None,
+    max_per_url: int = 3,
 ) -> list[tuple[int, Chunk]]:
     """Pack chunks into numbered context blocks within ``budget`` units.
 
-    ``count`` maps text to the budget unit — words (default proxy) or real
-    tokens via ``app.llm.tokens``. Returns the ``(n, chunk)`` pairs actually
-    included, numbered from 1, in the order given (caller pre-sorts by
-    relevance). The first chunk is always included so the context is never
-    empty.
+    Enforces a soft ``max_per_url`` diversity cap first so one verbose document
+    does not crowd out other sources, backfilling leftover budget only if room remains.
     """
     count = count or (lambda text: len(text.split()))
+    primary: list[Chunk] = []
+    overflow: list[Chunk] = []
+    per_url: dict[str, int] = {}
+    for ch in chunks:
+        c = per_url.get(ch.document_url, 0)
+        if max_per_url > 0 and c >= max_per_url:
+            overflow.append(ch)
+        else:
+            per_url[ch.document_url] = c + 1
+            primary.append(ch)
+    ordered = [*primary, *overflow]
     included: list[tuple[int, Chunk]] = []
     used = 0
-    for n, chunk in enumerate(chunks, start=1):
+    for n, chunk in enumerate(ordered, start=1):
         size = count(chunk.content) or chunk.word_count
         if used + size > budget and included:
             break
@@ -100,17 +109,21 @@ def build_context(
 
 
 def render_context(included: list[tuple[int, Chunk]]) -> str:
-    """Render numbered sources wrapped in per-request random delimiters (SEC-07)."""
+    """Render numbered sources wrapped in matched per-request random delimiters (SEC-07)."""
     blocks: list[str] = []
     for n, chunk in included:
         # docs/30 BP-3: freshness hint — the LLM can prefer recent data and
         # state as-of dates instead of treating a 2019 post like today's wire.
         date_hint = f" · {chunk.date_hint}" if getattr(chunk, "date_hint", "") else ""
-        header = f"[{n}] {chunk.document_url}{date_hint}"
+        raw_title = " ".join((getattr(chunk, "source_title", "") or "").split())[:140]
+        if raw_title and raw_title != chunk.document_url:
+            header = f"[{n}] {raw_title} ({chunk.document_url}){date_hint}"
+        else:
+            header = f"[{n}] {chunk.document_url}{date_hint}"
         # The heading comes from the page, so it is data too and sits inside the delimiter.
         section = f"(section: {chunk.heading_path})\n" if chunk.heading_path else ""
-        begin, end = _random_delimiter(n), _random_delimiter(n)
-        blocks.append(f"{header}\n<<<{begin}>>>\n{section}{chunk.content}\n<<<{end}>>>")
+        tag = _random_delimiter(n)
+        blocks.append(f"{header}\n<<<{tag}>>>\n{section}{chunk.content}\n<<<END_{tag}>>>")
     return "\n\n".join(blocks)
 
 

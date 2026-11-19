@@ -85,9 +85,11 @@ Response: mỗi URL 1 object `{url, status, markdown, title, extractor_used, err
 ## 4. Deep Research (`/v1/research`)
 
 - `POST /v1/research` → `202 Accepted` + `{"research_id": "uuid", "status": "queued"}`
-  - Body: `{query, lang, breadth (2..5), depth (1..5), max_time_s (10..600), k (1..20), profile ("auto" | "general" | "developer" | "academic" | "comparative" | "financial" | "news" | "fengshui" | "health")}`.
-- `GET /v1/research/{id}` → `{research_id, status: queued|running|done|failed, progress: {iteration, max_iterations}, report_md, citations, learnings, cost_usd, error}` (hỗ trợ tự động khôi phục từ DB sau khi server restart).
-- `GET /v1/research/{id}/events` → SSE: `status`, `plan`, `iteration_start`, `engine_done`, `learnings`, `report_token`, `citations`, `done`, `error`.
+  - Body: `{query, lang, breadth (2..5), depth (1..5), max_time_s (10..600), k (1..20), profile ("auto" | "general" | "developer" | "academic" | "comparative" | "financial" | "news" | "fengshui" | "health"), space?}`.
+- `GET /v1/research` → `{"jobs": [...]}` lịch sử các job nghiên cứu (hợp nhất bộ nhớ + DB theo owner; `limit` `1..50`).
+- `GET /v1/research/{id}` → `{research_id, status: queued|running|done|failed|cancelled, progress: {iteration, max_iterations}, report_md, citations, learnings, outline, conflicts, verification, tools, profile, cost_usd, error}` (hỗ trợ tự động khôi phục đầy đủ metadata & citation titles từ DB sau khi server restart).
+- `POST /v1/research/{id}/cancel` → hủy job đang chạy sạch sẽ (`{"research_id": "uuid", "status": "cancelled"}`). Cost 1.
+- `GET /v1/research/{id}/events?after_seq=0` (hoặc header `Last-Event-ID`) → SSE có `id: <seq>`: `status`, `tool_results`, `plan`, `outline`, `iteration_start`, `engine_done`, `learnings`, `report_token`, `citations`, `verification`, `done`, `error`.
 
 ## 5. Automated Daily Briefings & Blog Digests (`/v1/digests`)
 
@@ -219,7 +221,8 @@ New endpoints:
 - `POST /v1/search` và `/v1/answer` nhận thêm `space` (v2.6); router tự động
   nâng `deep=true` cho câu đa hop/dài khi `ADAPTIVE_ROUTER_ENABLED=true`.
 
-Rate-limit weights (auth on): answer 5, context 3, research 20,
+- v4.0 (`docs/31`): nâng cấp toàn diện **Search & Retrieval** (adapter `bing_news`/`vn_wire`/`fin_rss`, wrapper domain resolution, RRF normalized ranks, batch IDF, MMR chunk rerank + `RERANKER=llm`), **Sentiment Engine v3** (`BRK.B`/`BTC-USD`, `use_llm_judge`, `include_institutional_feeds`, `sentiment_snapshots` 20d S-Score, SEntFiN attribution, CNN/CBOE/FRED/CafeF/SSI/DNSE/Simplize connectors), và **Deep Research v2** (Stage 0 tools, `space`, STORM `outline`, `conflicts`, `verification`, `GET /v1/research`, `POST /v1/research/{id}/cancel`, `after_seq`/`Last-Event-ID` SSE).
+- Rate-limit weights (auth on): answer 5, context 3, research 20,
 tts/synthesize 5, podcast/briefing 5, fa/compare 3+symbols, market/ohlcv 2,
 market/news-wire 3, market/events 3+symbols (cap 13), market/sentiment 8,
 watchlist/alerts 1+items/4, everything else 1.

@@ -54,6 +54,15 @@ class SerperAdapter:
         payload: dict[str, Any] = {"q": query, "num": min(max_results, 30)}
         if lang:
             payload["hl"] = lang
+        if freshness_days:
+            if freshness_days <= 1:
+                payload["tbs"] = "qdr:d"
+            elif freshness_days <= 7:
+                payload["tbs"] = "qdr:w"
+            elif freshness_days <= 31:
+                payload["tbs"] = "qdr:m"
+            else:
+                payload["tbs"] = "qdr:y"
         client = self._client or get_http_client("search")
         try:
             resp = await client.post(

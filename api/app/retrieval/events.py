@@ -27,7 +27,7 @@ import re
 import time
 import zlib
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
@@ -749,6 +749,17 @@ class ShareRatioExplanation:
     residual_error_pct: float | None = None
     matched_events: list[dict[str, Any]] = field(default_factory=list)
     explanation: str = ""
+
+
+def record_to_dict(item: Any) -> dict[str, Any]:
+    """Normalize a dataclass news/event record or mapping into a plain dict."""
+    if isinstance(item, dict):
+        return dict(item)
+    if is_dataclass(item) and not isinstance(item, type):
+        return asdict(item)
+    if isinstance(item, Mapping):
+        return dict(item)
+    return {}
 
 
 # --------------------------------------------------------------------------------------
@@ -1814,7 +1825,11 @@ def filter_news_freshness(
                 out.append(item)
             continue
         item.date_status = "undated"
-        out.append(item)
+        # docs/30 D2: undated items bypassed the freshness filter entirely —
+        # a source that stops emitting pubDates would inject arbitrarily old
+        # items forever. Cap undated items at a conservative 2-day window.
+        if max_age_days >= 2:
+            out.append(item)
     return out
 
 

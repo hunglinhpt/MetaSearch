@@ -4405,6 +4405,17 @@
             "title": "Fetch Market Data",
             "type": "boolean"
           },
+          "include_institutional_feeds": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Institutional Feeds"
+          },
           "k": {
             "default": 5,
             "maximum": 20.0,
@@ -4477,6 +4488,11 @@
               }
             ],
             "title": "Timeout Ms"
+          },
+          "use_llm_judge": {
+            "default": false,
+            "title": "Use Llm Judge",
+            "type": "boolean"
           }
         },
         "required": [
@@ -4487,11 +4503,47 @@
       },
       "MarketSentimentResponse": {
         "properties": {
+          "analyst_consensus": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analyst Consensus"
+          },
           "benchmark_standards": {
             "$ref": "#/components/schemas/SentimentBenchmarkStandardsOut"
           },
+          "corporate_events": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corporate Events"
+          },
           "entity": {
             "$ref": "#/components/schemas/SentimentEntityOut"
+          },
+          "historical_s_score": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Historical S Score"
           },
           "hits_after_collision_filter": {
             "default": 0,
@@ -4502,6 +4554,42 @@
             "default": 0,
             "title": "Hits Retrieved",
             "type": "integer"
+          },
+          "institutional_flows": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Institutional Flows"
+          },
+          "llm_judge": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Judge"
+          },
+          "market_breadth": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Breadth"
           },
           "module": {
             "const": "omni_channel_equity_sentiment_v2",
@@ -5181,6 +5269,39 @@
             ],
             "title": "Return 20D Pct"
           },
+          "return_20d_z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return 20D Z"
+          },
+          "return_5d_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return 5D Pct"
+          },
+          "return_5d_z": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return 5D Z"
+          },
           "rsi_14": {
             "anyOf": [
               {
@@ -5370,6 +5491,18 @@
             "minLength": 1,
             "title": "Query",
             "type": "string"
+          },
+          "space": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space"
           }
         },
         "required": [
@@ -6194,6 +6327,8 @@
             "enum": [
               "STEALTH_ACCUMULATION",
               "MOMENTUM_MARKUP",
+              "DISTRIBUTION_PRESSURE",
+              "BEARISH_MARKDOWN",
               "EUPHORIC_DISTRIBUTION_TRAP",
               "PANIC_CAPITULATION",
               "EVENT_DRIVEN_BINARY",
@@ -6211,6 +6346,42 @@
             ],
             "title": "Momentum 24H",
             "type": "string"
+          },
+          "pillar_weights": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pillar Weights"
+          },
+          "quant_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quant Score"
+          },
+          "text_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Score"
           }
         },
         "required": [
@@ -8668,7 +8839,7 @@
             "description": "Successful Response"
           }
         },
-        "summary": "Full service configuration (admin)",
+        "summary": "Full service configuration (admin key required)",
         "tags": [
           "v1"
         ]
@@ -9107,6 +9278,53 @@
       }
     },
     "/v1/research": {
+      "get": {
+        "description": "List recent Deep Research jobs scoped to the caller (admin sees all).",
+        "operationId": "list_research_v1_research_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Research V1 Research Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Research",
+        "tags": [
+          "v1",
+          "research"
+        ]
+      },
       "post": {
         "operationId": "create_research_v1_research_post",
         "requestBody": {
@@ -9196,6 +9414,52 @@
         ]
       }
     },
+    "/v1/research/{research_id}/cancel": {
+      "post": {
+        "operationId": "cancel_research_v1_research__research_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "research_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Research Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Research V1 Research  Research Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Research",
+        "tags": [
+          "v1",
+          "research"
+        ]
+      }
+    },
     "/v1/research/{research_id}/events": {
       "get": {
         "operationId": "research_events_v1_research__research_id__events_get",
@@ -9208,6 +9472,17 @@
               "maxLength": 64,
               "title": "Research Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Seq",
+              "type": "integer"
             }
           }
         ],

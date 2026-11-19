@@ -26,26 +26,46 @@ TIER_SCORES: dict[str, float] = {
     "aggregator": 0.72,
     "community": 0.60,
     "unknown": 0.50,
+    "low_trust": 0.25,
 }
 
 _DOMAIN_TIERS: dict[str, str] = {
-    # official / regulator
+    # official / regulator / exchange / central bank
     "sec.gov": "official",
+    "edgar.sec.gov": "official",
     "hsx.vn": "official",
+    "hose.vn": "official",
     "hnx.vn": "official",
+    "ssc.gov.vn": "official",
     "sbv.gov.vn": "official",
     "mof.gov.vn": "official",
+    "gso.gov.vn": "official",
     "gov.vn": "official",
+    "chinhphu.vn": "official",
+    "quochoi.vn": "official",
     "federalreserve.gov": "official",
+    "fred.stlouisfed.org": "official",
+    "bls.gov": "official",
+    "bea.gov": "official",
+    "treasury.gov": "official",
+    "cboe.com": "official",
+    "finra.org": "official",
     "ecb.europa.eu": "official",
     "imf.org": "official",
     "worldbank.org": "official",
     "thuvienphapluat.vn": "official",
     "luatvietnam.vn": "official",
-    # primary / first-party data
+    # primary / first-party market data & brokerage platforms
     "stooq.com": "primary",
     "finance.yahoo.com": "primary",
     "iboard.ssi.com.vn": "primary",
+    "ssi.com.vn": "primary",
+    "vndirect.com.vn": "primary",
+    "dnse.com.vn": "primary",
+    "simplize.vn": "primary",
+    "fireant.vn": "primary",
+    "fiintrade.vn": "primary",
+    "wichart.vn": "primary",
     # research
     "arxiv.org": "research",
     "pubmed.ncbi.nlm.nih.gov": "research",
@@ -60,15 +80,31 @@ _DOMAIN_TIERS: dict[str, str] = {
     "postgresql.org": "reference",
     "docs.python.org": "reference",
     "ietf.org": "reference",
-    # aggregator / mainstream press
+    # aggregator / mainstream & financial press
     "vnexpress.net": "aggregator",
+    "vneconomy.vn": "aggregator",
     "dantri.com.vn": "aggregator",
     "tuoitre.vn": "aggregator",
     "thanhnien.vn": "aggregator",
     "cafef.vn": "aggregator",
+    "cafebiz.vn": "aggregator",
     "vietstock.vn": "aggregator",
+    "tinnhanhchungkhoan.vn": "aggregator",
+    "baodautu.vn": "aggregator",
+    "nguoiquansat.vn": "aggregator",
+    "thesaigontimes.vn": "aggregator",
+    "vietnamplus.vn": "aggregator",
     "reuters.com": "aggregator",
     "bloomberg.com": "aggregator",
+    "ft.com": "aggregator",
+    "wsj.com": "aggregator",
+    "cnbc.com": "aggregator",
+    "marketwatch.com": "aggregator",
+    "seekingalpha.com": "aggregator",
+    "investing.com": "aggregator",
+    "barrons.com": "aggregator",
+    "bbc.com": "aggregator",
+    "apnews.com": "aggregator",
     "tinhte.vn": "aggregator",
     "genk.vn": "aggregator",
     # community / UGC
@@ -81,7 +117,22 @@ _DOMAIN_TIERS: dict[str, str] = {
     "facebook.com": "community",
     "viblo.asia": "community",
     "medium.com": "community",
+    "f319.com": "community",
+    "f247.com": "community",
+    "stocktwits.com": "community",
+    "bsky.app": "community",
+    "quora.com": "community",
+    # low-trust / SEO farms / paywalled doc dumps
+    "pinterest.com": "low_trust",
+    "slideshare.net": "low_trust",
+    "scribd.com": "low_trust",
+    "123docz.net": "low_trust",
+    "tailieu.vn": "low_trust",
+    "studocu.com": "low_trust",
 }
+
+_OFFICIAL_SUFFIXES = (".gov", ".gov.vn", ".gov.uk", ".gov.au", ".gov.sg", ".mil")
+_RESEARCH_SUFFIXES = (".edu", ".edu.vn", ".ac.uk", ".ac.jp")
 
 
 def _norm(domain: str) -> str:
@@ -90,13 +141,19 @@ def _norm(domain: str) -> str:
 
 
 def domain_tier(domain: str) -> str:
-    """Tier name for a domain (suffix match on the registry, else 'unknown')."""
+    """Tier name for a domain (registry match, TLD rule, else 'unknown')."""
     d = _norm(domain)
+    if not d:
+        return "unknown"
     if d in _DOMAIN_TIERS:
         return _DOMAIN_TIERS[d]
     for known, tier in _DOMAIN_TIERS.items():
         if d.endswith("." + known):
             return tier
+    if d.endswith(_OFFICIAL_SUFFIXES):
+        return "official"
+    if d.endswith(_RESEARCH_SUFFIXES):
+        return "research"
     return "unknown"
 
 

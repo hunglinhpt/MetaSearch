@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -96,6 +97,10 @@ class EuropePmcAdapter:
             snippet = f"{h.get('pubYear') or ''} · {journal}".strip(" ·")
             if h.get("openAccessFlag") == "Y":
                 snippet = f"open access · {snippet}" if snippet else "open access"
+            abstract_raw = re.sub(r"<[^>]+>", " ", str(h.get("abstractText") or ""))
+            abstract_clean = re.sub(r"\s+", " ", abstract_raw).strip()
+            if abstract_clean:
+                snippet = f"{snippet} — {abstract_clean[:360]}" if snippet else abstract_clean[:360]
             results.append(
                 RawResult(
                     url=url,

@@ -998,13 +998,56 @@ export async function getSuperAgentWatchdogStatus(
 
 export type ResearchCreateResult = { research_id: string; status: string };
 
+export type ResearchConflict = {
+  topic: string;
+  claim_a: string;
+  citation_a: number | null;
+  claim_b: string;
+  citation_b: number | null;
+};
+
+export type ResearchVerification = {
+  citation_count: number;
+  invalid_markers: number[];
+  unsupported_markers: number[];
+  flagged_sentences?: string[];
+  numeric_fidelity: number;
+  unverified_numbers?: string[];
+  citation_coverage: number;
+  conflicts_count: number;
+};
+
+export type ResearchToolSummary = {
+  tool: string;
+  items?: number;
+  events?: number;
+  chunks?: number;
+  space?: string;
+  symbols?: string[];
+};
+
+export type ResearchHistoryItem = {
+  research_id: string;
+  query: string;
+  status: string;
+  profile?: string | null;
+  cost_usd: number;
+  created_at?: string | null;
+  in_memory?: boolean;
+};
+
 export type ResearchStatus = {
   research_id: string;
   status: string;
-  progress: number;
+  progress: number | { iteration: number; max_iterations: number };
   report_md: string;
   citations: Citation[];
   learnings: string[];
+  outline?: string[];
+  conflicts?: ResearchConflict[];
+  verification?: ResearchVerification | null;
+  tools?: ResearchToolSummary[];
+  profile?: string | null;
   cost_usd: number;
   error: string | null;
 };
@@ -1015,7 +1058,36 @@ export type ResearchCreateBody = {
   depth?: number;
   max_time_s?: number;
   k?: number;
+  profile?: string;
+  space?: string;
 };
+
+export async function listResearchJobs(
+  limit = 20,
+  signal?: AbortSignal
+): Promise<{ jobs: ResearchHistoryItem[] }> {
+  const resp = await fetch(`${API_BASE_URL}/v1/research?limit=${encodeURIComponent(String(limit))}`, {
+    signal,
+  });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function cancelResearchJob(
+  id: string,
+  signal?: AbortSignal
+): Promise<ResearchCreateResult> {
+  const resp = await fetch(
+    `${API_BASE_URL}/v1/research/${encodeURIComponent(id)}/cancel`,
+    { method: "POST", signal }
+  );
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
 
 export async function createResearch(
   body: ResearchCreateBody,
@@ -1129,9 +1201,10 @@ export async function streamSse(
   }
 }
 
-/** SSE URL for a research job's event stream. */
-export function researchEventsUrl(id: string): string {
-  return `${API_BASE_URL}/v1/research/${encodeURIComponent(id)}/events`;
+/** SSE URL for a research job's event stream (optionally resuming after sequence id). */
+export function researchEventsUrl(id: string, afterSeq?: number): string {
+  const base = `${API_BASE_URL}/v1/research/${encodeURIComponent(id)}/events`;
+  return typeof afterSeq === "number" && afterSeq > 0 ? `${base}?after_seq=${afterSeq}` : base;
 }
 
 // --- v2.3.0 market compare + OHLCV chart (docs/18 B1/B2) ---------------------
@@ -1337,6 +1410,7 @@ export type MarketSentimentRequest = {
   k?: number;
   max_queries?: number;
   fetch_market_data?: boolean;
+  use_llm_judge?: boolean;
   timeout_ms?: number;
 };
 
@@ -1372,6 +1446,9 @@ export type MarketSentimentResponse = {
   };
   sentiment_summary: {
     composite_score: number;
+    text_score?: number | null;
+    quant_score?: number | null;
+    pillar_weights?: Record<string, number> | null;
     institutional_vs_retail_spread: number;
     label: "STRONG_BULLISH" | "BULLISH" | "NEUTRAL" | "BEARISH" | "STRONG_BEARISH";
     confidence: number;
@@ -1462,6 +1539,23 @@ export type MarketSentimentResponse = {
   };
   top_verified_drivers: VerifiedSentimentDriver[];
   risk_circuit_breakers: string[];
+  institutional_flows?: Record<string, unknown> | null;
+  market_breadth?: Record<string, unknown> | null;
+  analyst_consensus?: Record<string, unknown> | null;
+  corporate_events?: Record<string, unknown> | null;
+  historical_s_score?: {
+    available: boolean;
+    history_days: number;
+    s_score: number | null;
+    sv_score: number | null;
+    mean_20d_score?: number | null;
+  } | null;
+  llm_judge?: {
+    narrative_summary: string;
+    driver_alignment: string;
+    contrarian_risk: string;
+    score_adjustment: number;
+  } | null;
 };
 
 export async function marketSentiment(

@@ -9,6 +9,7 @@ Category: ``news``.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -82,6 +83,7 @@ class GdeltAdapter:
         q = (query or "").strip()
         if not q:
             return []
+        q = re.sub(r"\bsite:([a-z0-9.\-]+)", r"domain:\1", q, flags=re.IGNORECASE)
         raw_lang = (lang or "").split("-")[0].lower()
         gdelt_lang = _LANG_MAP.get(raw_lang)
         if gdelt_lang:
@@ -119,7 +121,9 @@ class GdeltAdapter:
                     title=title,
                     snippet=f"{domain} · {art.get('language') or ''}".strip(" ·"),
                     adapter=self.id,
-                    source_engines=["gdelt", domain] if domain else ["gdelt"],
+                    source_engines=["gdelt"],
+                    source_url=f"https://{domain}/" if domain else None,
+                    source_name=str(domain) if domain else None,
                     published_at=_parse_seendate(art.get("seendate")),
                     rank=len(results),
                 )

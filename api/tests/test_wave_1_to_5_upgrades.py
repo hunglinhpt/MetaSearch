@@ -8,7 +8,7 @@ import httpx
 
 from app.extraction.chunker import Chunk
 from app.orchestration.pipeline import infer_categories_from_query
-from app.orchestration.research import ContextPack, detect_profile
+from app.orchestration.research import _MAX_CHUNKS_PER_DOC_IN_MERGE, ContextPack, detect_profile
 from app.retrieval.adapters.fengshui import (
     FengShuiAdapter,
     _calc_cung_phi_nam,
@@ -188,17 +188,17 @@ class TestWave2RetrievalAndResearch:
                 content=f"chunk {i}",
                 word_count=10,
             )
-            for i in range(5)
+            for i in range(_MAX_CHUNKS_PER_DOC_IN_MERGE + 2)
         ]
         added = pack.merge(chunks, src)
-        assert len(added) == 3
-        assert len(pack.chunks) == 3  # Up to 3 chunks from the new URL
+        assert len(added) == _MAX_CHUNKS_PER_DOC_IN_MERGE
+        assert len(pack.chunks) == _MAX_CHUNKS_PER_DOC_IN_MERGE
         assert len(pack.sources) == 1
 
         # Second merge with same URL is deduplicated
         added_again = pack.merge(chunks, src)
         assert added_again == []
-        assert len(pack.chunks) == 3
+        assert len(pack.chunks) == _MAX_CHUNKS_PER_DOC_IN_MERGE
 
 
 class TestWave3FinancialForensicsAndTechnicals:

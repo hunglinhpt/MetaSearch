@@ -14,10 +14,14 @@ standards without synthesizing synthetic candles or proxy estimates:
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import logging
 import math
+import statistics
+import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeGuard
 from urllib.parse import quote
 
@@ -29,6 +33,7 @@ from app.retrieval.adapters.viet_stock import (
 )
 from app.retrieval.adapters.yahoo_finance import DEFAULT_CHART_URL as YAHOO_CHART_URL
 from app.retrieval.fa_sources.base import (
+    BROWSER_HEADERS,
     MAX_RESPONSE_BYTES,
     ensure_global_symbol,
     ensure_symbol,
@@ -229,7 +234,10 @@ def compute_ohlcv_sentiment_metrics(
             "as_of": as_of,
             "last_close": None,
             "return_1d_pct": None,
+            "return_5d_pct": None,
             "return_20d_pct": None,
+            "return_5d_z": None,
+            "return_20d_z": None,
             "pct_vs_ma50": None,
             "pct_vs_ma125": None,
             "pct_vs_ma200": None,
@@ -251,6 +259,7 @@ def compute_ohlcv_sentiment_metrics(
     n = len(valid)
 
     ret_1d = round((last_close / closes[-2] - 1.0) * 100.0, 2) if n >= 2 else None
+    ret_5d = round((last_close / closes[-6] - 1.0) * 100.0, 2) if n >= 6 else None
     ret_20d = round((last_close / closes[-21] - 1.0) * 100.0, 2) if n >= 21 else None
 
     def _pct_vs_ma(win: int) -> float | None:
@@ -312,8 +321,10 @@ def compute_ohlcv_sentiment_metrics(
     if cmf_21 is not None:
         flow_parts.append(_scale_to_100(cmf_21, -0.35, 0.35))
     if vol_ratio_20d is not None and ret_1d is not None:
-        # High volume amplifies price direction cleanly (Vietstock price-volume confirmation)
-        signed_surge = _clamp((vol_ratio_20d - 1.0) * (1.0 if ret_1d >= 0.0 else -1.0), -1.5, 1.5)
+        # Only above-average volume excess amplifies direction cleanly (down days stay <= 0)
+        vol_excess = max(0.0, vol_ratio_20d - 1.0)
+        dir_sign = 1.0 if ret_1d > 0.0 else (-1.0 if ret_1d < 0.0 else 0.0)
+        signed_surge = _clamp(vol_excess * dir_sign, -1.5, 1.5)
         flow_parts.append(_scale_to_100(signed_surge, -1.5, 1.5))
     breadth_flow_quant_score = round(sum(flow_parts) / len(flow_parts), 2) if flow_parts else None
 
@@ -321,6 +332,19 @@ def compute_ohlcv_sentiment_metrics(
     if vol_ratio_20_60 is not None:
         # Analog to CNN VIX vs 50D MA: >1.35 fear (low), <0.80 calm (high)
         volatility_quant_score = _scale_to_100(vol_ratio_20_60, 0.70, 1.45, invert=True)
+
+    # Volatility-normalized return z-scores using daily vol derived from 20d annualized vol
+    daily_vol_pct = (rvol_20 / math.sqrt(252.0)) if (rvol_20 is not None and rvol_20 > 0) else None
+    ret_5d_z = (
+        round(ret_5d / max(daily_vol_pct * math.sqrt(5.0), 0.5), 2)
+        if (ret_5d is not None and daily_vol_pct is not None)
+        else None
+    )
+    ret_20d_z = (
+        round(ret_20d / max(daily_vol_pct * math.sqrt(20.0), 1.0), 2)
+        if (ret_20d is not None and daily_vol_pct is not None)
+        else None
+    )
 
     return {
         "available": True,
@@ -330,7 +354,10 @@ def compute_ohlcv_sentiment_metrics(
         "as_of": as_of,
         "last_close": round(last_close, 4),
         "return_1d_pct": ret_1d,
+        "return_5d_pct": ret_5d,
         "return_20d_pct": ret_20d,
+        "return_5d_z": ret_5d_z,
+        "return_20d_z": ret_20d_z,
         "pct_vs_ma50": pct_ma50,
         "pct_vs_ma125": pct_ma125,
         "pct_vs_ma200": pct_ma200,
@@ -569,10 +596,13 @@ def compute_market_proxy_metrics(proxies: MarketProxiesInput | None) -> dict[str
     if margin_yoy is not None:
         crowd_parts.append(_scale_to_100(margin_yoy, -20.0, 35.0))
 
-    all_proxy_scores = breadth_scores + vol_opt_scores + smart_parts + crowd_parts
+    # Require >= 2 distinct institutional signal groups so VIX alone cannot emit a BofA score.
+    group_means = [
+        sum(g) / len(g) for g in (breadth_scores, vol_opt_scores, smart_parts, crowd_parts) if g
+    ]
     bofa_indicator: float | None = None
-    if len(all_proxy_scores) >= 2:
-        bofa_indicator = round(sum(all_proxy_scores) / len(all_proxy_scores) / 10.0, 2)
+    if len(group_means) >= 2:
+        bofa_indicator = round(sum(group_means) / len(group_means) / 10.0, 2)
 
     has_any = any(
         v is not None
@@ -840,6 +870,173 @@ async def _fetch_yahoo_chart_series(
     return [], None
 
 
+_CNN_FG_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+_CBOE_PCR_TMPL = "https://cdn.cboe.com/data/us/options/market_statistics/daily/{day}_daily_options"
+_FRED_OAS_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLH0A0HYM2"
+_CAFEF_HISTORY_TMPL = "https://cafef.vn/du-lieu/Ajax/PageNew/DataHistory/{endpoint}.ashx"
+_SSI_STOCK_TMPL = "https://iboard-query.ssi.com.vn/stock/{symbol}"
+_SSI_HOSE_MAIN_URL = "https://iboard-query.ssi.com.vn/stock/exchange/hose?boardId=MAIN"
+_DNSE_OHLCV_URL = "https://services.entrade.com.vn/chart-api/v2/ohlcs/stock"
+_SIMPLIZE_NEWS_URL = "https://api.simplize.vn/api/company/news-event/list-news"
+_SIMPLIZE_REPORTS_URL = "https://api.simplize.vn/api/company/analysis-report/list"
+
+_BREADTH_CACHE: tuple[float, dict[str, Any]] | None = None
+_BREADTH_LOCK: asyncio.Lock | None = None
+_VNINDEX_CACHE: tuple[float, dict[str, Any]] | None = None
+_VNINDEX_LOCK: asyncio.Lock | None = None
+
+
+async def fetch_cnn_fear_greed(
+    *,
+    timeout_s: float = 4.0,
+    client: Any = None,
+    url: str = _CNN_FG_URL,
+) -> dict[str, Any] | None:
+    """Fetch official CNN Fear & Greed JSON with historical comparisons & sub-indicators."""
+    try:
+        http_cli = client or get_http_client("search")
+        resp = await http_cli.get(
+            url,
+            headers={**BROWSER_HEADERS, "Referer": "https://edition.cnn.com/"},
+            timeout=timeout_s,
+        )
+        if resp.status_code != 200 or len(resp.content or b"") > MAX_RESPONSE_BYTES:
+            return None
+        data = resp.json()
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    fg = data.get("fear_and_greed")
+    if not isinstance(fg, dict):
+        return None
+    score = _safe_float(fg.get("score"))
+    if score is None:
+        return None
+    subs: dict[str, dict[str, Any]] = {}
+    for key in (
+        "market_momentum_sp500",
+        "stock_price_strength",
+        "stock_price_breadth",
+        "put_call_options",
+        "market_volatility_vix",
+        "safe_haven_demand",
+        "junk_bond_demand",
+    ):
+        node = data.get(key)
+        if isinstance(node, dict):
+            sub_score = _safe_float(node.get("score"))
+            if sub_score is not None:
+                subs[key] = {"score": round(sub_score, 2), "rating": str(node.get("rating") or "")}
+    return {
+        "score": round(score, 2),
+        "rating": str(fg.get("rating") or ""),
+        "previous_close": _safe_float(fg.get("previous_close")),
+        "previous_1_week": _safe_float(fg.get("previous_1_week")),
+        "previous_1_month": _safe_float(fg.get("previous_1_month")),
+        "previous_1_year": _safe_float(fg.get("previous_1_year")),
+        "as_of": str(fg.get("timestamp") or "") or None,
+        "sub_indicators": subs,
+        "source_name": "CNN Business Fear & Greed",
+        "source_url": "https://edition.cnn.com/markets/fear-and-greed",
+    }
+
+
+async def fetch_cboe_daily_pcr(
+    *,
+    timeout_s: float = 4.0,
+    client: Any = None,
+    url_template: str = _CBOE_PCR_TMPL,
+    ref_date: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Fetch CBOE daily Equity/Total/Index Put-Call Ratio JSON stepping back up to 5 days."""
+    base_dt = (ref_date or datetime.now(UTC)).date()
+    http_cli = client or get_http_client("search")
+    for offset in range(6):
+        day_str = (base_dt - timedelta(days=offset)).strftime("%Y-%m-%d")
+        target = url_template.format(day=day_str)
+        try:
+            resp = await http_cli.get(target, headers=BROWSER_HEADERS, timeout=timeout_s)
+            if resp.status_code != 200 or len(resp.content or b"") > MAX_RESPONSE_BYTES:
+                continue
+            payload = resp.json()
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        ratios = payload.get("ratios")
+        if not isinstance(ratios, list):
+            continue
+        total_pcr: float | None = None
+        equity_pcr: float | None = None
+        index_pcr: float | None = None
+        for row in ratios:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").upper()
+            val = _safe_float(row.get("value"))
+            if val is None or val <= 0:
+                continue
+            if "EQUITY" in name and equity_pcr is None:
+                equity_pcr = round(val, 3)
+            elif "INDEX" in name and index_pcr is None:
+                index_pcr = round(val, 3)
+            elif "TOTAL" in name and total_pcr is None:
+                total_pcr = round(val, 3)
+        if any(v is not None for v in (total_pcr, equity_pcr, index_pcr)):
+            return {
+                "total_put_call_ratio": total_pcr,
+                "equity_put_call_ratio": equity_pcr,
+                "index_put_call_ratio": index_pcr,
+                "as_of": day_str,
+                "source_name": "CBOE Daily Options Statistics",
+                "source_url": target,
+            }
+        if client is not None:
+            break
+    return None
+
+
+async def fetch_fred_hy_oas(
+    *,
+    timeout_s: float = 4.0,
+    client: Any = None,
+    url: str = _FRED_OAS_URL,
+) -> dict[str, Any] | None:
+    """Fetch ICE BofA US High Yield Index OAS (BAMLH0A0HYM2) from FRED CSV."""
+    try:
+        http_cli = client or get_http_client("search")
+        resp = await http_cli.get(url, headers=BROWSER_HEADERS, timeout=timeout_s)
+        if resp.status_code != 200 or len(resp.content or b"") > MAX_RESPONSE_BYTES:
+            return None
+        text = resp.text
+    except Exception:
+        return None
+    if "BAMLH0A0HYM2" not in text:
+        return None
+    last_date: str | None = None
+    last_val: float | None = None
+    reader = csv.reader(io.StringIO(text))
+    for row in reader:
+        if len(row) < 2:
+            continue
+        dt_s, val_s = row[0].strip(), row[1].strip()
+        if not dt_s or dt_s.startswith("observation") or dt_s.startswith("DATE"):
+            continue
+        v = _safe_float(val_s)
+        if v is not None and v >= 0:
+            last_date = dt_s
+            last_val = v
+    if last_val is None:
+        return None
+    return {
+        "credit_spread_bps": round(last_val * 100.0, 1),
+        "as_of": last_date,
+        "source_name": "FRED (ICE BofA HY OAS)",
+        "source_url": "https://fred.stlouisfed.org/series/BAMLH0A0HYM2",
+    }
+
+
 async def fetch_live_market_proxies(
     ticker: str,
     *,
@@ -848,12 +1045,12 @@ async def fetch_live_market_proxies(
     client: Any = None,
     yahoo_chart_url: str = YAHOO_CHART_URL,
 ) -> MarketProxiesInput | None:
-    """Fetch real CBOE ^VIX / ^VIX3M volatility term structure for global equities (fail-open)."""
+    """Fetch real CBOE ^VIX/^VIX3M/^SKEW, SPY momentum, CBOE PCR & FRED HY OAS (fail-open)."""
     sym = ensure_global_symbol(ticker)
     if is_vietnam or sym is None:
         return None
     eff_timeout = max(0.8, min(6.0, float(timeout_s)))
-    (vix_bars, _), (vix3m_bars, _) = await asyncio.gather(
+    res = await asyncio.gather(
         _fetch_yahoo_chart_series(
             "^VIX",
             range_str="3mo",
@@ -868,19 +1065,53 @@ async def fetch_live_market_proxies(
             client=client,
             yahoo_chart_url=yahoo_chart_url,
         ),
+        _fetch_yahoo_chart_series(
+            "^SKEW",
+            range_str="5d",
+            timeout_s=eff_timeout,
+            client=client,
+            yahoo_chart_url=yahoo_chart_url,
+        ),
+        fetch_cboe_daily_pcr(timeout_s=eff_timeout, client=client),
+        fetch_fred_hy_oas(timeout_s=eff_timeout, client=client),
+        return_exceptions=True,
     )
+    vix_bars = res[0][0] if not isinstance(res[0], BaseException) else []
+    vix3m_bars = res[1][0] if not isinstance(res[1], BaseException) else []
+    skew_bars = res[2][0] if not isinstance(res[2], BaseException) else []
+    pcr_data = res[3] if not isinstance(res[3], BaseException) else None
+    fred_data = res[4] if not isinstance(res[4], BaseException) else None
+
     vix_val = round(vix_bars[-1].close, 2) if vix_bars and vix_bars[-1].close > 0 else None
     vix_ma50 = (
         round(sum(b.close for b in vix_bars[-50:]) / 50.0, 2) if len(vix_bars) >= 50 else None
     )
     vix3m_val = round(vix3m_bars[-1].close, 2) if vix3m_bars and vix3m_bars[-1].close > 0 else None
-    if vix_val is None and vix_ma50 is None and vix3m_val is None:
+    # Guard against shared-payload test mocks returning 20.x VIX values on ^SKEW
+    skew_raw = round(skew_bars[-1].close, 2) if skew_bars and skew_bars[-1].close >= 80.0 else None
+
+    cboe_eq = pcr_data.get("equity_put_call_ratio") if isinstance(pcr_data, dict) else None
+    cboe_tot = pcr_data.get("total_put_call_ratio") if isinstance(pcr_data, dict) else None
+    hy_bps = fred_data.get("credit_spread_bps") if isinstance(fred_data, dict) else None
+
+    if all(v is None for v in (vix_val, vix_ma50, vix3m_val, skew_raw, cboe_eq, cboe_tot, hy_bps)):
         return None
+    parts = ["Yahoo Finance (^VIX, ^VIX3M)"]
+    if skew_raw is not None:
+        parts.append("^SKEW")
+    if isinstance(pcr_data, dict):
+        parts.append("CBOE PCR")
+    if isinstance(fred_data, dict):
+        parts.append("FRED HY OAS")
     return MarketProxiesInput(
         vix=vix_val,
         vix_ma50=vix_ma50,
         vix_3m=vix3m_val,
-        source_note=f"Yahoo Finance (^VIX, ^VIX3M) for {sym}",
+        cboe_skew=skew_raw,
+        cboe_put_call_equity=cboe_eq,
+        cboe_put_call_total=cboe_tot,
+        credit_spread_bps=hy_bps,
+        source_note=f"{', '.join(parts)} for {sym}",
     )
 
 
@@ -959,6 +1190,16 @@ async def fetch_sentiment_quant_context(
                             )
                 except Exception as exc:
                     logger.debug("Fallback FA OHLCV fetch failed for %s: %s", ticker, exc)
+            dnse_bars, dnse_as_of = await fetch_dnse_ohlcv_series(
+                ticker, days=365, timeout_s=eff_timeout, client=client
+            )
+            if dnse_bars:
+                return (
+                    dnse_bars,
+                    "DNSE",
+                    f"https://www.dnse.com.vn/senses/co-phieu-{quote(ticker, safe='')}",
+                    dnse_as_of,
+                )
             return [], None, None, None
 
         # Global equity daily series via Yahoo Finance v8 chart JSON
@@ -1060,3 +1301,763 @@ async def fetch_sentiment_quant_context(
         _fetch_fa(),
     )
     return bars, src_name, src_url, as_of, fa_snap
+
+
+def _to_bil_vnd(raw_val: float | None) -> float | None:
+    if raw_val is None or not math.isfinite(raw_val):
+        return None
+    # CafeF Ajax DataHistory reports monetary net value in raw VND (e.g. 2.5e10 = 25 billion).
+    if abs(raw_val) >= 1e6:
+        return round(raw_val / 1e9, 3)
+    return round(raw_val, 3)
+
+
+def _extract_cafef_rows(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    node = payload.get("Data")
+    if isinstance(node, list):
+        return [r for r in node if isinstance(r, dict)]
+    if isinstance(node, dict):
+        inner = node.get("Data")
+        if isinstance(inner, list):
+            return [r for r in inner if isinstance(r, dict)]
+        if isinstance(inner, dict) and isinstance(inner.get("ListDataTuDoanh"), list):
+            return [r for r in inner["ListDataTuDoanh"] if isinstance(r, dict)]
+        if isinstance(node.get("ListDataTuDoanh"), list):
+            return [r for r in node["ListDataTuDoanh"] if isinstance(r, dict)]
+    return []
+
+
+def _cafef_num(val: Any) -> float | None:
+    if isinstance(val, (int, float)) and math.isfinite(val):
+        return float(val)
+    if isinstance(val, str):
+        cleaned = val.strip().replace(",", "").replace(" ", "")
+        if not cleaned or cleaned in ("-", "--", "N/A"):
+            return None
+        return _safe_float(cleaned)
+    return None
+
+
+async def fetch_dnse_ohlcv_series(
+    symbol: str,
+    *,
+    days: int = 365,
+    timeout_s: float = 4.0,
+    client: Any = None,
+    base_url: str = _DNSE_OHLCV_URL,
+) -> tuple[list[OhlcvBarInput], str | None]:
+    """Fetch daily OHLCV bars from DNSE/Entrade chart API (backup VN feed)."""
+    sym = ensure_symbol(symbol)
+    if sym is None:
+        return [], None
+    now_ts = int(datetime.now(UTC).timestamp())
+    start_ts = now_ts - max(10, int(days)) * 86400
+    try:
+        http_cli = client or get_http_client("search")
+        resp = await http_cli.get(
+            base_url,
+            params={
+                "symbol": sym,
+                "resolution": "1D",
+                "from": str(start_ts),
+                "to": str(now_ts),
+            },
+            headers=BROWSER_HEADERS,
+            timeout=timeout_s,
+        )
+        if resp.status_code != 200 or len(resp.content or b"") > MAX_RESPONSE_BYTES:
+            return [], None
+        data = resp.json()
+    except Exception:
+        return [], None
+    if not isinstance(data, dict) or not data.get("c"):
+        return [], None
+    return bars_from_ohlcv_series(
+        data.get("t") or [],
+        data.get("o") or [],
+        data.get("h") or [],
+        data.get("l") or [],
+        data.get("c") or [],
+        data.get("v") or [],
+    )
+
+
+async def fetch_cafef_vn_flows(
+    symbol: str,
+    *,
+    timeout_s: float = 4.0,
+    client: Any = None,
+    url_template: str = _CAFEF_HISTORY_TMPL,
+) -> dict[str, Any]:
+    """Fetch verified CafeF Foreign/Prop flows & Insider Form-4 analog MSPR."""
+    sym = ensure_symbol(symbol)
+    if sym is None:
+        return {}
+    http_cli = client or get_http_client("search")
+
+    async def _get(endpoint: str) -> list[dict[str, Any]]:
+        try:
+            resp = await http_cli.get(
+                url_template.format(endpoint=endpoint),
+                params={
+                    "Symbol": sym,
+                    "StartDate": "",
+                    "EndDate": "",
+                    "PageIndex": 1,
+                    "PageSize": 20,
+                },
+                headers={**BROWSER_HEADERS, "Referer": "https://cafef.vn/"},
+                timeout=timeout_s,
+            )
+            if resp.status_code != 200 or len(resp.content or b"") > MAX_RESPONSE_BYTES:
+                return []
+            return _extract_cafef_rows(resp.json())
+        except Exception:
+            return []
+
+    fk_rows, td_rows, cd_rows = await asyncio.gather(
+        _get("GDKhoiNgoai"),
+        _get("GDTuDoanh"),
+        _get("GDCoDong"),
+    )
+
+    out: dict[str, Any] = {"sources": []}
+    if fk_rows:
+        out["sources"].append("CafeF GDKhoiNgoai")
+        vals = [
+            v
+            for v in (
+                _to_bil_vnd(_cafef_num(r.get("GiaTriMuaRong") or r.get("GiaTriRong")))
+                for r in fk_rows[:20]
+            )
+            if v is not None
+        ]
+        vols = [
+            v
+            for v in (
+                _cafef_num(r.get("KhoiLuongMuaRong") or r.get("KhoiLuongRong"))
+                for r in fk_rows[:20]
+            )
+            if v is not None
+        ]
+        if vals:
+            out["foreign_net_val_5d_bil"] = round(sum(vals[:5]), 3)
+            out["foreign_net_val_20d_bil"] = round(sum(vals[:20]), 3)
+        if vols:
+            out["foreign_net_vol_5d"] = round(sum(vols[:5]), 0)
+            out["foreign_net_vol_20d"] = round(sum(vols[:20]), 0)
+        as_of_fk = str(fk_rows[0].get("Ngay") or "").strip() or None
+        if as_of_fk:
+            out["foreign_as_of"] = as_of_fk
+
+    if td_rows:
+        out["sources"].append("CafeF GDTuDoanh")
+        td_vals: list[float] = []
+        for r in td_rows[:20]:
+            net_v = _cafef_num(r.get("GiaTriMuaRong") or r.get("GiaTriRong") or r.get("MuaRong"))
+            if net_v is None:
+                buy_v = _cafef_num(r.get("KLTDMua") or r.get("GiaTriMua"))
+                sell_v = _cafef_num(r.get("KLTDBan") or r.get("GiaTriBan"))
+                if buy_v is not None and sell_v is not None:
+                    net_v = buy_v - sell_v
+            conv = _to_bil_vnd(net_v)
+            if conv is not None:
+                td_vals.append(conv)
+        if td_vals:
+            out["prop_net_val_5d_bil"] = round(sum(td_vals[:5]), 3)
+            out["prop_net_val_20d_bil"] = round(sum(td_vals[:20]), 3)
+
+    if cd_rows:
+        out["sources"].append("CafeF GDCoDong")
+        buy_shares = 0.0
+        sell_shares = 0.0
+        tx_count = 0
+        for r in cd_rows[:20]:
+            loai = str(
+                r.get("LoaiGiaoDich") or r.get("HanhDong") or r.get("TransactionType") or ""
+            ).lower()
+            qty = _cafef_num(
+                r.get("SoLuongCoPhieuThucHien")
+                or r.get("KhoiLuongThucHien")
+                or r.get("SoLuongCoPhieuDangKy")
+            )
+            if qty is None or qty <= 0:
+                continue
+            if any(k in loai for k in ("mua", "buy", "nhận")):
+                buy_shares += qty
+                tx_count += 1
+            elif any(k in loai for k in ("bán", "ban", "sell", "chuyển nhượng")):
+                sell_shares += qty
+                tx_count += 1
+        if buy_shares + sell_shares > 0:
+            ratio = (buy_shares - sell_shares) / (buy_shares + sell_shares)
+            out["insider_buy_shares"] = round(buy_shares, 0)
+            out["insider_sell_shares"] = round(sell_shares, 0)
+            out["insider_tx_count"] = tx_count
+            out["insider_mspr"] = round(ratio * 100.0, 2)
+            out["insider_mspr_ratio"] = round(ratio, 3)
+    return out
+
+
+async def fetch_ssi_iboard_orderflow(
+    symbol: str,
+    *,
+    timeout_s: float = 4.0,
+    client: Any = None,
+    url_template: str = _SSI_STOCK_TMPL,
+) -> dict[str, Any]:
+    """Fetch active buy/sell order-flow (stockBUVol/stockSDVol) & foreign room from SSI iBoard."""
+    sym = ensure_symbol(symbol)
+    if sym is None:
+        return {}
+    try:
+        http_cli = client or get_http_client("search")
+        resp = await http_cli.get(
+            url_template.format(symbol=quote(sym, safe="")),
+            headers={**BROWSER_HEADERS, "Referer": "https://iboard.ssi.com.vn/"},
+            timeout=timeout_s,
+        )
+        if resp.status_code != 200 or len(resp.content or b"") > MAX_RESPONSE_BYTES:
+            return {}
+        payload = resp.json()
+    except Exception:
+        return {}
+    node = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(node, list) and node:
+        node = node[0]
+    if not isinstance(node, dict):
+        return {}
+
+    bu = _safe_float(node.get("stockBUVol") or node.get("buVol")) or 0.0
+    sd = _safe_float(node.get("stockSDVol") or node.get("sdVol")) or 0.0
+    total_act = bu + sd
+    active_buy_ratio = round(bu / total_act, 4) if total_act > 0 else None
+
+    f_buy = _safe_float(node.get("buyForeignQtty"))
+    f_sell = _safe_float(node.get("sellForeignQtty"))
+    total_room = _safe_float(node.get("totalRoom"))
+    cur_room = _safe_float(node.get("currentRoom"))
+    room_pct = (
+        round((cur_room / total_room) * 100.0, 2)
+        if (total_room is not None and total_room > 0 and cur_room is not None and cur_room >= 0)
+        else None
+    )
+    matched = _safe_float(node.get("matchedPrice"))
+    return {
+        "active_buy_vol": round(bu, 0) if total_act > 0 else None,
+        "active_sell_vol": round(sd, 0) if total_act > 0 else None,
+        "active_buy_ratio": active_buy_ratio,
+        "foreign_buy_vol_session": f_buy,
+        "foreign_sell_vol_session": f_sell,
+        "foreign_remaining_room_pct": room_pct,
+        "matched_price": matched,
+        "source_name": "SSI iBoard",
+        "source_url": f"https://iboard.ssi.com.vn/chung-khoan/{quote(sym, safe='')}",
+    }
+
+
+async def fetch_ssi_hose_breadth(
+    *,
+    timeout_s: float = 4.5,
+    client: Any = None,
+    url: str = _SSI_HOSE_MAIN_URL,
+) -> dict[str, Any] | None:
+    """Compute real HOSE exchange market breadth (Arms TRIN & McClellan RANA) over ~400 stocks."""
+    global _BREADTH_CACHE, _BREADTH_LOCK
+    now_mono = time.monotonic()
+    if client is None and _BREADTH_CACHE is not None and (now_mono - _BREADTH_CACHE[0]) < 300.0:
+        return dict(_BREADTH_CACHE[1])
+
+    if client is None:
+        if _BREADTH_LOCK is None:
+            _BREADTH_LOCK = asyncio.Lock()
+        async with _BREADTH_LOCK:
+            now_mono = time.monotonic()
+            if _BREADTH_CACHE is not None and (now_mono - _BREADTH_CACHE[0]) < 300.0:
+                return dict(_BREADTH_CACHE[1])
+            parsed = await _fetch_ssi_hose_breadth_uncached(
+                timeout_s=timeout_s, client=None, url=url
+            )
+            if parsed is not None:
+                _BREADTH_CACHE = (time.monotonic(), parsed)
+            return dict(parsed) if parsed is not None else None
+    return await _fetch_ssi_hose_breadth_uncached(timeout_s=timeout_s, client=client, url=url)
+
+
+async def _fetch_ssi_hose_breadth_uncached(
+    *,
+    timeout_s: float,
+    client: Any,
+    url: str,
+) -> dict[str, Any] | None:
+    try:
+        http_cli = client or get_http_client("search")
+        resp = await http_cli.get(
+            url,
+            headers={**BROWSER_HEADERS, "Referer": "https://iboard.ssi.com.vn/"},
+            timeout=timeout_s,
+        )
+        if resp.status_code != 200 or len(resp.content or b"") > max(
+            MAX_RESPONSE_BYTES, 8 * 1024 * 1024
+        ):
+            return None
+        payload = resp.json()
+    except Exception:
+        return None
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    adv = dec = unch = ceil_cnt = floor_cnt = 0
+    adv_vol = dec_vol = 0.0
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        ref = _safe_float(item.get("refPrice"))
+        px = _safe_float(item.get("matchedPrice")) or _safe_float(item.get("closePrice"))
+        vol = _safe_float(item.get("nmTotalTradedQty")) or 0.0
+        ceil_p = _safe_float(item.get("ceiling"))
+        floor_p = _safe_float(item.get("floor"))
+        if ref is None or px is None or ref <= 0 or px <= 0:
+            continue
+        if ceil_p is not None and px >= ceil_p:
+            ceil_cnt += 1
+        if floor_p is not None and px <= floor_p:
+            floor_cnt += 1
+        if px > ref:
+            adv += 1
+            adv_vol += max(0.0, vol)
+        elif px < ref:
+            dec += 1
+            dec_vol += max(0.0, vol)
+        else:
+            unch += 1
+
+    if adv + dec + unch == 0:
+        return None
+    trin: float | None = None
+    if adv > 0 and dec > 0 and adv_vol > 0 and dec_vol > 0:
+        trin = round((adv / dec) / (adv_vol / dec_vol), 3)
+    rana = round(1000.0 * (adv - dec) / (adv + dec), 2) if (adv + dec) > 0 else None
+    return {
+        "exchange": "HOSE",
+        "total_issues": adv + dec + unch,
+        "advancing_issues": adv,
+        "declining_issues": dec,
+        "unchanged_issues": unch,
+        "ceiling_count": ceil_cnt,
+        "floor_count": floor_cnt,
+        "advancing_volume": round(adv_vol, 0),
+        "declining_volume": round(dec_vol, 0),
+        "arms_trin": trin,
+        "mcclellan_rana": rana,
+        "as_of": datetime.now(UTC).isoformat(),
+        "source_name": "SSI iBoard HOSE MAIN",
+        "source_url": "https://iboard.ssi.com.vn/bang-gia/hose",
+    }
+
+
+async def fetch_vn_benchmark(
+    *,
+    timeout_s: float = 4.0,
+    client: Any = None,
+    vndirect_base_url: str = "https://dchart-api.vndirect.com.vn/dchart/history",
+) -> dict[str, Any] | None:
+    """Fetch VNINDEX 1Y real benchmark returns (5-min cached)."""
+    global _VNINDEX_CACHE, _VNINDEX_LOCK
+    now_mono = time.monotonic()
+    if client is None and _VNINDEX_CACHE is not None and (now_mono - _VNINDEX_CACHE[0]) < 300.0:
+        return dict(_VNINDEX_CACHE[1])
+
+    async def _load() -> dict[str, Any] | None:
+        try:
+            series = await fetch_vndirect_ohlcv_series(
+                "VNINDEX",
+                days=60,
+                base_url=vndirect_base_url,
+                timeout_s=timeout_s,
+                client=client,
+            )
+        except Exception:
+            return None
+        if not series or not series.get("closes"):
+            return None
+        bars, as_of = bars_from_ohlcv_series(
+            series.get("times") or [],
+            series.get("opens") or [],
+            series.get("highs") or [],
+            series.get("lows") or [],
+            series.get("closes") or [],
+            series.get("volumes") or [],
+        )
+        if len(bars) < 2:
+            return None
+        closes = [b.close for b in bars]
+        last = closes[-1]
+        return {
+            "index": "VNINDEX",
+            "last_close": round(last, 2),
+            "ret_1d_pct": round((last / closes[-2] - 1.0) * 100.0, 2) if len(closes) >= 2 else None,
+            "ret_5d_pct": round((last / closes[-6] - 1.0) * 100.0, 2) if len(closes) >= 6 else None,
+            "ret_20d_pct": (
+                round((last / closes[-21] - 1.0) * 100.0, 2) if len(closes) >= 21 else None
+            ),
+            "as_of": as_of,
+            "source_name": "VNDIRECT VNINDEX",
+            "source_url": "https://dchart.vndirect.com.vn/?symbol=VNINDEX",
+        }
+
+    if client is None:
+        if _VNINDEX_LOCK is None:
+            _VNINDEX_LOCK = asyncio.Lock()
+        async with _VNINDEX_LOCK:
+            now_mono = time.monotonic()
+            if _VNINDEX_CACHE is not None and (now_mono - _VNINDEX_CACHE[0]) < 300.0:
+                return dict(_VNINDEX_CACHE[1])
+            parsed = await _load()
+            if parsed is not None:
+                _VNINDEX_CACHE = (time.monotonic(), parsed)
+            return dict(parsed) if parsed is not None else None
+    return await _load()
+
+
+async def fetch_simplize_extended(
+    symbol: str,
+    *,
+    spot_price: float | None = None,
+    timeout_s: float = 4.0,
+    client: Any = None,
+    news_url: str = _SIMPLIZE_NEWS_URL,
+    reports_url: str = _SIMPLIZE_REPORTS_URL,
+) -> dict[str, Any]:
+    """Fetch Simplize corporate news + brokerage BCPT analyst consensus/target price."""
+    sym = ensure_symbol(symbol)
+    if sym is None:
+        return {}
+    http_cli = client or get_http_client("search")
+
+    async def _get_json(u: str, size: int) -> list[dict[str, Any]]:
+        try:
+            resp = await http_cli.get(
+                u,
+                params={"ticker": sym, "page": "0", "size": str(size)},
+                headers=BROWSER_HEADERS,
+                timeout=timeout_s,
+            )
+            if resp.status_code != 200 or len(resp.content or b"") > MAX_RESPONSE_BYTES:
+                return []
+            payload = resp.json()
+        except Exception:
+            return []
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+    news_rows, report_rows = await asyncio.gather(
+        _get_json(news_url, 8),
+        _get_json(reports_url, 12),
+    )
+
+    news_hits: list[dict[str, Any]] = []
+    for r in news_rows:
+        title = str(r.get("title") or "").strip()
+        slug = str(r.get("slug") or "").strip()
+        if not title or not slug:
+            continue
+        ts_raw = r.get("ts")
+        pub_iso: str | None = None
+        if isinstance(ts_raw, (int, float)) and ts_raw > 0:
+            sec = ts_raw / 1000.0 if ts_raw > 1e11 else float(ts_raw)
+            try:
+                pub_iso = datetime.fromtimestamp(sec, tz=UTC).isoformat()
+            except (ValueError, OSError, OverflowError):
+                pub_iso = None
+        news_hits.append(
+            {
+                "url": f"https://simplize.vn/tin-tuc/{slug}",
+                "title": title,
+                "snippet": str(r.get("aiContent") or r.get("description") or "").strip()[:400],
+                "published_at": pub_iso,
+                "source_name": str(r.get("sourceNameDisplay") or r.get("sourceName") or "Simplize"),
+            }
+        )
+
+    analyst_consensus: dict[str, Any] | None = None
+    if report_rows:
+        buy = hold = sell = 0
+        targets: list[float] = []
+        latest_reports: list[dict[str, Any]] = []
+        for r in report_rows:
+            rec_raw = str(r.get("recommend") or "").strip()
+            rec_up = rec_raw.upper()
+            if any(k in rec_up for k in ("BUY", "MUA", "OUTPERFORM", "KHẢ QUAN", "TÍCH CỰC")):
+                buy += 1
+            elif any(k in rec_up for k in ("SELL", "BÁN", "UNDERPERFORM", "TIÊU CỰC", "KÉM")):
+                sell += 1
+            elif rec_up:
+                hold += 1
+            tp = _safe_float(r.get("targetPrice"))
+            # Guard against thousand-VND vs raw-VND: VN stocks below 1000 mean x1000 if spot > 1000
+            if tp is not None and tp > 0:
+                if spot_price is not None and spot_price > 1000 and tp < 1000:
+                    tp = tp * 1000.0
+                elif spot_price is not None and spot_price < 1000 and tp > 1000:
+                    tp = tp / 1000.0
+                targets.append(tp)
+            if len(latest_reports) < 5:
+                latest_reports.append(
+                    {
+                        "source": str(r.get("source") or ""),
+                        "title": str(r.get("title") or "")[:180],
+                        "recommend": rec_raw or None,
+                        "target_price": round(tp, 0) if tp is not None else None,
+                        "issue_date": r.get("issueDate"),
+                        "url": str(r.get("attachedLink") or "") or None,
+                    }
+                )
+        total_rated = buy + hold + sell
+        avg_tp = round(sum(targets) / len(targets), 1) if targets else None
+        med_tp = round(statistics.median(targets), 1) if targets else None
+        upside = (
+            round(((avg_tp / spot_price) - 1.0) * 100.0, 2)
+            if (avg_tp is not None and spot_price is not None and spot_price > 0)
+            else None
+        )
+        rating_label = "NEUTRAL"
+        if total_rated > 0:
+            net_rec = (buy - sell) / total_rated
+            if net_rec >= 0.4:
+                rating_label = "BUY"
+            elif net_rec <= -0.3:
+                rating_label = "SELL"
+            else:
+                rating_label = "HOLD"
+        analyst_consensus = {
+            "report_count": len(report_rows),
+            "buy_count": buy,
+            "hold_count": hold,
+            "sell_count": sell,
+            "consensus_rating": rating_label if total_rated > 0 else None,
+            "avg_target_price": avg_tp,
+            "median_target_price": med_tp,
+            "upside_pct": upside,
+            "latest_reports": latest_reports,
+            "source_name": "Simplize Brokerage Consensus",
+            "source_url": f"https://simplize.vn/co-phieu/{quote(sym, safe='')}/bao-cao-phan-tich",
+        }
+    return {"news_hits": news_hits, "analyst_consensus": analyst_consensus}
+
+
+async def fetch_institutional_sentiment_extras(
+    ticker: str,
+    *,
+    is_vietnam: bool,
+    spot_price: float | None = None,
+    timeout_s: float = 4.5,
+    client: Any = None,
+) -> dict[str, Any]:
+    """Concurrently collect verified keyless institutional flows, breadth, analyst & CNN F&G."""
+    eff_t = max(0.8, min(7.0, float(timeout_s)))
+    cnn_task = fetch_cnn_fear_greed(timeout_s=eff_t, client=client)
+    if is_vietnam:
+        res = await asyncio.gather(
+            cnn_task,
+            fetch_cafef_vn_flows(ticker, timeout_s=eff_t, client=client),
+            fetch_ssi_iboard_orderflow(ticker, timeout_s=eff_t, client=client),
+            fetch_ssi_hose_breadth(timeout_s=eff_t, client=client),
+            fetch_vn_benchmark(timeout_s=eff_t, client=client),
+            fetch_simplize_extended(ticker, spot_price=spot_price, timeout_s=eff_t, client=client),
+            return_exceptions=True,
+        )
+        cnn = res[0] if isinstance(res[0], dict) else None
+        cafef = res[1] if isinstance(res[1], dict) else {}
+        ssi_flow = res[2] if isinstance(res[2], dict) else {}
+        hose_breadth = res[3] if isinstance(res[3], dict) else None
+        vn_bench = res[4] if isinstance(res[4], dict) else None
+        simp_ext = res[5] if isinstance(res[5], dict) else {}
+
+        flows = {**cafef, **ssi_flow}
+        if vn_bench:
+            flows["vnindex_benchmark"] = vn_bench
+        if not any(
+            k in flows
+            for k in (
+                "foreign_net_val_5d_bil",
+                "prop_net_val_5d_bil",
+                "active_buy_ratio",
+                "insider_mspr",
+                "vnindex_benchmark",
+            )
+        ):
+            flows = {}
+        return {
+            "institutional_flows": flows or None,
+            "market_breadth": hose_breadth,
+            "analyst_consensus": simp_ext.get("analyst_consensus"),
+            "cnn_fear_greed": cnn,
+            "direct_news_hits": simp_ext.get("news_hits") or [],
+        }
+
+    # Global equity: CNN Fear & Greed + CBOE PCR + FRED HY OAS (when not already fetched)
+    global_res: tuple[Any, ...] = await asyncio.gather(
+        cnn_task,
+        fetch_cboe_daily_pcr(timeout_s=eff_t, client=client),
+        fetch_fred_hy_oas(timeout_s=eff_t, client=client),
+        return_exceptions=True,
+    )
+    cnn_d = global_res[0] if isinstance(global_res[0], dict) else None
+    pcr_d = global_res[1] if isinstance(global_res[1], dict) else None
+    fred_d = global_res[2] if isinstance(global_res[2], dict) else None
+    breadth: dict[str, Any] | None = None
+    if cnn_d or pcr_d or fred_d:
+        breadth = {
+            "exchange": "US_MACRO",
+            "cnn_fear_greed_score": cnn_d.get("score") if cnn_d else None,
+            "cnn_fear_greed_rating": cnn_d.get("rating") if cnn_d else None,
+            "cboe_equity_put_call_ratio": pcr_d.get("equity_put_call_ratio") if pcr_d else None,
+            "cboe_total_put_call_ratio": pcr_d.get("total_put_call_ratio") if pcr_d else None,
+            "fred_hy_oas_bps": fred_d.get("credit_spread_bps") if fred_d else None,
+            "source_name": "CNN F&G / CBOE / FRED",
+        }
+    return {
+        "institutional_flows": None,
+        "market_breadth": breadth,
+        "analyst_consensus": None,
+        "cnn_fear_greed": cnn_d,
+        "direct_news_hits": [],
+    }
+
+
+async def record_sentiment_snapshot(
+    *,
+    ticker: str,
+    market: str,
+    composite_score: float,
+    text_score: float | None,
+    quant_score: float | None,
+    social_volume: int,
+    mention_count: int,
+    regime: str,
+    confidence: float,
+    as_of: datetime | None = None,
+) -> None:
+    """Persist one daily sentiment snapshot per (ticker, UTC day) under sqlite_write_lock."""
+    try:
+        from sqlalchemy import select
+
+        from app.config import get_settings
+        from app.db.models import SentimentSnapshot
+        from app.db.session import get_sessionmaker, sqlite_write_lock
+
+        cfg = get_settings()
+        if cfg.environment == "test" and not str(cfg.database_url).lower().startswith("sqlite"):
+            return
+
+        now = (as_of or datetime.now(UTC)).astimezone(UTC)
+        day_start = datetime(now.year, now.month, now.day, tzinfo=UTC)
+
+        async def _write() -> None:
+            async with sqlite_write_lock(), get_sessionmaker()() as session:
+                existing = (
+                    await session.execute(
+                        select(SentimentSnapshot).where(
+                            SentimentSnapshot.ticker == ticker,
+                            SentimentSnapshot.snapshot_date == day_start,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing is not None:
+                    existing.composite_score = float(composite_score)
+                    existing.text_score = float(text_score) if text_score is not None else None
+                    existing.quant_score = float(quant_score) if quant_score is not None else None
+                    existing.social_volume = int(social_volume)
+                    existing.mention_count = int(mention_count)
+                    existing.regime = regime
+                    existing.confidence = float(confidence)
+                else:
+                    session.add(
+                        SentimentSnapshot(
+                            ticker=ticker,
+                            market=market,
+                            snapshot_date=day_start,
+                            composite_score=float(composite_score),
+                            text_score=float(text_score) if text_score is not None else None,
+                            quant_score=float(quant_score) if quant_score is not None else None,
+                            social_volume=int(social_volume),
+                            mention_count=int(mention_count),
+                            regime=regime,
+                            confidence=float(confidence),
+                        )
+                    )
+                await session.commit()
+
+        await asyncio.wait_for(_write(), timeout=1.5)
+    except Exception as exc:
+        logger.debug("record_sentiment_snapshot failed for %s: %s", ticker, exc)
+
+
+async def load_sentiment_history_s_score(
+    ticker: str,
+    *,
+    current_score: float,
+    current_volume: int,
+    as_of: datetime | None = None,
+) -> dict[str, Any]:
+    """Compute rolling 20-day S-Score and Social-Volume Z-score from persisted daily rows."""
+    try:
+        from sqlalchemy import select
+
+        from app.config import get_settings
+        from app.db.models import SentimentSnapshot
+        from app.db.session import get_sessionmaker
+
+        cfg = get_settings()
+        if cfg.environment == "test" and not str(cfg.database_url).lower().startswith("sqlite"):
+            return {"available": False, "history_days": 0, "s_score": None, "sv_score": None}
+
+        now = (as_of or datetime.now(UTC)).astimezone(UTC)
+        day_start = datetime(now.year, now.month, now.day, tzinfo=UTC)
+
+        async def _read() -> list[Any]:
+            async with get_sessionmaker()() as session:
+                return list(
+                    (
+                        await session.execute(
+                            select(SentimentSnapshot)
+                            .where(
+                                SentimentSnapshot.ticker == ticker,
+                                SentimentSnapshot.snapshot_date < day_start,
+                            )
+                            .order_by(SentimentSnapshot.snapshot_date.desc())
+                            .limit(20)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+        rows = await asyncio.wait_for(_read(), timeout=1.5)
+    except Exception:
+        return {"available": False, "history_days": 0, "s_score": None, "sv_score": None}
+
+    n = len(rows)
+    if n < 5:
+        return {"available": False, "history_days": n, "s_score": None, "sv_score": None}
+
+    scores = [float(r.composite_score) for r in rows]
+    vols = [float(r.social_volume) for r in rows]
+    mean_s = sum(scores) / n
+    std_s = math.sqrt(sum((x - mean_s) ** 2 for x in scores) / n)
+    s_score = round((current_score - mean_s) / std_s, 3) if std_s > 1e-4 else 0.0
+
+    mean_v = sum(vols) / n
+    std_v = math.sqrt(sum((v - mean_v) ** 2 for v in vols) / n)
+    sv_score = round((float(current_volume) - mean_v) / std_v, 3) if std_v > 1e-4 else None
+    return {
+        "available": True,
+        "history_days": n,
+        "s_score": s_score,
+        "sv_score": sv_score,
+        "mean_20d_score": round(mean_s, 4),
+    }

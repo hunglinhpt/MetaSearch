@@ -42,6 +42,21 @@ _TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
 _UDDG = re.compile(r"[?&]uddg=([^&]+)")
 _BAD_HOSTS = ("ad_domain",)
+_BLOCK_BODY_RE = re.compile(
+    r'<div[^>]*class="[^"]*result__body[^"]*"[^>]*>(.*?)'
+    r'(?=<div[^>]*class="[^"]*result__body[^"]*"|\Z)',
+    re.DOTALL,
+)
+_KL_MAP: dict[str, str] = {
+    "vi": "vn-vi",
+    "en": "us-en",
+    "ja": "jp-jp",
+    "zh": "cn-zh",
+    "ko": "kr-kr",
+    "fr": "fr-fr",
+    "de": "de-de",
+    "es": "es-es",
+}
 # ISSUE-1: realistic desktop UA pool, rotated per call — a single static
 # fingerprint let DDG throttle this adapter for the whole process.
 _UA_POOL: tuple[str, ...] = (
@@ -134,8 +149,13 @@ class DuckDuckGoAdapter:
         global _last_call, _UA_INDEX
         params: dict[str, str] = {"q": query, "s": "0"}
         if lang:
-            region = f"{lang}-{lang}" if len(lang) == 2 else lang
-            params["kl"] = region
+            raw_l = lang.split("-")[0].lower().strip()
+            if len(lang) > 2 and "-" in lang:
+                params["kl"] = lang.lower()
+            elif raw_l in _KL_MAP:
+                params["kl"] = _KL_MAP[raw_l]
+            elif len(raw_l) == 2 and raw_l not in ("en", "vi"):
+                params["kl"] = f"{raw_l}-{raw_l}"
         if freshness_days:
             if isinstance(freshness_days, str) and freshness_days in ("d", "w", "m", "y"):
                 params["df"] = freshness_days
@@ -219,9 +239,42 @@ class DuckDuckGoAdapter:
                 retryable=resp.status_code >= 500,
             )
         if "anomaly" in resp.text[:2000].lower() or "captcha" in resp.text[:2000].lower():
-            raise AdapterError("ddg challenge page (bot detection)", retryable=False)
+            raise AdapterError(
+                "ddg challenge page (bot detection)", kind=Outcome.BLOCKED, retryable=False
+            )
 
         html = resp.text
+        blocks = _BLOCK_BODY_RE.findall(html)
+        results: list[RawResult] = []
+        seen: set[str] = set()
+        if blocks:
+            for block in blocks:
+                t_m = _TITLE.search(block)
+                if not t_m:
+                    continue
+                href, title_html = t_m.group(1), t_m.group(2)
+                url = _unwrap(href.strip())
+                if not url or url in seen or urlsplit(url).hostname in _BAD_HOSTS:
+                    continue
+                seen.add(url)
+                s_m = _SNIPPET.search(block)
+                snippet = _strip_html(s_m.group(1)) if s_m else ""
+                results.append(
+                    RawResult(
+                        url=url,
+                        title=_strip_html(title_html),
+                        snippet=snippet,
+                        adapter=self.id,
+                        source_engines=["duckduckgo"],
+                        published_at=_parse_published(snippet),
+                        rank=len(results),
+                    )
+                )
+                if len(results) >= max_results:
+                    break
+            if results:
+                return results
+
         titles = _TITLE.findall(html)
         snippets = _SNIPPET.findall(html)
         if not titles and "result__a" not in html:
@@ -229,8 +282,6 @@ class DuckDuckGoAdapter:
             # emptiness — surface it loudly (still Outcome.EMPTY so the
             # breaker does not cycle on layout drift).
             logger.warning("ddg_parse_zero_rows_dom_changed", query=query[:80])
-        results: list[RawResult] = []
-        seen: set[str] = set()
         for i, (href, title_html) in enumerate(titles):
             url = _unwrap(href.strip())
             if not url or url in seen or urlsplit(url).hostname in _BAD_HOSTS:

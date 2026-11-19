@@ -264,7 +264,7 @@ async def test_context_include_rejects_unknown_part():
 
 
 async def test_include_and_exclude_domains_on_search():
-    _install()
+    adapter, _ = _install()
     async with _client() as c:
         inc = (
             await c.post("/v1/search", json={"query": "postgres", "include_domains": ["a.example"]})
@@ -281,6 +281,7 @@ async def test_include_and_exclude_domains_on_search():
     assert [r["url"] for r in sub["results"]] == [URL_B], "a domain also matches its subdomains"
     assert [r["url"] for r in exc["results"]] == [URL_B]
     assert inc["complete"] is True
+    assert adapter.calls == 1, "filtered calls share cached unscoped fan-out when hits match"
 
 
 async def test_filter_that_removes_everything_is_not_a_true_empty():
@@ -289,11 +290,15 @@ async def test_filter_that_removes_everything_is_not_a_true_empty():
         r = await c.post(
             "/v1/search", json={"query": "postgres", "include_domains": ["nowhere.example"]}
         )
+        calls_after_miss = adapter.calls
         again = await c.post("/v1/search", json={"query": "postgres"})
     body = r.json()
     assert r.status_code == 200 and body["results"] == [] and body["complete"] is False
     assert len(again.json()["results"]) == 2, "the filter must not poison the shared cache"
-    assert adapter.calls == 1, "filtered and unfiltered calls share one fan-out"
+    assert calls_after_miss == 2, (
+        "zero-hit include_domains retries once with explicit site: pushdown"
+    )
+    assert adapter.calls == calls_after_miss, "subsequent unfiltered query still hits shared cache"
 
 
 async def test_context_honours_domain_filters():

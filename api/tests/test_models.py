@@ -25,6 +25,7 @@ EXPECTED_TABLES = {
     "spaces",
     "kg_nodes",
     "kg_edges",
+    "sentiment_snapshots",
 }
 
 

@@ -11,7 +11,7 @@ dependency — rerank không bao giờ làm fail request.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import httpx
 
@@ -48,12 +48,70 @@ def heuristic_order(scored: list[tuple[float, Chunk]]) -> list[Chunk]:
 
 
 class HeuristicReranker:
-    """Default: reuse the scores computed during chunk selection (0ms)."""
+    """Hybrid BM25 + heuristic ranker with per-URL cap, MMR diversity, and 24-chunk limit."""
 
     name = "heuristic"
 
+    def __init__(self, *, max_chunks: int = 24, max_per_url: int = 4) -> None:
+        self.max_chunks = max_chunks
+        self.max_per_url = max_per_url
+
     async def rerank(self, query: str, scored: list[tuple[float, Chunk]]) -> list[Chunk]:
-        return heuristic_order(scored)
+        if not scored:
+            return []
+        from app.retrieval.hybrid import bm25_scores
+        from app.retrieval.scoring import tokenize
+
+        docs = [chunk.content for _, chunk in scored]
+        bm25 = bm25_scores(query, docs)
+        max_h = max((s for s, _ in scored), default=0.0) or 1.0
+        max_b = max(bm25, default=0.0)
+        combined: list[tuple[float, Chunk]] = []
+        for (h_score, chunk), b_score in zip(scored, bm25, strict=True):
+            nh = h_score / max_h
+            nb = (b_score / max_b) if max_b > 0 else 0.0
+            blended = 0.55 * nh + 0.45 * nb
+            combined.append((blended, chunk))
+        combined.sort(key=lambda pair: -pair[0])
+
+        # Enforce per-URL diversity and greedy MMR duplicate suppression so downstream
+        # compressors receive distinct evidence rather than 20 chunks from one boilerplate page.
+        picked: list[Chunk] = []
+        picked_tokens: list[set[str]] = []
+        per_url: dict[str, int] = {}
+        overflow: list[Chunk] = []
+        for _score, chunk in combined:
+            url_count = per_url.get(chunk.document_url, 0)
+            if url_count >= self.max_per_url:
+                overflow.append(chunk)
+                continue
+            toks = set(tokenize(chunk.content[:600]))
+            is_near_dup = False
+            if len(toks) >= 8:
+                for pt in picked_tokens:
+                    union = len(toks | pt)
+                    if union > 0 and (len(toks & pt) / union) > 0.85:
+                        is_near_dup = True
+                        break
+            if is_near_dup:
+                overflow.append(chunk)
+                continue
+            per_url[chunk.document_url] = url_count + 1
+            picked.append(chunk)
+            if len(toks) >= 8:
+                picked_tokens.append(toks)
+            if len(picked) >= self.max_chunks:
+                break
+        if len(picked) < min(self.max_chunks, len(combined)) and overflow:
+            for chunk in overflow:
+                if chunk not in picked:
+                    picked.append(chunk)
+                    if len(picked) >= self.max_chunks:
+                        break
+        return picked
+
+
+HybridBM25ChunkReranker = HeuristicReranker
 
 
 class JinaAPIReranker:
@@ -148,7 +206,10 @@ class ONNXReranker:
                 raise RerankerUnavailable(f"model file missing: {model_path}")
             tokenizer_path = os.path.join(self._model_dir, "tokenizer.json")
             self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-            self._tokenizer = Tokenizer.from_file(tokenizer_path)
+            tok = Tokenizer.from_file(tokenizer_path)
+            if hasattr(tok, "enable_truncation"):
+                tok.enable_truncation(max_length=512)
+            self._tokenizer = tok
         except Exception as exc:
             raise RerankerUnavailable(f"onnx reranker load failed: {exc}") from exc
 
@@ -175,15 +236,18 @@ class ONNXReranker:
         if self._tokenizer is None or self._session is None:
             raise RerankerUnavailable("onnx reranker not loaded")
         encodings = self._tokenizer.encode_batch([(query, doc) for doc in documents])
-        max_len = max(len(e.ids) for e in encodings)
+        max_len = min(512, max((len(e.ids) for e in encodings), default=1))
         input_ids = np.zeros((len(encodings), max_len), dtype=np.int64)
         attention = np.zeros((len(encodings), max_len), dtype=np.int64)
         token_type = np.zeros((len(encodings), max_len), dtype=np.int64)
         for i, enc in enumerate(encodings):
-            n = len(enc.ids)
-            input_ids[i, :n] = enc.ids
-            attention[i, :n] = enc.attention_mask
-            token_type[i, :n] = getattr(enc, "type_ids", [0] * n)
+            ids = enc.ids[:512]
+            mask = enc.attention_mask[:512]
+            tids = getattr(enc, "type_ids", [0] * len(ids))[:512]
+            n = len(ids)
+            input_ids[i, :n] = ids
+            attention[i, :n] = mask
+            token_type[i, :n] = tids
         feed = {"input_ids": input_ids, "attention_mask": attention, "token_type_ids": token_type}
         available = {i.name for i in self._session.get_inputs()}
         raw = self._session.run(None, {k: v for k, v in feed.items() if k in available})[0]
@@ -219,16 +283,25 @@ class BGEReranker(ONNXReranker):
     name = "bge"
 
     def __init__(self, settings: Settings) -> None:
-        super().__init__(self._resolve_dir(settings), model_filename=self._pick_file(settings))
+        model_dir = self._resolve_dir(settings)
+        super().__init__(model_dir, model_filename=self._pick_file(settings, model_dir))
 
     @staticmethod
-    def _pick_file(settings: Settings) -> str:
+    def _pick_file(settings: Settings, resolved_dir: str = "") -> str:
         # int8 quantized export is ~4x smaller and nearly lossless for reranking.
         import os
 
-        local = settings.bge_reranker_dir
-        if local and os.path.exists(os.path.join(local, "model_int8.onnx")):
-            return "model_int8.onnx"
+        local = resolved_dir or settings.bge_reranker_dir
+        if local:
+            for candidate in (
+                "model_int8.onnx",
+                "onnx/model_int8.onnx",
+                "onnx/model_quantized.onnx",
+                "onnx/model.onnx",
+                "model.onnx",
+            ):
+                if os.path.exists(os.path.join(local, candidate)):
+                    return candidate
         return "model.onnx"
 
     @staticmethod
@@ -264,7 +337,63 @@ class BGEReranker(ONNXReranker):
             return local
 
 
-def build_reranker(settings: Settings) -> Reranker:
+class LLMListwiseReranker:
+    """Optional listwise LLM reranker over top chunks; fail-open to heuristic."""
+
+    name = "llm"
+
+    def __init__(self, gateway: Any) -> None:
+        self._gateway = gateway
+
+    async def rerank(self, query: str, scored: list[tuple[float, Chunk]]) -> list[Chunk]:
+        if not scored:
+            return []
+        if self._gateway is None or getattr(self._gateway, "provider", "none") == "none":
+            raise RerankerUnavailable("llm reranker requires configured LLM gateway")
+        top = scored[: min(20, len(scored))]
+        previews = "\n".join(
+            f"[{i}] {(c.source_title or '')[:60]} | {c.content[:220].replace(chr(10), ' ')}"
+            for i, (_s, c) in enumerate(top)
+        )
+        try:
+            text, _usage = await asyncio.wait_for(
+                self._gateway.complete(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "Rank the candidate passages by relevance to the query. "
+                                'Reply ONLY with JSON {"indices": [best_idx, ...]}.'
+                            ),
+                        },
+                        {"role": "user", "content": f"Query: {query}\n\nPassages:\n{previews}"},
+                    ],
+                    max_tokens=120,
+                    task="rerank",
+                ),
+                timeout=4.0,
+            )
+            import json as _json
+            import re as _re
+
+            m = _re.search(r"\{[^{}]*indices[^{}]*\}", text, _re.DOTALL)
+            if not m:
+                raise ValueError("no indices json")
+            indices = [int(i) for i in _json.loads(m.group(0)).get("indices", [])]
+            model_scores: dict[int, float] = {}
+            total = max(len(indices), 1)
+            for rank_pos, idx in enumerate(indices):
+                if 0 <= idx < len(top) and idx not in model_scores:
+                    model_scores[idx] = 1.0 - (rank_pos / total)
+            if not model_scores:
+                raise ValueError("empty indices")
+            return _blend(top, model_scores)
+        except Exception as exc:
+            logger.info("rerank_llm_fallback", error=type(exc).__name__)
+            raise RerankerUnavailable(str(exc)) from exc
+
+
+def build_reranker(settings: Settings, *, gateway: Any = None) -> Reranker:
     """Factory honoring ``RERANKER``; unusable options fall back to heuristic."""
     choice = settings.reranker
     if choice == "api" and settings.jina_api_key:
@@ -275,4 +404,6 @@ def build_reranker(settings: Settings) -> Reranker:
         return ONNXReranker(settings.onnx_reranker_dir)
     if choice == "bge":
         return BGEReranker(settings)
+    if choice == "llm" and gateway is not None:
+        return LLMListwiseReranker(gateway)
     return HeuristicReranker()

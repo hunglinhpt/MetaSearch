@@ -36,6 +36,7 @@ export default function SentimentPanel({ initialTicker = "" }: { initialTicker?:
   const [ticker, setTicker] = useState(initialTicker || "FPT");
   const [companyName, setCompanyName] = useState("");
   const [fetchQuant, setFetchQuant] = useState(true);
+  const [useLlmJudge, setUseLlmJudge] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [data, setData] = useState<MarketSentimentResponse | null>(null);
@@ -69,6 +70,7 @@ export default function SentimentPanel({ initialTicker = "" }: { initialTicker?:
             ticker: sym,
             company_name: companyName.trim() || undefined,
             fetch_market_data: fetchQuant,
+            use_llm_judge: useLlmJudge,
             max_queries: 10,
             k: 5,
           },
@@ -84,13 +86,19 @@ export default function SentimentPanel({ initialTicker = "" }: { initialTicker?:
         if (!ctrl.signal.aborted) setLoading(false);
       }
     },
-    [ticker, companyName, fetchQuant]
+    [ticker, companyName, fetchQuant, useLlmJudge]
   );
 
   const bs = data?.benchmark_standards;
   const ohlcv = bs?.quantitative_telemetry?.ohlcv;
   const proxies = bs?.quantitative_telemetry?.market_proxies;
   const fa = bs?.quantitative_telemetry?.fundamentals;
+  const flows = data?.institutional_flows;
+  const breadth = data?.market_breadth;
+  const analyst = data?.analyst_consensus;
+  const histS = data?.historical_s_score;
+  const corpEvents = data?.corporate_events;
+  const llmJudge = data?.llm_judge;
 
   return (
     <section className="card">
@@ -136,7 +144,15 @@ export default function SentimentPanel({ initialTicker = "" }: { initialTicker?:
               checked={fetchQuant}
               onChange={(e) => setFetchQuant(e.target.checked)}
             />
-            Lấy OHLCV, VIX &amp; BCTC thực tế (<code>fetch_market_data</code>)
+            Lấy OHLCV, VIX, CafeF/SSI &amp; BCTC thực tế
+          </label>
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={useLlmJudge}
+              onChange={(e) => setUseLlmJudge(e.target.checked)}
+            />
+            LLM Judge tổng hợp ({useLlmJudge ? "Bật" : "Tắt"})
           </label>
           <div className="preset-chips">
             {PRESET_TICKERS.map((sym) => (
@@ -175,6 +191,9 @@ export default function SentimentPanel({ initialTicker = "" }: { initialTicker?:
               </strong>
               <span className="muted small">
                 {data.sentiment_summary.market_regime} · Tin cậy {(data.sentiment_summary.confidence * 100).toFixed(0)}%
+                {data.sentiment_summary.text_score != null && data.sentiment_summary.quant_score != null
+                  ? ` · Text=${data.sentiment_summary.text_score.toFixed(2)} / Quant=${data.sentiment_summary.quant_score.toFixed(2)}`
+                  : ""}
               </span>
             </div>
             <div className="metric-box">
@@ -192,9 +211,105 @@ export default function SentimentPanel({ initialTicker = "" }: { initialTicker?:
               <strong className="metric-val">{bs.buzz_velocity}</strong>
               <span className="muted small">
                 Insider: {bs.insider_signal} · Bất định {(bs.uncertainty_and_litigation_score * 100).toFixed(0)}%
+                {histS?.available && histS.s_score != null
+                  ? ` · 20D S-Score=${histS.s_score.toFixed(2)}`
+                  : histS
+                    ? ` · Tích luỹ ${histS.history_days}/5d`
+                    : ""}
               </span>
             </div>
           </div>
+
+          {llmJudge && (
+            <div className="quant-bar" style={{ marginTop: "0.75rem" }}>
+              <span>
+                🧠 <strong>LLM Judge</strong> ({llmJudge.driver_alignment} · Rủi ro ngược:{" "}
+                {llmJudge.contrarian_risk} · Δ={llmJudge.score_adjustment >= 0 ? "+" : ""}
+                {llmJudge.score_adjustment}): {llmJudge.narrative_summary}
+              </span>
+            </div>
+          )}
+
+          {(flows || breadth || analyst || corpEvents) && (
+            <div className="network-grid" style={{ marginTop: "0.75rem" }}>
+              {flows && (
+                <div className="metric-box">
+                  <strong>💸 Dòng tiền Tổ chức &amp; Sổ lệnh</strong>
+                  <span className="muted small">
+                    {flows.foreign_net_val_5d_bil != null
+                      ? `Khối ngoại 5D: ${Number(flows.foreign_net_val_5d_bil).toFixed(1)} tỷ`
+                      : "Khối ngoại: —"}
+                    {flows.prop_net_val_5d_bil != null
+                      ? ` · Tự doanh 5D: ${Number(flows.prop_net_val_5d_bil).toFixed(1)} tỷ`
+                      : ""}
+                  </span>
+                  <span className="muted small">
+                    {flows.active_buy_ratio != null
+                      ? `Chủ động Mua: ${(Number(flows.active_buy_ratio) * 100).toFixed(1)}%`
+                      : ""}
+                    {flows.insider_mspr != null
+                      ? ` · Nội bộ MSPR: ${Number(flows.insider_mspr).toFixed(0)}%`
+                      : ""}
+                  </span>
+                </div>
+              )}
+              {breadth && (
+                <div className="metric-box">
+                  <strong>📊 Độ rộng ({String(breadth.exchange || "Market")})</strong>
+                  <span className="muted small">
+                    {breadth.advancing_issues != null
+                      ? `Tăng ${String(breadth.advancing_issues)} / Giảm ${String(breadth.declining_issues)}`
+                      : ""}
+                    {breadth.arms_trin != null ? ` · TRIN=${String(breadth.arms_trin)}` : ""}
+                    {breadth.mcclellan_rana != null
+                      ? ` · RANA=${String(breadth.mcclellan_rana)}`
+                      : ""}
+                    {breadth.cnn_fear_greed_score != null
+                      ? `CNN F&G=${String(breadth.cnn_fear_greed_score)} (${String(breadth.cnn_fear_greed_rating || "")})`
+                      : ""}
+                  </span>
+                  <span className="muted small">
+                    {breadth.cboe_equity_put_call_ratio != null
+                      ? `CBOE Eq PCR=${String(breadth.cboe_equity_put_call_ratio)}`
+                      : ""}
+                    {breadth.fred_hy_oas_bps != null
+                      ? ` · FRED HY OAS=${String(breadth.fred_hy_oas_bps)} bps`
+                      : ""}
+                  </span>
+                </div>
+              )}
+              {analyst && (
+                <div className="metric-box">
+                  <strong>🎯 Khuyến nghị CTCK ({String(analyst.report_count ?? 0)} BCPT)</strong>
+                  <span>
+                    {String(analyst.consensus_rating || "NEUTRAL")} · Mua {String(analyst.buy_count ?? 0)} / Giữ{" "}
+                    {String(analyst.hold_count ?? 0)} / Bán {String(analyst.sell_count ?? 0)}
+                  </span>
+                  <span className="muted small">
+                    {analyst.avg_target_price != null
+                      ? `Giá MT TB: ${Number(analyst.avg_target_price).toLocaleString("vi-VN")}`
+                      : "Chưa có giá MT"}
+                    {analyst.upside_pct != null
+                      ? ` (${Number(analyst.upside_pct) > 0 ? "+" : ""}${String(analyst.upside_pct)}%)`
+                      : ""}
+                  </span>
+                </div>
+              )}
+              {corpEvents && (
+                <div className="metric-box">
+                  <strong>📅 Sự kiện &amp; Cảnh báo Niêm yết</strong>
+                  <span className="muted small">
+                    {String(corpEvents.count ?? 0)} sự kiện gần đây / sắp tới
+                  </span>
+                  {Array.isArray(corpEvents.risk_alerts) && corpEvents.risk_alerts.length > 0 && (
+                    <span className="badge badge-warn">
+                      {String(corpEvents.risk_alerts[0])}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {data.risk_circuit_breakers.length > 0 && (
             <div className="breaker-row">

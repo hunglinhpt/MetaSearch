@@ -194,7 +194,7 @@ async def _json(
 
     return AnswerResponse(
         answer_id=meta["answer_id"],
-        answer_md="".join(answer_md_parts),
+        answer_md=str(meta.get("answer_md") or "".join(answer_md_parts)),
         citations=citations,
         follow_ups=list(meta.get("follow_ups") or follow_ups),
         unsupported_markers=unsupported_markers,

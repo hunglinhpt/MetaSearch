@@ -195,14 +195,19 @@ class _FakeLearning:
 
 class TestIRCoT:
     def test_reformulate_includes_evidence(self):
+        # docs/30 B1: reformulated hop queries are now SHORT KEYWORD queries
+        # (entity + gap keywords + recency), not prose with facts pasted in.
         learnings = [_FakeLearning("Fed raised rates by 25bp in March")]
         out = _reformulate_query("Fed policy 2026", "impact on Vietnam exports", learnings)
-        assert "Fed raised rates" in out
-        assert "impact on Vietnam exports" in out
+        assert "Fed policy 2026" in out
+        assert "mới nhất" in out
+        assert len(out) < 120  # short keyword query, not prose
 
     def test_reformulate_without_evidence(self):
+        # docs/30 B1: short keyword format replaces the old prose format
         out = _reformulate_query("q", "gap x", [])
-        assert out == "q — gap x"
+        assert "q" in out
+        assert "mới nhất" in out
 
     def test_coverage_gate(self):
         plan = [("Fed rates decision", "rates"), ("Vietnam exports outlook", "exports")]

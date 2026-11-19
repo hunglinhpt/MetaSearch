@@ -195,6 +195,8 @@ class MarketSentimentRequest(BaseModel):
     ohlcv_bars: list[MarketOhlcvBarInput] | None = Field(default=None, max_length=500)
     market_proxies: MarketProxiesSchemaInput | None = None
     fetch_market_data: bool = False
+    use_llm_judge: bool = False
+    include_institutional_feeds: bool | None = None
     timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
 
 
@@ -207,12 +209,17 @@ class SentimentEntityOut(BaseModel):
 
 class SentimentSummaryOut(BaseModel):
     composite_score: float
+    text_score: float | None = None
+    quant_score: float | None = None
+    pillar_weights: dict[str, float] | None = None
     institutional_vs_retail_spread: float
     label: Literal["STRONG_BULLISH", "BULLISH", "NEUTRAL", "BEARISH", "STRONG_BEARISH"]
     confidence: float
     market_regime: Literal[
         "STEALTH_ACCUMULATION",
         "MOMENTUM_MARKUP",
+        "DISTRIBUTION_PRESSURE",
+        "BEARISH_MARKDOWN",
         "EUPHORIC_DISTRIBUTION_TRAP",
         "PANIC_CAPITULATION",
         "EVENT_DRIVEN_BINARY",
@@ -309,7 +316,10 @@ class OhlcvSentimentMetricsOut(BaseModel):
     as_of: str | None = None
     last_close: float | None = None
     return_1d_pct: float | None = None
+    return_5d_pct: float | None = None
     return_20d_pct: float | None = None
+    return_5d_z: float | None = None
+    return_20d_z: float | None = None
     pct_vs_ma50: float | None = None
     pct_vs_ma125: float | None = None
     pct_vs_ma200: float | None = None
@@ -418,6 +428,12 @@ class MarketSentimentResponse(BaseModel):
     social_integrity_audit: SocialIntegrityAuditOut
     top_verified_drivers: list[VerifiedDriverOut] = Field(default_factory=list)
     risk_circuit_breakers: list[str] = Field(default_factory=list)
+    institutional_flows: dict[str, Any] | None = None
+    market_breadth: dict[str, Any] | None = None
+    analyst_consensus: dict[str, Any] | None = None
+    corporate_events: dict[str, Any] | None = None
+    historical_s_score: dict[str, Any] | None = None
+    llm_judge: dict[str, Any] | None = None
     # docs/29 ISSUE-4: cross-ticker isolation telemetry — lets operators tell
     # "search dead / collision-filtered" (identical degenerate payloads) from
     # "genuinely neutral" per-ticker measurements.

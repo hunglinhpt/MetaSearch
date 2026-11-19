@@ -8,13 +8,18 @@ used so the API can persist validated citations.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.extraction.chunker import Chunk
 
 _CITATION_RE = re.compile(r"\[(\d{1,3})\]")
 # Sentence splitter that keeps "[n]" markers attached to their sentence.
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[^\s])")
+_NUM_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:\$|US\$|€|£)?\d+(?:[.,]\d+)*(?:\s*(?:%|x|bps|tỷ|triệu|nghìn|ngàn|b|m|k))?(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+_DIGIT_RE = re.compile(r"\d")
 
 
 @dataclass(slots=True)
@@ -71,6 +76,8 @@ class ClaimCheck:
 
     unsupported_markers: list[int]
     flagged_sentences: list[str]
+    numeric_fidelity: float = 1.0
+    unverified_numbers: list[str] = field(default_factory=list)
 
 
 def split_sentences(text: str) -> list[str]:
@@ -89,11 +96,59 @@ def split_sentences(text: str) -> list[str]:
     return sentences
 
 
+def extract_numeric_tokens(text: str) -> list[str]:
+    """Extract normalized financial/quantitative figures (ignoring bare citation tags/dates)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    # Strip citation brackets [1] and markdown URLs before extracting numbers.
+    cleaned = _CITATION_RE.sub("", re.sub(r"https?://\S+", "", text or ""))
+    for m in _NUM_TOKEN_RE.findall(cleaned):
+        norm = m.strip().lower().replace(",", "").replace(" ", "")
+        # Skip plain 4-digit calendar years and trivial single digits like "1", "2".
+        if re.fullmatch(r"(?:19|20)\d{2}", norm):
+            continue
+        if len(norm) == 1 and norm.isdigit():
+            continue
+        if norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    return out
+
+
+def verify_numeric_fidelity(
+    text: str, included: list[tuple[int, Chunk]]
+) -> tuple[float, list[str]]:
+    """Share of numeric claims in cited sentences present in their cited chunks."""
+    by_n = dict(included)
+    total = 0
+    matched = 0
+    unverified: list[str] = []
+    for sentence in split_sentences(text):
+        markers = [int(m) for m in _CITATION_RE.findall(sentence)]
+        if not markers:
+            continue
+        cited = [by_n[n] for n in markers if n in by_n]
+        if not cited:
+            continue
+        nums = extract_numeric_tokens(sentence)
+        if not nums:
+            continue
+        combined_ctx = " ".join(c.content.lower().replace(",", "") for c in cited)
+        ctx_compact = combined_ctx.replace(" ", "")
+        for tok in nums:
+            total += 1
+            bare = re.sub(r"(?:%|x|bps|tỷ|triệu|nghìn|ngàn|\$|us\$|€|£)", "", tok)
+            if tok in ctx_compact or (bare and bare in combined_ctx):
+                matched += 1
+            elif tok not in unverified:
+                unverified.append(tok)
+    return (round(matched / total, 4) if total > 0 else 1.0), unverified
+
+
 def lexical_entailment(sentence: str, context: str) -> float:
     """Fraction of the sentence's content words present in the context (0..1).
 
-    A cheap, dependency-free entailment proxy (RAGTruth/HHEM-style claim check
-    without a model). Numbers and rare tokens count double via exact match.
+    Numbers and domain codes carry 2x weight relative to regular words.
     """
     from app.retrieval.scoring import tokenize
 
@@ -101,12 +156,16 @@ def lexical_entailment(sentence: str, context: str) -> float:
     if not s_tokens:
         return 1.0  # nothing checkable (e.g. a bare citation line) — do not flag
     c_tokens = set(tokenize(context))
-    c_lower = context.lower()
-    hits = 0
+    c_lower = context.lower().replace(",", "")
+    weighted_hits = 0.0
+    total_weight = 0.0
     for t in s_tokens:
-        if t in c_tokens or (len(t) >= 4 and t in c_lower):
-            hits += 1
-    return hits / len(s_tokens)
+        w = 2.0 if _DIGIT_RE.search(t) else 1.0
+        total_weight += w
+        t_clean = t.replace(",", "")
+        if t in c_tokens or t_clean in c_lower or (len(t) >= 4 and t in c_lower):
+            weighted_hits += w
+    return weighted_hits / total_weight if total_weight > 0 else 1.0
 
 
 def check_claims(
@@ -136,4 +195,10 @@ def check_claims(
         if best < threshold:
             unsupported.update(n for n in markers if n in by_n)
             flagged.append(sentence[:300])
-    return ClaimCheck(unsupported_markers=sorted(unsupported), flagged_sentences=flagged)
+    num_fid, unverified = verify_numeric_fidelity(text, included)
+    return ClaimCheck(
+        unsupported_markers=sorted(unsupported),
+        flagged_sentences=flagged,
+        numeric_fidelity=num_fid,
+        unverified_numbers=unverified,
+    )

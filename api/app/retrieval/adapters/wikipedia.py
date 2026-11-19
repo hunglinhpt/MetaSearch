@@ -19,11 +19,15 @@ from app.retrieval.models import RawResult
 
 DEFAULT_BASE_URL = "https://{lang}.wikipedia.org/w/api.php"
 WIKIPEDIA_USER_AGENT = (
-    "MetaSearch/1.3.1 (https://github.com/hunglinhpt/MetaSearch; contact: admin@metasearch.local)"
+    "MetaSearch/4.0 (https://github.com/hunglinhpt/MetaSearch; contact: admin@metasearch.local)"
 )
 _TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
 _LANG_RE = re.compile(r"^[a-z]{2,12}$")
+_VI_CHARS_RE = re.compile(
+    r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]",
+    re.IGNORECASE,
+)
 
 
 def _strip_html(text: str) -> str:
@@ -64,9 +68,14 @@ class WikipediaAdapter:
         max_results: int = 15,
         timeout_s: float = 3.0,
     ) -> list[RawResult]:
-        raw_lang = (lang or "en").split("-")[0].lower().strip()
+        raw_lang = (lang or "auto").split("-")[0].lower().strip()
         valid_lang = _LANG_RE.match(raw_lang) and raw_lang not in ("auto", "all")
-        language = raw_lang if valid_lang else "en"
+        if valid_lang:
+            language = raw_lang
+        elif _VI_CHARS_RE.search(query):
+            language = "vi"
+        else:
+            language = "en"
         params: dict[str, str] = {
             "action": "query",
             "list": "search",

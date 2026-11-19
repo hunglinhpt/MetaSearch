@@ -181,7 +181,7 @@ class TestBluesky:
         assert "since" in seen and seen["since"].endswith("Z")
         assert len(out) == 1  # empty text skipped
         assert out[0].url == "https://bsky.app/profile/alice.bsky.social/post/3k2"
-        assert out[0].title == "@alice.bsky.social on Bluesky"
+        assert out[0].title == "@alice.bsky.social: hello global markets"
         assert out[0].published_at is not None
 
 
@@ -336,7 +336,8 @@ class TestGdelt:
         assert seen["mode"] == "artlist"
         assert len(out) == 1
         assert out[0].published_at is not None and out[0].published_at.hour == 14
-        assert "reuters.com" in out[0].source_engines
+        assert out[0].source_engines == ["gdelt"]
+        assert out[0].source_name == "reuters.com"
 
     async def test_vi_lang_maps_vietnamese(self):
         seen = {}

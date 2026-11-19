@@ -21,12 +21,12 @@ from datetime import UTC, datetime
 from app.retrieval.models import EngineConfig, ScoredResult
 
 WEIGHTS = {
-    "keyword": 0.35,
-    "consensus": 0.25,
-    "engine_weight": 0.15,
-    "freshness_news": 0.10,
-    "freshness_other": 0.05,
-    "domain_authority": 0.10,
+    "keyword": 0.38,
+    "consensus": 0.20,
+    "engine_weight": 0.12,
+    "freshness_news": 0.13,
+    "freshness_other": 0.07,
+    "domain_authority": 0.12,
     "snippet": 0.05,
 }
 
@@ -105,6 +105,7 @@ _STOPWORDS = frozenset(
 _TRUSTED_DOMAINS: dict[str, float] = {
     # Financial & Regulatory
     "sec.gov": 0.95,
+    "edgar.sec.gov": 0.96,
     "finance.yahoo.com": 0.90,
     "stooq.com": 0.90,
     "iboard.ssi.com.vn": 0.92,
@@ -114,9 +115,26 @@ _TRUSTED_DOMAINS: dict[str, float] = {
     "finance.vietstock.vn": 0.90,
     "vietstock.vn": 0.88,
     "hsx.vn": 0.95,
+    "hose.vn": 0.95,
     "hnx.vn": 0.95,
+    "ssc.gov.vn": 0.96,
+    "sbv.gov.vn": 0.96,
+    "gso.gov.vn": 0.95,
     "fireant.vn": 0.85,
     "simplize.vn": 0.85,
+    "vneconomy.vn": 0.85,
+    "tuoitre.vn": 0.84,
+    "cafebiz.vn": 0.82,
+    "tinnhanhchungkhoan.vn": 0.84,
+    "baodautu.vn": 0.85,
+    "nguoiquansat.vn": 0.80,
+    "reuters.com": 0.92,
+    "bloomberg.com": 0.92,
+    "ft.com": 0.90,
+    "wsj.com": 0.90,
+    "cnbc.com": 0.86,
+    "marketwatch.com": 0.84,
+    "seekingalpha.com": 0.80,
     # Academic & Bio-Medical
     "arxiv.org": 0.95,
     "pubmed.ncbi.nlm.nih.gov": 0.95,
@@ -153,7 +171,7 @@ def fold_diacritics(text: str) -> str:
 # the folded "có"->"co" and swallow the meaningful word (docs/24 §8 P3 fix).
 _EXTRA_VI_STOPWORDS = frozenset(
     [
-        "ai",
+        "này",
         "nay",
         "kia",
         "theo",
@@ -162,7 +180,6 @@ _EXTRA_VI_STOPWORDS = frozenset(
         "nhiều",
         "nhieu",
         "ít",
-        "it",
         "hơn",
         "hon",
         "nhất",
@@ -186,6 +203,8 @@ _EXTRA_VI_STOPWORDS = frozenset(
     ]
 )
 
+# Uppercase acronyms preserved even if their lowercase form is a stopword (e.g. "IT" vs "it").
+_KEEP_UPPER_TOKENS = frozenset({"IT", "AI"})
 
 # Matched on the ORIGINAL (pre-fold) token — never on the folded form.
 _STOPWORDS_ALL = frozenset(_STOPWORDS | _EXTRA_VI_STOPWORDS)
@@ -200,41 +219,118 @@ def tokenize(text: str, *, fold: bool = True) -> list[str]:
     instead would collide ("cổ" and "có" both fold to "co") and silently drop
     meaningful words like "cổ phiếu" or "thị trường" (docs/24 §8 P3 fix).
     """
-    normalized = unicodedata.normalize("NFC", text).lower()
-    tokens = [t for t in _TOKEN_RE.findall(normalized) if len(t) > 1 and t not in _STOPWORDS_ALL]
+    nfc = unicodedata.normalize("NFC", text)
+    raw_tokens = _TOKEN_RE.findall(nfc)
+    tokens = [
+        t.lower()
+        for t in raw_tokens
+        if len(t) > 1 and (t in _KEEP_UPPER_TOKENS or t.lower() not in _STOPWORDS_ALL)
+    ]
     if fold:
         return [fold_diacritics(t) for t in tokens]
     return tokens
 
 
-def keyword_relevance(query_terms: list[str], title: str, snippet: str) -> float:
-    """Share of query terms matched, title worth 2x snippet (BM25-lite proxy).
+def tokenize_dual(text: str) -> tuple[list[str], list[str]]:
+    """Return ``(folded_tokens, accented_tokens)`` in a single pass."""
+    nfc = unicodedata.normalize("NFC", text)
+    accented = [
+        t.lower()
+        for t in _TOKEN_RE.findall(nfc)
+        if len(t) > 1 and (t in _KEEP_UPPER_TOKENS or t.lower() not in _STOPWORDS_ALL)
+    ]
+    folded = [fold_diacritics(t) for t in accented]
+    return folded, accented
 
-    Tokens prefix-match terms of >= 4 characters so "postgres" hits
-    "postgresql" — a cheap stand-in for stemming.
+
+def _bigrams(tokens: list[str]) -> set[str]:
+    if len(tokens) < 2:
+        return set()
+    return {f"{tokens[i]} {tokens[i + 1]}" for i in range(len(tokens) - 1)}
+
+
+def compute_batch_idf(query_terms: list[str], docs: list[tuple[str, str]]) -> dict[str, float]:
+    """Smoothed corpus IDF over ``(title, snippet)`` pairs (normalized ~1.0)."""
+    n_docs = len(docs)
+    unique_q = list(dict.fromkeys(query_terms))
+    if not unique_q or n_docs < 3:
+        return dict.fromkeys(unique_q, 1.0)
+    df: dict[str, int] = dict.fromkeys(unique_q, 0)
+    for title, snippet in docs:
+        doc_tokens = set(tokenize(f"{title} {snippet}"))
+        for term in unique_q:
+            if term in doc_tokens or (
+                len(term) >= 4 and any(dt.startswith(term) for dt in doc_tokens)
+            ):
+                df[term] += 1
+    raw_idf = {
+        term: max(0.3, math.log(1.0 + (n_docs - count + 0.5) / (count + 0.5)))
+        for term, count in df.items()
+    }
+    mean_idf = sum(raw_idf.values()) / len(raw_idf)
+    if mean_idf <= 0:
+        return dict.fromkeys(unique_q, 1.0)
+    return {t: min(max(v / mean_idf, 0.4), 2.5) for t, v in raw_idf.items()}
+
+
+def keyword_relevance(
+    query_terms: list[str],
+    title: str,
+    snippet: str,
+    *,
+    accented_terms: list[str] | None = None,
+    idf: dict[str, float] | None = None,
+) -> float:
+    """Share of query terms matched (title worth 2x snippet) + IDF, bigram &
+    exact-accented tie-breakers.
     """
     if not query_terms:
         return 0.0
-    title_tokens = set(tokenize(title))
-    snippet_tokens = set(tokenize(snippet))
+    title_folded, title_accented = tokenize_dual(title)
+    snippet_folded, snippet_accented = tokenize_dual(snippet)
+    title_set = set(title_folded)
+    snippet_set = set(snippet_folded)
 
     def _hits(term: str, tokens: set[str]) -> bool:
         if term in tokens:
             return True
         return len(term) >= 4 and any(t.startswith(term) for t in tokens)
 
-    matched = 0
+    matched = 0.0
+    denom = 0.0
     for term in query_terms:
-        weight = 2 if _hits(term, title_tokens) else 0
-        weight += 1 if _hits(term, snippet_tokens) else 0
-        matched += min(weight, 2)
-    return matched / (2 * len(query_terms))
+        w_term = idf.get(term, 1.0) if idf else 1.0
+        denom += 2.0 * w_term
+        hit_score = 2.0 if _hits(term, title_set) else 0.0
+        hit_score += 1.0 if _hits(term, snippet_set) else 0.0
+        matched += min(hit_score, 2.0) * w_term
+
+    base = matched / denom if denom > 0 else 0.0
+
+    # Bigram phrase bonus (bounded so title-only match without bigrams stays intact,
+    # while multi-word exact phrase matches rank above scattered keywords).
+    bonus = 0.0
+    if len(query_terms) >= 2 and base > 0:
+        q_bigrams = _bigrams(query_terms)
+        if q_bigrams:
+            doc_bigrams = _bigrams(title_folded) | _bigrams(snippet_folded)
+            bg_hit = len(q_bigrams & doc_bigrams) / len(q_bigrams)
+            bonus += 0.12 * bg_hit
+
+    # Dual-channel accented tie-break (prefers exact Vietnamese diacritics over homographs).
+    if accented_terms and base > 0:
+        acc_doc = set(title_accented) | set(snippet_accented)
+        acc_hit = sum(1 for t in accented_terms if t in acc_doc) / len(accented_terms)
+        bonus += 0.06 * acc_hit
+
+    return min(base + bonus, 1.0)
 
 
 def consensus_score(n_engines: int, max_engines: int) -> float:
-    if max_engines <= 1:
-        return 1.0 if n_engines >= 1 else 0.0
-    return math.log2(1 + n_engines) / math.log2(1 + max_engines)
+    """Normalized multi-engine corroboration (0.0 for single-engine hits)."""
+    if n_engines <= 1 or max_engines <= 1:
+        return 0.0
+    return min(math.log2(n_engines) / math.log2(max_engines), 1.0)
 
 
 def engine_weight_score(adapters: list[str], registry: dict[str, EngineConfig]) -> float:
@@ -309,11 +405,19 @@ def apply_signals(
     # docs/29 P3-2 (audit B#12): merge() calls this per merged result —
     # pass the tokenized query once instead of re-tokenizing per item.
     query_terms: list[str] | None = None,
+    accented_terms: list[str] | None = None,
+    idf: dict[str, float] | None = None,
 ) -> float:
     """Fill the signal fields of ``item`` and return the combined score."""
     if query_terms is None:
-        query_terms = tokenize(query)
-    kw = keyword_relevance(query_terms, item.title, item.snippet)
+        query_terms, accented_terms = tokenize_dual(query)
+    kw = keyword_relevance(
+        query_terms,
+        item.title,
+        item.snippet,
+        accented_terms=accented_terms,
+        idf=idf,
+    )
     cons = consensus_score(item.consensus, max_engines)
     ew = engine_weight_score(item.adapters, registry)
     half_life = news_half_life_days if news else other_half_life_days
@@ -325,6 +429,9 @@ def apply_signals(
     da = domain_authority(item.domain)
     sq = snippet_quality(item.snippet)
     fresh_weight = WEIGHTS["freshness_news"] if news else WEIGHTS["freshness_other"]
+    kw_weight = WEIGHTS["keyword"] + (
+        0.0 if news else (WEIGHTS["freshness_news"] - WEIGHTS["freshness_other"])
+    )
 
     item.keyword_relevance = kw
     item.consensus_score = cons
@@ -337,7 +444,7 @@ def apply_signals(
     item.domain_tier = domain_tier(item.domain)
 
     return (
-        WEIGHTS["keyword"] * kw
+        kw_weight * kw
         + WEIGHTS["consensus"] * cons
         + WEIGHTS["engine_weight"] * ew
         + fresh_weight * fresh
@@ -346,12 +453,24 @@ def apply_signals(
     )
 
 
-def chunk_relevance(query: str, content: str) -> float:
+def chunk_relevance(query: str, content: str, *, query_terms: list[str] | None = None) -> float:
     """Keyword overlap for chunk-level heuristic rerank (0..1)."""
-    return keyword_relevance(tokenize(query), content, "")
+    terms = query_terms if query_terms is not None else tokenize(query)
+    return keyword_relevance(terms, content, "")
 
 
-def heuristic_chunk_score(query: str, content: str, result_score: float, position: int) -> float:
-    """0.7 x source-result score (decayed by chunk position) + 0.3 x keyword overlap."""
-    decay = 1.0 / (1.0 + 0.1 * max(position - 1, 0))
-    return 0.7 * result_score * decay + 0.3 * chunk_relevance(query, content)
+def heuristic_chunk_score(
+    query: str,
+    content: str,
+    result_score: float,
+    position: int,
+    heading_path: str = "",
+) -> float:
+    """Weighted blend of source score (soft position decay), chunk overlap, and heading match."""
+    decay = 1.0 / (1.0 + 0.03 * max(position - 1, 0))
+    terms = tokenize(query)
+    chunk_rel = chunk_relevance(query, content, query_terms=terms)
+    if heading_path:
+        head_rel = chunk_relevance(query, heading_path, query_terms=terms)
+        return 0.45 * result_score * decay + 0.45 * chunk_rel + 0.10 * head_rel
+    return 0.50 * result_score * decay + 0.50 * chunk_rel

@@ -44,19 +44,32 @@ from app.core.admission import admit
 from app.core.budget import create_budget_for_route, use_budget
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
+from app.core.singleflight import SingleFlight
 from app.retrieval.adapters.viet_stock import fetch_vndirect_ohlcv_series
 from app.retrieval.fa_sources.base import ensure_global_symbol, ensure_symbol
 from app.retrieval.sentiment_quant import (
     FundamentalSnapshotInput,
     MarketProxiesInput,
     OhlcvBarInput,
+    fetch_institutional_sentiment_extras,
     fetch_live_market_proxies,
     fetch_sentiment_quant_context,
+    load_sentiment_history_s_score,
+    record_sentiment_snapshot,
 )
 from app.retrieval.vn_tickers import load_vn_tickers
 
 router = APIRouter(tags=["market"])
 logger = get_logger(__name__)
+
+_SENTIMENT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_SENTIMENT_SF = SingleFlight()
+_SENTIMENT_CACHE_TTL_S = 180.0
+
+
+def clear_sentiment_cache() -> None:
+    """Clear the in-process sentiment response cache (used by tests)."""
+    _SENTIMENT_CACHE.clear()
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -405,8 +418,12 @@ def _merge_live_market_proxies(
     )
 
 
-def _parse_iso_dt(raw: str | None) -> datetime | None:
-    if not raw or not raw.strip():
+def _parse_iso_dt(raw: datetime | str | None) -> datetime | None:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo is not None else raw.replace(tzinfo=UTC)
+    if not isinstance(raw, str) or not raw.strip():
         return None
     text = raw.strip()
     if text.endswith("Z"):
@@ -426,14 +443,16 @@ def _parse_iso_dt(raw: str | None) -> datetime | None:
 async def market_sentiment(request: MarketSentimentRequest) -> MarketSentimentResponse:
     """Omni-Channel Bilingual Equity Sentiment Engine (VI / EN) — Phase 1..3."""
     from app.orchestration.pipeline import SearchParams
+    from app.retrieval.events import fetch_market_events, fetch_market_news_wire, record_to_dict
     from app.retrieval.sentiment import (
         RawSentimentHit,
         analyze_omni_channel_sentiment,
         build_omni_channel_queries,
         resolve_equity_entity,
+        run_llm_sentiment_judge,
     )
 
-    sym = ensure_symbol(request.ticker)
+    sym = ensure_symbol(request.ticker) or ensure_global_symbol(request.ticker)
     if sym is None:
         raise MetaSearchError(
             ErrorCode.INVALID_REQUEST,
@@ -447,199 +466,440 @@ async def market_sentiment(request: MarketSentimentRequest) -> MarketSentimentRe
         exchange=request.exchange,
     )
     budget = create_budget_for_route("market_sentiment", timeout_ms=request.timeout_ms)
-    total_timeout = budget.remaining() if budget else 15.0
+    total_timeout = budget.remaining() if budget else 18.0
+
+    explicit_fetch_off = (
+        "fetch_market_data" in request.model_fields_set and not request.fetch_market_data
+    )
+    effective_fetch = request.fetch_market_data or (
+        entity.is_vietnam and not explicit_fetch_off and request.retrieved_documents is None
+    )
+    can_cache = (
+        request.retrieved_documents is None
+        and request.ohlcv_bars is None
+        and request.market_proxies is None
+    )
+    cache_key = (
+        f"sent:v4:{sym}:{entity.exchange}:{int(effective_fetch)}:"
+        f"{int(bool(request.use_llm_judge))}:{request.include_institutional_feeds}:"
+        f"{request.k}:{request.max_queries}"
+    )
+
+    if can_cache:
+        hit_c = _SENTIMENT_CACHE.get(cache_key)
+        if hit_c is not None and (time.monotonic() - hit_c[0]) < _SENTIMENT_CACHE_TTL_S:
+            return MarketSentimentResponse.model_validate(hit_c[1])
+
+    async def _compute() -> dict[str, Any]:
+        hits: list[RawSentimentHit] = []
+        wire_coro_res: Any = None
+        events_coro_res: Any = None
+        if request.retrieved_documents is not None:
+            for doc in request.retrieved_documents:
+                hits.append(
+                    RawSentimentHit(
+                        url=doc.url,
+                        title=doc.title,
+                        snippet=doc.snippet,
+                        content=doc.content,
+                        published_at=_parse_iso_dt(doc.published_at),
+                        lang=doc.lang,
+                        client_supplied=True,
+                    )
+                )
+        else:
+            queries = build_omni_channel_queries(entity, max_queries=request.max_queries)
+            pipe = deps.get_search_pipeline()
+            sem = asyncio.Semaphore(4)
+
+            async def _run_vec(q_vec: Any) -> list[RawSentimentHit]:
+                async with sem:
+                    try:
+                        outcome = await pipe.run(
+                            SearchParams(
+                                query=q_vec.query,
+                                lang=q_vec.lang.lower(),
+                                k=request.k,
+                                categories=[q_vec.category],
+                                record_memory=False,
+                                skip_router=True,
+                                expansion=False,
+                            )
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        logger.warning(
+                            "sentiment_fanout_query_failed",
+                            ticker=sym,
+                            layer=q_vec.layer,
+                            error=type(exc).__name__,
+                        )
+                        return []
+                    out: list[RawSentimentHit] = []
+                    for r in outcome.results:
+                        if (
+                            "viet_stock" in (getattr(r, "adapters", None) or [])
+                            and getattr(r, "data_kind", "") == "computed"
+                        ):
+                            continue
+                        out.append(
+                            RawSentimentHit(
+                                url=r.url,
+                                title=r.title,
+                                snippet=r.snippet,
+                                published_at=r.published_at,
+                                lang=q_vec.lang,
+                                source_url=getattr(r, "source_url", None),
+                            )
+                        )
+                    return out
+
+            async def _safe_wire() -> dict[str, Any] | None:
+                try:
+                    return await fetch_market_news_wire(
+                        symbols=[sym],
+                        lang="vi" if entity.is_vietnam else "en",
+                        max_age_days=14,
+                        max_items=12,
+                        timeout_s=min(4.0, total_timeout),
+                    )
+                except Exception:
+                    return None
+
+            async def _safe_events() -> dict[str, Any] | None:
+                if not entity.is_vietnam:
+                    return None
+                try:
+                    return await fetch_market_events(
+                        symbols=[sym],
+                        timeout_s=min(4.5, total_timeout),
+                    )
+                except Exception:
+                    return None
+
+            fan_tasks = [asyncio.create_task(_run_vec(q)) for q in queries]
+            wire_task = asyncio.create_task(_safe_wire())
+            events_task = asyncio.create_task(_safe_events())
+            all_fan: list[asyncio.Task[Any]] = [*fan_tasks, wire_task, events_task]
+            try:
+                done_fan, pending_fan = await asyncio.wait(
+                    fan_tasks, timeout=max(1.5, total_timeout * 0.65)
+                )
+                done: set[asyncio.Task[Any]] = set(done_fan)
+                pending: set[asyncio.Task[Any]] = set(pending_fan)
+                extra_pending: list[asyncio.Task[Any]] = [
+                    t for t in (wire_task, events_task) if not t.done()
+                ]
+                if extra_pending:
+                    extra_rem = budget.remaining() if budget else 1.5
+                    w_done, w_pend = await asyncio.wait(
+                        extra_pending,
+                        timeout=min(2.5, max(0.25, extra_rem)),
+                    )
+                    done |= w_done
+                    pending |= w_pend
+                for extra_t in (wire_task, events_task):
+                    if extra_t.done():
+                        done.add(extra_t)
+            except BaseException:
+                for t in all_fan:
+                    t.cancel()
+                await asyncio.gather(*all_fan, return_exceptions=True)
+                raise
+            for p_task in pending:
+                p_task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+            seen_urls: set[str] = set()
+            for t in fan_tasks:
+                if t not in done:
+                    continue
+                try:
+                    batch = t.result()
+                except BaseException:
+                    continue
+                for h in batch:
+                    if h.url and h.url not in seen_urls:
+                        seen_urls.add(h.url)
+                        hits.append(h)
+
+            if wire_task in done:
+                try:
+                    wire_coro_res = wire_task.result()
+                except BaseException:
+                    wire_coro_res = None
+            if events_task in done:
+                try:
+                    events_coro_res = events_task.result()
+                except BaseException:
+                    events_coro_res = None
+            if isinstance(wire_coro_res, dict):
+                for raw_item in wire_coro_res.get("items") or []:
+                    item = record_to_dict(raw_item)
+                    u = str(item.get("url") or "")
+                    if u and u not in seen_urls:
+                        seen_urls.add(u)
+                        hits.append(
+                            RawSentimentHit(
+                                url=u,
+                                title=str(item.get("title") or ""),
+                                snippet=str(item.get("snippet") or item.get("summary") or ""),
+                                published_at=_parse_iso_dt(item.get("published_at")),
+                                lang="VI" if entity.is_vietnam else "EN",
+                                source_url=u,
+                            )
+                        )
+
+        ohlcv_bars: list[OhlcvBarInput] | None = None
+        ohlcv_src: str | None = None
+        ohlcv_url: str | None = None
+        ohlcv_as_of: str | None = None
+        if request.ohlcv_bars:
+            ohlcv_bars = [
+                OhlcvBarInput(
+                    time=bar.time,
+                    open=bar.open,
+                    high=bar.high,
+                    low=bar.low,
+                    close=bar.close,
+                    volume=bar.volume,
+                )
+                for bar in request.ohlcv_bars
+            ]
+            ohlcv_src = "request"
+            ohlcv_as_of = datetime.fromtimestamp(
+                max(bar.time for bar in ohlcv_bars), tz=UTC
+            ).isoformat()
+
+        market_proxies: MarketProxiesInput | None = None
+        if request.market_proxies is not None:
+            mp = request.market_proxies
+            mp_dict = mp.model_dump(exclude={"rana_series"})
+            market_proxies = MarketProxiesInput(
+                **mp_dict,
+                rana_series=tuple(mp.rana_series) if mp.rana_series is not None else None,
+            )
+
+        fundamentals: FundamentalSnapshotInput | None = None
+        institutional_flows: dict[str, Any] | None = None
+        market_breadth: dict[str, Any] | None = None
+        analyst_consensus: dict[str, Any] | None = None
+        cnn_fear_greed: dict[str, Any] | None = None
+        quant_skipped_budget = False
+
+        if effective_fetch:
+            rem = budget.remaining() if budget else 4.5
+            if rem >= 0.8:
+                need_vix = not entity.is_vietnam and (
+                    market_proxies is None
+                    or market_proxies.vix is None
+                    or market_proxies.vix_3m is None
+                )
+                run_extras = (
+                    request.include_institutional_feeds
+                    if request.include_institutional_feeds is not None
+                    else (request.retrieved_documents is None)
+                )
+                quant_coro = fetch_sentiment_quant_context(
+                    entity.ticker,
+                    is_vietnam=entity.is_vietnam,
+                    need_ohlcv=not bool(ohlcv_bars),
+                    fa_aggregator=deps.get_fa_aggregator(),
+                    timeout_s=min(4.0, rem),
+                )
+                extras_coro = (
+                    fetch_institutional_sentiment_extras(
+                        entity.ticker,
+                        is_vietnam=entity.is_vietnam,
+                        spot_price=ohlcv_bars[-1].close if ohlcv_bars else None,
+                        timeout_s=min(4.5, rem),
+                    )
+                    if run_extras
+                    else None
+                )
+                if need_vix and extras_coro is not None:
+                    quant_res, live_proxies, extras_res = await asyncio.gather(
+                        quant_coro,
+                        fetch_live_market_proxies(
+                            entity.ticker,
+                            is_vietnam=entity.is_vietnam,
+                            timeout_s=min(3.5, rem),
+                        ),
+                        extras_coro,
+                    )
+                    market_proxies = _merge_live_market_proxies(market_proxies, live_proxies)
+                elif need_vix:
+                    quant_res, live_proxies = await asyncio.gather(
+                        quant_coro,
+                        fetch_live_market_proxies(
+                            entity.ticker,
+                            is_vietnam=entity.is_vietnam,
+                            timeout_s=min(3.5, rem),
+                        ),
+                    )
+                    market_proxies = _merge_live_market_proxies(market_proxies, live_proxies)
+                    extras_res = None
+                elif extras_coro is not None:
+                    quant_res, extras_res = await asyncio.gather(quant_coro, extras_coro)
+                else:
+                    quant_res = await quant_coro
+                    extras_res = None
+
+                live_bars, live_src, live_url, live_as_of, fa_snap = quant_res
+                if not ohlcv_bars and live_bars:
+                    ohlcv_bars = live_bars
+                    ohlcv_src = live_src
+                    ohlcv_url = live_url
+                    ohlcv_as_of = live_as_of
+                fundamentals = fa_snap
+
+                if isinstance(extras_res, dict):
+                    institutional_flows = extras_res.get("institutional_flows")
+                    market_breadth = extras_res.get("market_breadth")
+                    analyst_consensus = extras_res.get("analyst_consensus")
+                    cnn_fear_greed = extras_res.get("cnn_fear_greed")
+                    if request.retrieved_documents is None:
+                        seen_e = {h.url for h in hits}
+                        for nh in extras_res.get("direct_news_hits") or []:
+                            nu = str(nh.get("url") or "")
+                            if nu and nu not in seen_e:
+                                seen_e.add(nu)
+                                hits.append(
+                                    RawSentimentHit(
+                                        url=nu,
+                                        title=str(nh.get("title") or ""),
+                                        snippet=str(nh.get("snippet") or ""),
+                                        published_at=_parse_iso_dt(nh.get("published_at")),
+                                        lang="VI",
+                                        source_url=nu,
+                                    )
+                                )
+                    if (
+                        isinstance(analyst_consensus, dict)
+                        and analyst_consensus.get("upside_pct") is None
+                        and analyst_consensus.get("avg_target_price") is not None
+                        and ohlcv_bars
+                    ):
+                        spot = ohlcv_bars[-1].close
+                        if spot > 0:
+                            tp = float(analyst_consensus["avg_target_price"])
+                            if spot < 1000 and tp > 1000:
+                                tp /= 1000.0
+                            analyst_consensus["upside_pct"] = round(((tp / spot) - 1.0) * 100.0, 2)
+                    flow_updates: dict[str, Any] = {}
+                    if (
+                        (market_proxies is None or market_proxies.vn_foreign_net_value_bil is None)
+                        and institutional_flows
+                        and institutional_flows.get("foreign_net_val_5d_bil") is not None
+                    ):
+                        flow_updates["vn_foreign_net_value_bil"] = institutional_flows[
+                            "foreign_net_val_5d_bil"
+                        ]
+                    if (
+                        (market_proxies is None or market_proxies.vn_prop_net_value_bil is None)
+                        and institutional_flows
+                        and institutional_flows.get("prop_net_val_5d_bil") is not None
+                    ):
+                        flow_updates["vn_prop_net_value_bil"] = institutional_flows[
+                            "prop_net_val_5d_bil"
+                        ]
+                    if (
+                        (market_proxies is None or market_proxies.advancing_issues is None)
+                        and market_breadth
+                        and market_breadth.get("advancing_issues") is not None
+                    ):
+                        flow_updates["advancing_issues"] = market_breadth["advancing_issues"]
+                        flow_updates["declining_issues"] = market_breadth["declining_issues"]
+                        flow_updates["advancing_volume"] = market_breadth.get("advancing_volume")
+                        flow_updates["declining_volume"] = market_breadth.get("declining_volume")
+                    if flow_updates:
+                        if market_proxies is None:
+                            market_proxies = MarketProxiesInput(**flow_updates)
+                        else:
+                            market_proxies = _dc_replace(market_proxies, **flow_updates)
+            else:
+                quant_skipped_budget = True
+
+        corporate_events_summary: dict[str, Any] | None = None
+        if isinstance(events_coro_res, dict):
+            ev_list = [record_to_dict(ev) for ev in (events_coro_res.get("events") or [])]
+            if ev_list:
+                corporate_events_summary = {
+                    "count": len(ev_list),
+                    "upcoming_or_recent": ev_list[:5],
+                    "risk_alerts": [
+                        record_to_dict(al) for al in (events_coro_res.get("risk_alerts") or [])
+                    ],
+                }
+
+        payload = await asyncio.to_thread(
+            analyze_omni_channel_sentiment,
+            entity,
+            hits,
+            ohlcv_bars=ohlcv_bars,
+            ohlcv_source_name=ohlcv_src,
+            ohlcv_source_url=ohlcv_url,
+            ohlcv_as_of=ohlcv_as_of,
+            market_proxies=market_proxies,
+            fundamentals=fundamentals,
+            institutional_flows=institutional_flows,
+            market_breadth=market_breadth,
+            analyst_consensus=analyst_consensus,
+            corporate_events=corporate_events_summary,
+            cnn_fear_greed=cnn_fear_greed,
+        )
+
+        ss = payload["sentiment_summary"]
+        social_vol = int(payload["network_telemetry"]["vn_social_ecosystem"]["hit_count"]) + int(
+            payload["network_telemetry"]["global_social_ecosystem"]["hit_count"]
+        )
+        if request.retrieved_documents is None and len(hits) > 0:
+            await record_sentiment_snapshot(
+                ticker=entity.ticker,
+                market="VN" if entity.is_vietnam else "GLOBAL",
+                composite_score=ss["composite_score"],
+                text_score=ss.get("text_score"),
+                quant_score=ss.get("quant_score"),
+                social_volume=social_vol,
+                mention_count=len(hits),
+                regime=ss["market_regime"],
+                confidence=ss["confidence"],
+            )
+        hist_s = await load_sentiment_history_s_score(
+            entity.ticker,
+            current_score=ss["composite_score"],
+            current_volume=social_vol,
+        )
+        payload["historical_s_score"] = hist_s
+
+        if request.use_llm_judge:
+            judge_out = await run_llm_sentiment_judge(
+                deps.get_gateway(),
+                entity,
+                payload.get("top_verified_drivers") or [],
+                timeout_s=min(6.0, budget.remaining() if budget else 6.0),
+            )
+            payload["llm_judge"] = judge_out
+
+        if quant_skipped_budget:
+            breakers_list = list(payload.get("risk_circuit_breakers") or [])
+            if "QUANT_FETCH_SKIPPED_BUDGET" not in breakers_list:
+                breakers_list.append("QUANT_FETCH_SKIPPED_BUDGET")
+            payload["risk_circuit_breakers"] = breakers_list
+        return payload
 
     async with admit("market"):
         with use_budget(budget):
-            hits: list[RawSentimentHit] = []
-            # Execution Rule: If retrieved_documents are already provided in context,
-            # bypass Phase 1 search fan-out and proceed directly to Phase 2.
-            if request.retrieved_documents is not None:
-                for doc in request.retrieved_documents:
-                    hits.append(
-                        RawSentimentHit(
-                            url=doc.url,
-                            title=doc.title,
-                            snippet=doc.snippet,
-                            content=doc.content,
-                            published_at=_parse_iso_dt(doc.published_at),
-                            lang=doc.lang,
-                            client_supplied=True,
-                        )
-                    )
+            if can_cache:
+                payload = await _SENTIMENT_SF.run(cache_key, _compute)
+                if len(_SENTIMENT_CACHE) >= 256:
+                    oldest_k = min(_SENTIMENT_CACHE, key=lambda k: _SENTIMENT_CACHE[k][0])
+                    _SENTIMENT_CACHE.pop(oldest_k, None)
+                _SENTIMENT_CACHE[cache_key] = (time.monotonic(), payload)
             else:
-                queries = build_omni_channel_queries(entity, max_queries=request.max_queries)
-                pipe = deps.get_search_pipeline()
-                sem = asyncio.Semaphore(4)
-
-                async def _run_vec(q_vec: Any) -> list[RawSentimentHit]:
-                    async with sem:
-                        try:
-                            outcome = await pipe.run(
-                                SearchParams(
-                                    query=q_vec.query,
-                                    lang=q_vec.lang.lower(),
-                                    k=request.k,
-                                    categories=[q_vec.category],
-                                    record_memory=False,
-                                    # PASS-2 audit P1-3: 22 site:-prefixed
-                                    # sub-queries must not each pay the
-                                    # adaptive-router deep escalation or LLM
-                                    # query expansion (~10x cost amplifier).
-                                    skip_router=True,
-                                    expansion=False,
-                                )
-                            )
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as exc:
-                            logger.warning(
-                                "sentiment_fanout_query_failed",
-                                ticker=sym,
-                                layer=q_vec.layer,
-                                error=type(exc).__name__,
-                            )
-                            return []
-                        out: list[RawSentimentHit] = []
-                        for r in outcome.results:
-                            out.append(
-                                RawSentimentHit(
-                                    url=r.url,
-                                    title=r.title,
-                                    snippet=r.snippet,
-                                    published_at=r.published_at,
-                                    lang=q_vec.lang,
-                                )
-                            )
-                        return out
-
-                tasks = [asyncio.create_task(_run_vec(q)) for q in queries]
-                try:
-                    done, pending = await asyncio.wait(tasks, timeout=max(1.5, total_timeout))
-                except BaseException:
-                    for t in tasks:
-                        t.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                    raise
-                for p_task in pending:
-                    p_task.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
-                batches: list[list[RawSentimentHit] | BaseException] = []
-                for t in tasks:
-                    if t not in done:
-                        continue
-                    try:
-                        batches.append(t.result())
-                    except BaseException as exc:
-                        batches.append(exc)
-
-                seen_urls: set[str] = set()
-                for b in batches:
-                    if isinstance(b, BaseException):
-                        continue
-                    for h in b:
-                        if h.url and h.url not in seen_urls:
-                            seen_urls.add(h.url)
-                            hits.append(h)
-
-            ohlcv_bars: list[OhlcvBarInput] | None = None
-            ohlcv_src: str | None = None
-            ohlcv_url: str | None = None
-            ohlcv_as_of: str | None = None
-            if request.ohlcv_bars:
-                ohlcv_bars = [
-                    OhlcvBarInput(
-                        time=bar.time,
-                        open=bar.open,
-                        high=bar.high,
-                        low=bar.low,
-                        close=bar.close,
-                        volume=bar.volume,
-                    )
-                    for bar in request.ohlcv_bars
-                ]
-                ohlcv_src = "request"
-                ohlcv_as_of = datetime.fromtimestamp(
-                    max(bar.time for bar in ohlcv_bars), tz=UTC
-                ).isoformat()
-
-            market_proxies: MarketProxiesInput | None = None
-            if request.market_proxies is not None:
-                mp = request.market_proxies
-                mp_dict = mp.model_dump(exclude={"rana_series"})
-                market_proxies = MarketProxiesInput(
-                    **mp_dict,
-                    rana_series=tuple(mp.rana_series) if mp.rana_series is not None else None,
-                )
-
-            fundamentals: FundamentalSnapshotInput | None = None
-            quant_skipped_budget = False
-            # docs/29 ISSUE-4: per-ticker isolation — VN tickers get their own
-            # VNDIRECT OHLCV/quant by default (proven live, keyless) unless the
-            # caller explicitly opts out via `"fetch_market_data": false`.
-            explicit_fetch_off = (
-                "fetch_market_data" in request.model_fields_set and not request.fetch_market_data
-            )
-            effective_fetch = request.fetch_market_data or (
-                entity.is_vietnam and not explicit_fetch_off
-            )
-            if effective_fetch:
-                rem = budget.remaining() if budget else 4.0
-                if rem >= 0.8:
-                    need_vix = not entity.is_vietnam and (
-                        market_proxies is None
-                        or market_proxies.vix is None
-                        or market_proxies.vix_3m is None
-                    )
-                    quant_coro = fetch_sentiment_quant_context(
-                        entity.ticker,
-                        is_vietnam=entity.is_vietnam,
-                        need_ohlcv=not bool(ohlcv_bars),
-                        fa_aggregator=deps.get_fa_aggregator(),
-                        timeout_s=min(4.0, rem),
-                    )
-                    if need_vix:
-                        (quant_res, live_proxies) = await asyncio.gather(
-                            quant_coro,
-                            fetch_live_market_proxies(
-                                entity.ticker,
-                                is_vietnam=entity.is_vietnam,
-                                timeout_s=min(3.0, rem),
-                            ),
-                        )
-                        market_proxies = _merge_live_market_proxies(market_proxies, live_proxies)
-                    else:
-                        quant_res = await quant_coro
-                    live_bars, live_src, live_url, live_as_of, fa_snap = quant_res
-                    if not ohlcv_bars and live_bars:
-                        ohlcv_bars = live_bars
-                        ohlcv_src = live_src
-                        ohlcv_url = live_url
-                        ohlcv_as_of = live_as_of
-                    fundamentals = fa_snap
-                else:
-                    quant_skipped_budget = True
-
-            # PASS-2 audit P2-7: the lexicon scan + quant aggregation are
-            # CPU-bound regex/scan work (measured 206 ms at schema-max
-            # input) — offload to a worker thread, never stall the loop.
-            payload = await asyncio.to_thread(
-                analyze_omni_channel_sentiment,
-                entity,
-                hits,
-                ohlcv_bars=ohlcv_bars,
-                ohlcv_source_name=ohlcv_src,
-                ohlcv_source_url=ohlcv_url,
-                ohlcv_as_of=ohlcv_as_of,
-                market_proxies=market_proxies,
-                fundamentals=fundamentals,
-            )
-            if quant_skipped_budget:
-                breakers_list = list(payload.get("risk_circuit_breakers") or [])
-                if "QUANT_FETCH_SKIPPED_BUDGET" not in breakers_list:
-                    breakers_list.append("QUANT_FETCH_SKIPPED_BUDGET")
-                payload["risk_circuit_breakers"] = breakers_list
+                payload = await _compute()
             return MarketSentimentResponse.model_validate(payload)
 
 

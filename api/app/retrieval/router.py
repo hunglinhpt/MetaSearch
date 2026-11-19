@@ -73,9 +73,49 @@ _DEEP_MARKERS: tuple[str, ...] = (
     "pros and cons",
     "trade-off",
     "tradeoff",
+    # v4.0 financial / institutional / technical analytical markers
+    "triển vọng",
+    "trien vong",
+    "định giá",
+    "dinh gia",
+    "dòng tiền",
+    "dong tien",
+    "tâm lý",
+    "tam ly",
+    "dự báo",
+    "du bao",
+    "kịch bản",
+    "kich ban",
+    "valuation",
+    "outlook",
+    "deep dive",
+    "bull vs bear",
+    "forecast",
+    "benchmark",
+    "architecture",
 )
 
 _WORD_RE = re.compile(r"[\w]+", re.UNICODE)
+
+_FRESHNESS_RULES: tuple[tuple[tuple[str, ...], int], ...] = (
+    (("hôm nay", "hom nay", "today", "intraday", "phiên hôm nay"), 2),
+    (("tuần này", "tuan nay", "this week", "7 ngày qua", "last 7 days"), 7),
+    (("mới nhất", "moi nhat", "latest", "breaking", "vừa ra", "recent"), 14),
+    (("tháng này", "thang nay", "this month", "30 ngày qua", "last 30 days"), 30),
+)
+
+
+def extract_implicit_freshness_days(query: str) -> int | None:
+    """Detect explicit temporal recency cues in natural-language queries."""
+    low = f" {(query or '').lower()} "
+    for cues, days in _FRESHNESS_RULES:
+        for cue in cues:
+            if cue.isascii():
+                if re.search(rf"(?<![a-z0-9]){re.escape(cue)}(?![a-z0-9])", low):
+                    return days
+            elif cue in low:
+                return days
+    return None
 
 
 def classify_complexity(query: str, *, min_words_deep: int = 14) -> str:

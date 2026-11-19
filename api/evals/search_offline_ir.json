@@ -1,0 +1,64 @@
+{
+  "description": "v4.0 Offline Search IR Benchmark exercising merge() (Bilingual token folding, RRF, wrapper domain resolution, consensus, domain authority, near-dup folding).",
+  "thresholds": {
+    "hit_at_5": 0.9,
+    "ndcg_at_10": 0.8
+  },
+  "queries": [
+    {
+      "id": "ir_en_rag_01",
+      "query": "reciprocal rank fusion information retrieval",
+      "news": false,
+      "relevant": ["arxiv.org", "acm.org"],
+      "candidates": [
+        {"url": "https://arxiv.org/abs/2401.0001", "title": "Reciprocal Rank Fusion Outperforms CombSUM", "snippet": "We analyze reciprocal rank fusion RRF in dense and sparse retrieval.", "adapter": "openalex", "source_engines": ["openalex"], "rank": 0},
+        {"url": "https://dl.acm.org/doi/10.1145/rrf", "title": "Reciprocal Rank Fusion vs Condorcet", "snippet": "Cormack et al evaluate RRF k=60 across TREC retrieval tasks.", "adapter": "crossref", "source_engines": ["crossref"], "rank": 1},
+        {"url": "https://spam-seo.example.com/clickbait", "title": "Best Tools for SEO Ranking 2026", "snippet": "Top tips for marketing agencies and ad optimization.", "adapter": "ddg", "source_engines": ["ddg"], "rank": 0}
+      ]
+    },
+    {
+      "id": "ir_vi_unaccented_02",
+      "query": "thue thu nhap ca nhan tien luong",
+      "news": false,
+      "relevant": ["thuvienphapluat.vn", "mof.gov.vn"],
+      "candidates": [
+        {"url": "https://thuvienphapluat.vn/thue-tncn-2026.html", "title": "Cách tính thuế thu nhập cá nhân từ tiền lương mới nhất", "snippet": "Hướng dẫn biểu thuế lũy tiến và giảm trừ gia cảnh tiền lương cá nhân.", "adapter": "searxng", "source_engines": ["google", "bing"], "rank": 1},
+        {"url": "https://mof.gov.vn/tax-policy-2026", "title": "Bộ Tài chính công bố quy định thuế thu nhập cá nhân", "snippet": "Mức giảm trừ gia cảnh và bậc thuế áp dụng cho tiền lương tiền công.", "adapter": "searxng", "source_engines": ["google"], "rank": 2},
+        {"url": "https://random-blog.example.net/food", "title": "Món ăn ngon cuối tuần", "snippet": "Công thức nấu ăn gia đình đơn giản.", "adapter": "ddg", "source_engines": ["ddg"], "rank": 0}
+      ]
+    },
+    {
+      "id": "ir_wrapper_news_03",
+      "query": "FPT loi nhuan quy 3",
+      "news": true,
+      "relevant": ["cafef.vn"],
+      "candidates": [
+        {"url": "https://news.google.com/rss/articles/CBMiFptQ3", "source_url": "https://cafef.vn/fpt-q3-profit.chn", "title": "FPT báo lợi nhuận quý 3 tăng 20%", "snippet": "Doanh thu chuyển đổi số toàn cầu giúp FPT tăng trưởng lợi nhuận quý 3.", "adapter": "google_news", "source_engines": ["google_news"], "rank": 0},
+        {"url": "https://cafef.vn/fpt-q3-profit.chn", "title": "FPT báo lợi nhuận quý 3 tăng 20%", "snippet": "FPT ghi nhận lợi nhuận quý 3 tăng trưởng mạnh.", "adapter": "vn_wire", "source_engines": ["vn_wire"], "rank": 1},
+        {"url": "https://generic-forum.example.org/offtopic", "title": "Travel diary in Da Nang", "snippet": "Hotel deals and sightseeing.", "adapter": "ddg", "source_engines": ["ddg"], "rank": 0}
+      ]
+    },
+    {
+      "id": "ir_fin_sec_04",
+      "query": "NVIDIA 10-K revenue risk factors SEC",
+      "news": false,
+      "relevant": ["sec.gov", "reuters.com"],
+      "candidates": [
+        {"url": "https://www.sec.gov/Archives/edgar/nvda-10k.htm", "title": "NVIDIA Corporation Form 10-K Annual Report", "snippet": "SEC Form 10-K filing detailing revenue breakdown and export risk factors.", "adapter": "sec_edgar", "source_engines": ["sec_edgar"], "rank": 0},
+        {"url": "https://reuters.com/tech/nvda-sec-risks", "title": "NVIDIA 10-K flags export licensing revenue risks", "snippet": "Annual SEC filing highlights supply and geopolitical risk factors.", "adapter": "bing_news", "source_engines": ["bing_news"], "rank": 1},
+        {"url": "https://casino-promo.example.xyz/bonus", "title": "Free Bonus 2026", "snippet": "Sign up promo code.", "adapter": "ddg", "source_engines": ["ddg"], "rank": 0}
+      ]
+    },
+    {
+      "id": "ir_dev_fastapi_05",
+      "query": "FastAPI dependency injection testing override",
+      "news": false,
+      "relevant": ["fastapi.tiangolo.com", "github.com"],
+      "candidates": [
+        {"url": "https://fastapi.tiangolo.com/advanced/testing-dependencies/", "title": "Testing Dependencies with Overrides - FastAPI", "snippet": "Use app.dependency_overrides in FastAPI pytest fixtures.", "adapter": "searxng", "source_engines": ["google", "github"], "rank": 0},
+        {"url": "https://github.com/fastapi/fastapi/discussions/1234", "title": "Best practices for FastAPI dependency injection override", "snippet": "Community patterns for swapping dependencies during testing.", "adapter": "github", "source_engines": ["github"], "rank": 1},
+        {"url": "https://unrelated.example.com/music", "title": "Top 10 Pop Albums", "snippet": "Music reviews and concert dates.", "adapter": "ddg", "source_engines": ["ddg"], "rank": 0}
+      ]
+    }
+  ]
+}

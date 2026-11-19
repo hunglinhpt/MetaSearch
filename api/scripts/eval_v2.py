@@ -28,15 +28,20 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.eval_judge import llm_judge
 from app.eval_metrics import (
     aggregate,
+    aggregate_by_slice,
+    citation_precision_rate,
     cited_urls_from_answer,
     claim_support_rate,
     context_precision,
     context_recall,
     hit_at_k,
+    latency_percentiles,
     mrr,
     ndcg_at_k,
+    numeric_fidelity_rate,
     recall_at_k,
 )
 
@@ -59,11 +64,20 @@ async def eval_query(
     q: dict,
     *,
     with_answers: bool,
+    with_judge: bool,
+    gateway: object | None,
     concurrency_sem: asyncio.Semaphore,
 ) -> dict:
     query = q["query"]
     relevant = q.get("relevant") or []
-    record: dict = {"query": query, "lang": q.get("lang")}
+    cats = q.get("categories") or ["general"]
+    record: dict = {
+        "query": query,
+        "lang": q.get("lang"),
+        "slice": f"{q.get('lang') or 'auto'}:{cats[0]}",
+    }
+    snippet_by_url: dict[str, str] = {}
+    t0 = time.perf_counter()
     async with concurrency_sem:
         try:
             r = await client.post(
@@ -72,15 +86,23 @@ async def eval_query(
                     "query": query,
                     "lang": q.get("lang"),
                     "k": 10,
-                    "categories": q.get("categories") or ["general"],
+                    "categories": cats,
                 },
                 timeout=60.0,
             )
             r.raise_for_status()
-            urls = [item.get("url", "") for item in r.json().get("results", [])]
+            items = r.json().get("results", [])
+            urls = [item.get("url", "") for item in items]
+            for item in items:
+                u = item.get("url") or ""
+                if u:
+                    snippet_by_url[u] = " ".join(
+                        p for p in (item.get("title") or "", item.get("snippet") or "") if p
+                    ).strip()
         except Exception as exc:
             record["error"] = f"search: {type(exc).__name__}"
             urls = []
+    record["search_latency_ms"] = int((time.perf_counter() - t0) * 1000)
     record["hit_at_5"] = hit_at_k(urls, relevant, 5)
     record["hit_at_10"] = hit_at_k(urls, relevant, 10)
     record["recall_at_10"] = recall_at_k(urls, relevant, 10)
@@ -96,7 +118,7 @@ async def eval_query(
                         "query": query,
                         "lang": q.get("lang"),
                         "k": 10,
-                        "categories": q.get("categories") or ["general"],
+                        "categories": cats,
                     },
                     timeout=180.0,
                 )
@@ -110,17 +132,38 @@ async def eval_query(
         cited = cited_urls_from_answer(answer_md, citations)
         record["context_precision"] = context_precision(cited, relevant)
         record["context_recall"] = context_recall(cited, relevant)
-        # claim support: fetch chunk contents is not exposed — approximate with
-        # snippets of the cited search results (documented limitation).
         snippet_by_n: dict[int, str] = {}
+        for item in payload.get("sources") or []:
+            su = item.get("url") or ""
+            if su and su not in snippet_by_url:
+                snippet_by_url[su] = " ".join(
+                    p for p in (item.get("title") or "", item.get("snippet") or "") if p
+                ).strip()
         for c in citations:
             n = int(c.get("n") or 0)
-            for item in payload.get("sources") or []:
-                if item.get("url") == c.get("url"):
-                    snippet_by_n[n] = item.get("title", "")
+            cu = c.get("url") or ""
+            if cu in snippet_by_url:
+                snippet_by_n[n] = snippet_by_url[cu]
+            elif c.get("title"):
+                snippet_by_n[n] = str(c["title"])
         record["claim_support"] = claim_support_rate(answer_md, snippet_by_n) if answer_md else 0.0
+        record["numeric_fidelity"] = (
+            numeric_fidelity_rate(answer_md, snippet_by_n) if answer_md else 0.0
+        )
+        record["citation_precision"] = (
+            citation_precision_rate(answer_md, {int(c.get("n") or 0) for c in citations})
+            if answer_md
+            else 0.0
+        )
         record["unsupported_markers"] = payload.get("unsupported_markers") or []
         record["follow_ups"] = len(payload.get("follow_ups") or [])
+        if with_judge and gateway is not None and answer_md:
+            record["judge"] = await llm_judge(
+                gateway,
+                answer_md,
+                query,
+                [snippet_by_n[k] for k in sorted(snippet_by_n) if snippet_by_n[k]],
+            )
     return record
 
 
@@ -130,6 +173,7 @@ async def main() -> int:
     parser.add_argument("--golden", type=Path, default=_GOLDEN)
     parser.add_argument("--report-dir", type=Path, default=_DEFAULT_REPORT_DIR)
     parser.add_argument("--answers", action="store_true", help="also evaluate /v1/answer")
+    parser.add_argument("--judge", action="store_true", help="also run RAGAS LLM-as-judge")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--limit", type=int, default=0, help="only first N queries (debug)")
     args = parser.parse_args()
@@ -138,16 +182,38 @@ async def main() -> int:
     if args.limit:
         queries = queries[: args.limit]
 
+    gateway = None
+    if args.judge:
+        try:
+            from app.api import deps
+
+            gateway = deps.get_gateway()
+        except Exception:
+            gateway = None
+
     sem = asyncio.Semaphore(max(1, args.concurrency))
     started = time.perf_counter()
     async with httpx.AsyncClient() as client:
         records = await asyncio.gather(
             *(
-                eval_query(client, args.base_url, q, with_answers=args.answers, concurrency_sem=sem)
+                eval_query(
+                    client,
+                    args.base_url,
+                    q,
+                    with_answers=args.answers,
+                    with_judge=args.judge,
+                    gateway=gateway,
+                    concurrency_sem=sem,
+                )
                 for q in queries
             )
         )
-    summary = aggregate(list(records))
+    rec_list = list(records)
+    summary = aggregate(rec_list)
+    lat_stats = latency_percentiles(
+        [float(r["search_latency_ms"]) for r in rec_list if r.get("search_latency_ms") is not None]
+    )
+    by_slice = aggregate_by_slice(rec_list, key="slice")
     elapsed = time.perf_counter() - started
 
     report = {
@@ -155,11 +221,14 @@ async def main() -> int:
         "base_url": args.base_url,
         "golden": str(args.golden),
         "with_answers": args.answers,
+        "with_judge": args.judge,
         "elapsed_s": round(elapsed, 1),
         "summary": summary,
+        "latency_percentiles": lat_stats,
+        "by_slice": by_slice,
         "thresholds": thresholds,
         "passed": all(summary.get(k, 0.0) >= v for k, v in thresholds.items() if k in summary),
-        "records": list(records),
+        "records": rec_list,
     }
 
     args.report_dir.mkdir(parents=True, exist_ok=True)

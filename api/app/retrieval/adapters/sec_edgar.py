@@ -63,14 +63,25 @@ class SecEdgarAdapter:
         max_results: int = 15,
         timeout_s: float = 5.0,
     ) -> list[RawResult]:
-        clean_q = query.strip()
+        clean_q = re.sub(r"\bsite:\S+", " ", query, flags=re.IGNORECASE).strip()
         if not clean_q:
             return []
 
-        params = {
+        low_q = clean_q.lower()
+        forms = "10-K,10-Q,8-K,S-1"
+        if any(tok in low_q for tok in ("insider", "form 4", "13f", "institutional", "holding")):
+            forms = "10-K,10-Q,8-K,4,13F-HR,S-1"
+
+        params: dict[str, str] = {
             "q": clean_q,
-            "forms": "10-K,10-Q,8-K,S-1",
+            "forms": forms,
         }
+        if freshness_days:
+            from datetime import timedelta
+
+            since = (datetime.now(UTC).date() - timedelta(days=int(freshness_days))).isoformat()
+            params["dateRange"] = "custom"
+            params["startdt"] = since
         headers = {
             "User-Agent": self.user_agent,
             "Accept": "application/json",

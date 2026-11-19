@@ -19,11 +19,39 @@ from app.retrieval.models import RawResult
 
 DEFAULT_BASE_URL = "https://api.stackexchange.com/2.3/search/advanced"
 
+_SE_ALLOWED_SITES: frozenset[str] = frozenset(
+    {
+        "stackoverflow",
+        "serverfault",
+        "superuser",
+        "askubuntu",
+        "mathoverflow",
+        "math",
+        "stats",
+        "quant",
+        "money",
+        "datascience",
+        "ai",
+        "security",
+        "dba",
+        "unix",
+        "apple",
+        "electronics",
+        "physics",
+        "crossvalidated",
+        "softwareengineering",
+        "codereview",
+        "english",
+        "tex",
+        "cs",
+    }
+)
+
 
 def _site_from_query(query: str, default: str = "stackoverflow") -> tuple[str, str]:
     """Allow ``site:mathoverflow`` in the query to pick the SE site; returns
-    (cleaned_query, site). Site is strictly validated: charset whitelist,
-    fixed host, so no "/", "?" or "&" can reach the query string."""
+    (cleaned_query, site). Rejects non-StackExchange site: operators so unrelated
+    web queries like ``site:vnexpress.net`` never cause HTTP 400."""
 
     m = re.search(r"(?:^|\s)site:([a-z0-9.]+)", query, re.IGNORECASE)
     if not m:
@@ -31,7 +59,16 @@ def _site_from_query(query: str, default: str = "stackoverflow") -> tuple[str, s
     site = m.group(1).lower()
     if not re.fullmatch(r"[a-z0-9]+(\.[a-z0-9]+)*", site):
         return query, default
+    base_name = site.removesuffix(".com").removesuffix(".net").removesuffix(".stackexchange")
+    is_valid_se = (
+        site in _SE_ALLOWED_SITES
+        or base_name in _SE_ALLOWED_SITES
+        or site.endswith(".stackexchange")
+        or site.endswith(".stackexchange.com")
+    )
     cleaned = (query[: m.start()] + query[m.end() :]).strip()
+    if not is_valid_se:
+        return cleaned or query, default
     return cleaned or query, site
 
 
@@ -115,7 +152,11 @@ class StackExchangeAdapter:
                     title=title,
                     snippet=snippet,
                     adapter=self.id,
-                    source_engines=[f"stackexchange-{site}"],
+                    source_engines=(
+                        ["stackoverflow"]
+                        if site in ("stackoverflow", "stackoverflow.com")
+                        else [f"stackexchange-{site}"]
+                    ),
                     published_at=_parse_ts(it.get("creation_date")),
                     rank=len(results),
                 )

@@ -29,8 +29,75 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 DEFAULT_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
+DEFAULT_RSS_URL = "https://feeds.finance.yahoo.com/rss/2.0/headline"
 _TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
+_CASHTAG_RE = re.compile(r"\$([A-Za-z]{1,6}(?:[.\-][A-Za-z0-9]{1,4})?)")
+_DOTTED_SYM_RE = re.compile(r"\b([A-Z]{1,5}\.(?:VN|HK|L|TO|DE|A|B)|[A-Z]{2,5}-[A-Z]{1,4})\b")
+_UPPER_TICKER_RE = re.compile(r"\b([A-Z]{2,5})\b")
+_YAHOO_NOISE_WORDS = frozenset(
+    {
+        "STOCK",
+        "STOCKS",
+        "SHARE",
+        "SHARES",
+        "QUOTE",
+        "QUOTES",
+        "PRICE",
+        "PRICES",
+        "OUTLOOK",
+        "EARNINGS",
+        "NEWS",
+        "SENTIMENT",
+        "ANALYSIS",
+        "FORECAST",
+        "BUY",
+        "SELL",
+        "REPORT",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "YOY",
+        "QOQ",
+        "EPS",
+        "ETF",
+        "SEC",
+        "USD",
+        "VND",
+    }
+)
+
+
+def _extract_yahoo_lookup_query(raw_query: str) -> tuple[str, str | None]:
+    """Return (search_query, primary_ticker_hint) safe for Yahoo autocomplete."""
+    q = (raw_query or "").strip()
+    m_cash = _CASHTAG_RE.search(q)
+    if m_cash:
+        sym = m_cash.group(1).upper()
+        return sym, sym
+    m_dot = _DOTTED_SYM_RE.search(q)
+    if m_dot:
+        sym = m_dot.group(1).upper()
+        return sym, sym
+    uppers = [t for t in _UPPER_TICKER_RE.findall(q) if t not in _YAHOO_NOISE_WORDS]
+    if uppers:
+        sym = uppers[0]
+        from app.retrieval.vn_tickers import is_vn_ticker
+
+        if is_vn_ticker(sym) and any(ord(c) > 127 for c in q):
+            return f"{sym}.VN", f"{sym}.VN"
+        return sym, sym
+    stripped = re.sub(
+        r"\b(stock|stocks|share|shares|quote|quotes|cổ phiếu|chứng khoán|kết quả kinh doanh|"
+        r"triển vọng|phân tích|price|prices|earnings|outlook|forecast|news|sentiment)\b",
+        " ",
+        q,
+        flags=re.IGNORECASE,
+    )
+    tokens = [w for w in _WS.sub(" ", stripped).strip().split() if len(w) > 1][:3]
+    clean = " ".join(tokens) or q.lstrip("$")
+    return clean, None
 
 
 def _strip_html(text: str) -> str:
@@ -111,11 +178,79 @@ class YahooFinanceAdapter:
         *,
         search_url: str = DEFAULT_SEARCH_URL,
         chart_url: str = DEFAULT_CHART_URL,
+        rss_url: str = DEFAULT_RSS_URL,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.search_url = search_url
         self.chart_url = chart_url
+        self.rss_url = rss_url
         self._client = client
+
+    async def _fetch_ticker_rss(
+        self,
+        client: httpx.AsyncClient,
+        symbol: str,
+        *,
+        freshness_days: int | None,
+        max_items: int,
+        timeout_s: float,
+    ) -> list[RawResult]:
+        from defusedxml import ElementTree as DET
+
+        try:
+            resp = await client.get(
+                self.rss_url,
+                params={"s": symbol, "region": "US", "lang": "en-US"},
+                headers={"User-Agent": "Mozilla/5.0"},
+                follow_redirects=True,
+                timeout=min(timeout_s, 2.5),
+            )
+            if resp.status_code != 200 or len(resp.content or b"") > 2 * 1024 * 1024:
+                return []
+            root = DET.fromstring(resp.text)
+        except Exception:
+            return []
+        cutoff_ts = (
+            datetime.now(UTC).timestamp() - max(1, int(freshness_days)) * 86400
+            if freshness_days
+            else None
+        )
+        out: list[RawResult] = []
+        for item in root.findall("./channel/item")[: max_items * 2]:
+            title = _strip_html(item.findtext("title") or "")
+            link = (item.findtext("link") or "").strip()
+            desc = _strip_html(item.findtext("description") or "")
+            pub_raw = (item.findtext("pubDate") or "").strip()
+            if not title or not link.startswith("http"):
+                continue
+            pub_dt: datetime | None = None
+            if pub_raw:
+                from email.utils import parsedate_to_datetime
+
+                try:
+                    pub_dt = parsedate_to_datetime(pub_raw).astimezone(UTC)
+                except (TypeError, ValueError, OverflowError):
+                    pub_dt = None
+            if cutoff_ts is not None and pub_dt is not None and pub_dt.timestamp() < cutoff_ts:
+                continue
+            out.append(
+                RawResult(
+                    url=link,
+                    title=title,
+                    snippet=desc or f"[Yahoo Finance RSS · {symbol}] {title}",
+                    adapter=self.id,
+                    source_engines=[self.id],
+                    published_at=pub_dt,
+                    source_url=link,
+                    source_name="Yahoo Finance",
+                    as_of=pub_dt,
+                    data_kind="observed",
+                    rank=len(out) + 1,
+                )
+            )
+            if len(out) >= max_items:
+                break
+        return out
 
     async def search(
         self,
@@ -131,20 +266,12 @@ class YahooFinanceAdapter:
         if not clean_q:
             return []
 
-        # Strip generic noise keywords for ticker/company lookup
-        clean_lookup = re.sub(
-            r"\b(stock|stocks|share|shares|quote|quotes|cổ phiếu|chứng khoán|price|prices)\b",
-            "",
-            clean_q,
-            flags=re.IGNORECASE,
-        ).strip()
-        effective_q = clean_lookup or clean_q
-
+        effective_q, sym_hint = _extract_yahoo_lookup_query(query)
         search_params = {
             "q": effective_q,
             "quotesCount": str(min(max_results, 6)),
-            "newsCount": str(min(max_results, 6)),
-            "enableFuzzyQuery": "false",
+            "newsCount": str(min(max_results, 8)),
+            "enableFuzzyQuery": "false" if sym_hint else "true",
         }
         headers = {
             "User-Agent": (
@@ -308,12 +435,18 @@ class YahooFinanceAdapter:
                 )
             )
 
+        cutoff_news_ts = (
+            datetime.now(UTC).timestamp() - max(1, int(freshness_days)) * 86400
+            if freshness_days
+            else None
+        )
+        seen_urls = {r.url for r in results}
         # 2. Process Financial News
         for item in news_items:
             if not isinstance(item, dict):
                 continue
             link = item.get("link")
-            if not link or not link.startswith("http"):
+            if not link or not link.startswith("http") or link in seen_urls:
                 continue
 
             title = _strip_html(item.get("title") or "")
@@ -333,7 +466,14 @@ class YahooFinanceAdapter:
                     published_at = datetime.fromtimestamp(pub_time, tz=UTC)
                 except (ValueError, OSError):
                     published_at = None
+            if (
+                cutoff_news_ts is not None
+                and published_at is not None
+                and published_at.timestamp() < cutoff_news_ts
+            ):
+                continue
 
+            seen_urls.add(link)
             results.append(
                 RawResult(
                     url=link,
@@ -349,5 +489,20 @@ class YahooFinanceAdapter:
                     data_kind="observed",
                 )
             )
+
+        rss_sym = sym_hint or (primary_symbols[0] if primary_symbols else None)
+        if rss_sym and len(results) < max_results and self._client is None:
+            rss_hits = await self._fetch_ticker_rss(
+                client,
+                rss_sym,
+                freshness_days=freshness_days,
+                max_items=max(2, max_results - len(results)),
+                timeout_s=timeout_s,
+            )
+            for rh in rss_hits:
+                if rh.url not in seen_urls:
+                    seen_urls.add(rh.url)
+                    rh.rank = len(results) + 1
+                    results.append(rh)
 
         return results[:max_results]

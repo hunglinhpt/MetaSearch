@@ -280,7 +280,8 @@ class TestAnswerEndpoint:
         assert {c["n"] for c in data["citations"]} == {1, 2}
         assert data["citations"][0]["url"] == "https://one.example.com/a"
         assert len(data["sources"]) == 2
-        assert data["model"] == get_settings().llm_quick_model
+        # docs/30 A5: answer synthesis defaults to the report model for quality
+        assert data["model"] == get_settings().llm_report_model
 
     def test_answer_sse_event_sequence(self, client, stack):
         self._install(stack)

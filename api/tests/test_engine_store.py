@@ -139,6 +139,10 @@ class TestDefaults:
             "crossref",
             "europepmc",
             "gdelt",
+            # v4.0 keyless verified live feeds
+            "bing_news",
+            "vn_wire",
+            "fin_rss",
         }
         assert configs["arxiv"].category == "academic"
         assert configs["wikipedia"].category == "reference"
@@ -158,6 +162,9 @@ class TestDefaults:
         assert configs["yahoo_finance"].category == "financial"
         assert configs["sec_edgar"].category == "financial"
         assert configs["google_news"].category == "news"
+        assert configs["bing_news"].category == "news"
+        assert configs["fin_rss"].category == "news"
+        assert configs["vn_wire"].category == "financial"
         assert configs["fengshui"].category == "fengshui"
         assert configs["viet_stock"].category == "financial"
         assert configs["stooq"].category == "financial"

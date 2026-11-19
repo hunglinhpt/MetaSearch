@@ -1,0 +1,34 @@
+{
+  "description": "v4.0 Deep Research offline FACT benchmark verifying citation coverage, citation precision, claim entailment, numeric fidelity, STORM outline adherence, and conflict surfacing.",
+  "thresholds": {
+    "citation_coverage": 0.85,
+    "citation_precision": 0.95,
+    "claim_support": 0.85,
+    "numeric_fidelity": 0.90,
+    "outline_coverage": 0.85,
+    "conflict_surfaced": 0.80,
+    "fact_score": 0.85
+  },
+  "cases": [
+    {
+      "id": "res_vn_equity_01",
+      "outline": ["Executive Summary", "Financial Performance", "Valuation & Capital Structure", "Risks & Counterarguments", "References"],
+      "conflicts": [{"topic": "Margin recovery timeline", "claim_a": "Recovery in Q4", "citation_a": 1, "claim_b": "Delayed until Q2 next year", "citation_b": 2}],
+      "chunks": {
+        "1": "FPT Q3 revenue reached 15,200 billion VND with 19.5% YoY growth driven by global IT services and 40% margin recovery expected by Q4.",
+        "2": "Analyst report notes domestic telecom margin recovery faces temporary cost delays until Q2 next year despite P/E ratio standing at 21.4x."
+      },
+      "report_md": "## Executive Summary\nFPT delivered Q3 revenue of 15,200 billion VND, representing 19.5% YoY expansion led by global IT services [1].\n\n## Financial Performance\nGlobal IT revenue remained strong alongside 19.5% overall growth in Q3 filings [1].\n\n## Valuation & Capital Structure\nCurrent equity valuation trades at P/E ratio 21.4x based on peer multiples [2].\n\n## Risks & Counterarguments\nOn margin recovery timeline, one report expects Q4 stabilization [1], whereas domestic telecom estimates flag delays until Q2 next year [2].\n\n## References\n- [1] Primary Q3 report [1]\n- [2] Broker risk note [2]"
+    },
+    {
+      "id": "res_tech_compare_02",
+      "outline": ["Executive Summary", "Architecture & Performance", "Trade-offs & Counterarguments", "References"],
+      "conflicts": [{"topic": "Replication lag overhead", "claim_a": "Sub-5ms latency", "citation_a": 1, "claim_b": "Peaks above 40ms under heavy DDL", "citation_b": 2}],
+      "chunks": {
+        "1": "PostgreSQL streaming replication transfers physical WAL segments with sub-5ms typical replication lag on synchronous local clusters.",
+        "2": "Logical decoding pipelines allow selective table replication but replication lag overhead peaks above 40ms during heavy schema DDL migrations."
+      },
+      "report_md": "## Executive Summary\nPostgreSQL streaming replication transmits physical WAL records achieving sub-5ms typical lag in synchronous clusters [1].\n\n## Architecture & Performance\nLogical decoding pipelines enable selective table replication across target deployments [2].\n\n## Trade-offs & Counterarguments\nRegarding replication lag overhead, synchronous physical streaming achieves sub-5ms latency [1], whereas logical pipelines spike above 40ms during heavy DDL migrations [2].\n\n## References\n- [1] Core PostgreSQL docs [1]\n- [2] Migration benchmark [2]"
+    }
+  ]
+}

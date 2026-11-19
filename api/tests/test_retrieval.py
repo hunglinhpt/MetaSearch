@@ -67,7 +67,8 @@ class TestScoring:
 
     def test_consensus_normalized(self):
         assert consensus_score(3, 3) == 1.0
-        assert 0.0 < consensus_score(1, 8) < 0.5
+        assert consensus_score(1, 8) == 0.0
+        assert 0.0 < consensus_score(2, 8) < 0.5
 
     def test_freshness_decays(self):
         now = datetime.now(UTC)

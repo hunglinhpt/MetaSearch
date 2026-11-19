@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     searxng_enabled: bool = True
     searxng_url: str = "http://searxng:8080"
     # Port must match deploy/docker-compose.yml (crawl4ai publishes 11222).
+    crawl4ai_enabled: bool = True
     crawl4ai_url: str = "http://crawl4ai:11222"
     crawl4ai_api_token: str = ""
     jina_reader_base_url: str = "https://r.jina.ai"
@@ -154,7 +155,7 @@ class Settings(BaseSettings):
     # WP-08: total upstream LLM calls per request (failover candidates included).
     llm_max_attempts: int = 3
     # WP-08: Deep Research report streaming token cap (DAT-07: was 1024 silently).
-    research_report_max_tokens: int = 4096
+    research_report_max_tokens: int = 8192
     # WP-08: overall council wall-clock budget per run (seconds).
     council_budget_s: float = 90.0
     # Context budget for /v1/answer: units depend on CONTEXT_TOKENIZER
@@ -243,7 +244,7 @@ class Settings(BaseSettings):
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------
     # docs/20 P0-2: "bge" = BAAI/bge-reranker-v2-m3 cross-encoder, local ONNX
     # (int8 preferred), downloaded on first use when no local dir is given.
-    reranker: Literal["heuristic", "onnx", "bge", "api"] = "heuristic"
+    reranker: Literal["heuristic", "onnx", "bge", "api", "llm"] = "heuristic"
     reranker_api_base_url: str = "https://api.jina.ai"
     # Directory holding model.onnx + tokenizer.json for RERANKER=onnx.
     onnx_reranker_dir: str = ""

@@ -32,7 +32,7 @@ _TERMINAL_EVENTS = {"done", "error"}
 class ResearchJob:
     id: uuid.UUID
     query: str
-    status: str = "queued"  # queued | running | done | failed
+    status: str = "queued"  # queued | running | done | failed | cancelled
     created_at: float = field(default_factory=time.monotonic)
     progress: dict[str, int] = field(default_factory=lambda: {"iteration": 0, "max_iterations": 0})
     events: deque[tuple[int, tuple[str, dict]]] = field(default_factory=lambda: deque(maxlen=2000))
@@ -44,6 +44,8 @@ class ResearchJob:
     result: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     finished: bool = False
+    cancelled: bool = False
+    task: asyncio.Task[None] | None = None
     owner_key_id: str | None = None
 
     def _flush_token_batch(self) -> None:
@@ -213,6 +215,102 @@ class ResearchJobStore:
             status_code=404,
         )
 
+    async def cancel(self, research_id: str) -> ResearchJob:
+        """Cancel an active or queued research job safely."""
+        job = await self.get(research_id)
+        if not job.finished:
+            job.cancelled = True
+            if job.task is not None and not job.task.done():
+                job.task.cancel()
+            job.push(("error", {"code": "cancelled", "message": "research cancelled"}))
+            job.status = "cancelled"
+            job.notify_sync()
+        return job
+
+    async def list_jobs(
+        self,
+        *,
+        owner_key_id: str | None = None,
+        is_admin: bool = True,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """List recent research jobs merging in-memory state with DB history."""
+        capped = max(1, min(int(limit), 50))
+        items: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        in_mem = sorted(self._jobs.values(), key=lambda j: -j.created_at)
+        for job in in_mem:
+            if not is_admin and (job.owner_key_id is None or job.owner_key_id != owner_key_id):
+                continue
+            sid = str(job.id)
+            seen_ids.add(sid)
+            items.append(
+                {
+                    "research_id": sid,
+                    "query": job.query,
+                    "status": job.status,
+                    "profile": job.result.get("profile"),
+                    "cost_usd": float(job.result.get("cost_usd", 0.0) or 0.0),
+                    "created_at": None,
+                    "in_memory": True,
+                }
+            )
+            if len(items) >= capped:
+                return items
+
+        try:
+            from sqlalchemy import select
+
+            from app.db.models import Answer as AnswerRow
+            from app.db.models import Query as QueryRow
+            from app.db.session import get_sessionmaker
+
+            async with get_sessionmaker()() as session:
+                stmt = (
+                    select(
+                        QueryRow.id,
+                        QueryRow.raw_text,
+                        QueryRow.params,
+                        QueryRow.api_key_id,
+                        AnswerRow.status,
+                        AnswerRow.cost_usd,
+                        AnswerRow.created_at,
+                    )
+                    .join(AnswerRow, AnswerRow.query_id == QueryRow.id)
+                    .where(AnswerRow.kind == "research")
+                    .order_by(AnswerRow.created_at.desc())
+                    .limit(capped * 2)
+                )
+                if not is_admin:
+                    if owner_key_id is None:
+                        return items
+                    stmt = stmt.where(QueryRow.api_key_id == owner_key_id)
+                rows = (await session.execute(stmt)).all()
+            for row in rows:
+                sid = str(row.id)
+                if sid in seen_ids:
+                    continue
+                seen_ids.add(sid)
+                raw_status = str(row.status or "done")
+                q_params = row.params if isinstance(row.params, dict) else {}
+                items.append(
+                    {
+                        "research_id": sid,
+                        "query": row.raw_text,
+                        "status": "done" if raw_status in ("complete", "truncated") else raw_status,
+                        "profile": q_params.get("profile"),
+                        "cost_usd": float(row.cost_usd or 0.0),
+                        "created_at": row.created_at.isoformat() if row.created_at else None,
+                        "in_memory": False,
+                    }
+                )
+                if len(items) >= capped:
+                    break
+        except Exception as exc:
+            logger.debug("research_job_list_db_skipped", error=type(exc).__name__)
+        return items[:capped]
+
     async def _load_from_db(self, job_id: uuid.UUID) -> ResearchJob | None:
         try:
             from sqlalchemy import select
@@ -262,8 +360,16 @@ class ResearchJobStore:
                     .all()
                 )
 
+                q_params = query_row.params if isinstance(query_row.params, dict) else {}
+                raw_titles = q_params.get("citation_titles")
+                title_map = raw_titles if isinstance(raw_titles, dict) else {}
                 citations = [
-                    {"n": c.n, "url": c.url or "", "title": "", "chunk_id": str(c.chunk_id or "")}
+                    {
+                        "n": c.n,
+                        "url": c.url or "",
+                        "title": str(title_map.get(str(c.n)) or ""),
+                        "chunk_id": str(c.chunk_id or ""),
+                    }
                     for c in citation_rows
                 ]
 
@@ -277,7 +383,13 @@ class ResearchJobStore:
                     result={
                         "report_md": answer_row.content_md or "",
                         "citations": citations,
-                        "learnings": [],
+                        "learnings": list(q_params.get("learnings") or []),
+                        "gaps": list(q_params.get("gaps") or []),
+                        "conflicts": list(q_params.get("conflicts") or []),
+                        "outline": list(q_params.get("outline") or []),
+                        "verification": q_params.get("verification"),
+                        "tools": list(q_params.get("tools") or []),
+                        "profile": q_params.get("profile"),
                         "cost_usd": float(answer_row.cost_usd or 0.0),
                     },
                 )
@@ -340,6 +452,11 @@ async def run_job(job: ResearchJob, params) -> None:
     report_parts: list[str] = []
     citations: list[dict] = []
     learnings_acc: list[str] = []
+    outline_acc: list[str] = []
+    tools_acc: list[dict[str, Any]] = []
+    verification_res: dict[str, Any] | None = None
+    conflicts_acc: list[dict[str, Any]] = []
+    profile_res: str | None = None
     cost_usd: float = 0.0
     try:
         async for name, data in pipeline.run(params, on_event=lambda e: push_event(job, e)):
@@ -349,12 +466,29 @@ async def run_job(job: ResearchJob, params) -> None:
                 citations = data["citations"]
             elif name == "learnings":
                 learnings_acc.extend(data.get("learnings", []))
+            elif name == "outline":
+                outline_acc = list(data.get("sections") or [])
+                profile_res = data.get("profile") or profile_res
+            elif name == "tool_results":
+                tools_acc = list(data.get("tools") or [])
+            elif name == "verification":
+                verification_res = dict(data)
             elif name == "done":
                 cost_usd = float(data.get("usage", {}).get("cost_usd", 0.0) or 0.0)
+                profile_res = data.get("profile") or profile_res
+                outline_acc = list(data.get("outline") or outline_acc)
+                conflicts_acc = list(data.get("conflicts") or conflicts_acc)
+                tools_acc = list(data.get("tools") or tools_acc)
+                verification_res = data.get("verification") or verification_res
                 job.result = {
                     "report_md": "".join(report_parts),
                     "citations": citations,
                     "learnings": learnings_acc,
+                    "outline": outline_acc,
+                    "conflicts": conflicts_acc,
+                    "verification": verification_res,
+                    "tools": tools_acc,
+                    "profile": profile_res,
                     "cost_usd": cost_usd,
                 }
             push_event(job, (name, data))
@@ -363,11 +497,19 @@ async def run_job(job: ResearchJob, params) -> None:
                 "report_md": "".join(report_parts),
                 "citations": citations,
                 "learnings": learnings_acc,
+                "outline": outline_acc,
+                "conflicts": conflicts_acc,
+                "verification": verification_res,
+                "tools": tools_acc,
+                "profile": profile_res,
                 "cost_usd": cost_usd,
             }
         logger.info("research_job_done", research_id=str(job.id), status=job.status)
     except asyncio.CancelledError:
-        job.push(("error", {"code": "internal", "message": "research cancelled"}))
+        job.cancelled = True
+        if not job.finished:
+            job.push(("error", {"code": "cancelled", "message": "research cancelled"}))
+        job.status = "cancelled"
         job.notify_sync()
         raise
     except Exception as exc:

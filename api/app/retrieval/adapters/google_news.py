@@ -31,6 +31,68 @@ _WS_RE = re.compile(r"\s+")
 _WHEN_OPERATOR_RE = re.compile(r"\bwhen:[0-9]+[dhwmy](?![a-z0-9])", re.IGNORECASE | re.ASCII)
 _MAX_FRESHNESS_DAYS = 3650  # matches the API schema bound (freshness_days le=3650)
 
+PUBLISHER_DOMAIN_MAP: dict[str, str] = {
+    "cafef": "cafef.vn",
+    "vietstock": "vietstock.vn",
+    "vneconomy": "vneconomy.vn",
+    "vnexpress": "vnexpress.net",
+    "tuổi trẻ": "tuoitre.vn",
+    "tuoi tre": "tuoitre.vn",
+    "thanh niên": "thanhnien.vn",
+    "thanh nien": "thanhnien.vn",
+    "dân trí": "dantri.com.vn",
+    "dan tri": "dantri.com.vn",
+    "báo đầu tư": "baodautu.vn",
+    "đầu tư": "baodautu.vn",
+    "tin nhanh chứng khoán": "tinnhanhchungkhoan.vn",
+    "người quan sát": "nguoiquansat.vn",
+    "fireant": "fireant.vn",
+    "simplize": "simplize.vn",
+    "bloomberg": "bloomberg.com",
+    "reuters": "reuters.com",
+    "wall street journal": "wsj.com",
+    "wsj": "wsj.com",
+    "financial times": "ft.com",
+    "ft": "ft.com",
+    "seeking alpha": "seekingalpha.com",
+    "cnbc": "cnbc.com",
+    "marketwatch": "marketwatch.com",
+    "yahoo finance": "finance.yahoo.com",
+    "barron's": "barrons.com",
+    "morningstar": "morningstar.com",
+    "investors business daily": "investors.com",
+    "the motley fool": "fool.com",
+    "motley fool": "fool.com",
+    "benzinga": "benzinga.com",
+    "investing.com": "investing.com",
+    "tastylive": "tastylive.com",
+}
+
+
+def resolve_publisher_url(source_name: str, xml_source_url: str | None = None) -> str | None:
+    """Resolve a real http(s) publisher homepage URL from RSS <source url=...> or name map."""
+    cand = (xml_source_url or "").strip()
+    if cand:
+        from urllib.parse import urlsplit
+
+        try:
+            parsed = urlsplit(cand)
+            if parsed.scheme.lower() in ("http", "https") and parsed.netloc:
+                return cand
+        except ValueError:
+            pass
+    low = (source_name or "").strip().lower()
+    if not low:
+        return None
+    if low in PUBLISHER_DOMAIN_MAP:
+        return f"https://{PUBLISHER_DOMAIN_MAP[low]}/"
+    for key, dom in PUBLISHER_DOMAIN_MAP.items():
+        if key in low:
+            return f"https://{dom}/"
+    if "." in low and " " not in low and all(ch.isalnum() or ch in ".-" for ch in low):
+        return f"https://{low}/"
+    return None
+
 
 def _clean_snippet(raw: str) -> str:
     cleaned = _WS_RE.sub(" ", _TAG_RE.sub(" ", html.unescape(raw or ""))).strip()
@@ -194,10 +256,14 @@ class GoogleNewsAdapter:
             snippet = _clean_snippet(raw_desc) or title
 
             source_name = ""
-            if source_elem is not None and source_elem.text:
-                source_name = source_elem.text.strip()
-            elif " - " in title:
+            xml_source_url = ""
+            if source_elem is not None:
+                xml_source_url = (source_elem.attrib.get("url") or "").strip()
+                if source_elem.text:
+                    source_name = source_elem.text.strip()
+            if not source_name and " - " in title:
                 source_name = title.rsplit(" - ", 1)[-1].strip()
+            publisher_url = resolve_publisher_url(source_name, xml_source_url)
 
             if source_name and not snippet.startswith(f"[{source_name}]"):
                 snippet = f"[{source_name}] {snippet}"
@@ -221,6 +287,8 @@ class GoogleNewsAdapter:
                         source_engines=["google_news"],
                         rank=len(results) + 1,
                         published_at=published_at,
+                        source_url=publisher_url,
+                        source_name=source_name or None,
                     )
                 )
 

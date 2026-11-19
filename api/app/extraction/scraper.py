@@ -141,6 +141,7 @@ class Scraper:
         self._global_sem = asyncio.Semaphore(self._settings.scrape_global_concurrency)
         self._domain_sems: OrderedDict[str, asyncio.Semaphore] = OrderedDict()
         self._domain_sem_lock = asyncio.Lock()
+        self._crawl4ai_down_until: float = 0.0
 
     async def _get_domain_sem(self, domain: str) -> asyncio.Semaphore:
         async with self._domain_sem_lock:
@@ -164,10 +165,13 @@ class Scraper:
         self,
         urls: list[str],
         *,
+        max_pages: int | None = None,
         timeout_s: float | None = None,
+        concurrency: int | None = None,
         progress: Any = None,
     ) -> list[PageContent | PageFailure]:
-        capped_urls = urls[: self._settings.scrape_max_urls]
+        limit = max_pages if max_pages is not None else self._settings.scrape_max_urls
+        capped_urls = urls[:limit]
         if not capped_urls:
             return []
 
@@ -175,14 +179,18 @@ class Scraper:
 
         budget = get_current_budget()
         stage_budget = (
-            budget.stage("scrape", self._settings.scrape_timeout_s)
+            budget.stage(
+                "scrape", timeout_s if timeout_s is not None else self._settings.scrape_timeout_s
+            )
             if budget
             else (self._settings.scrape_timeout_s if timeout_s is None else timeout_s)
         )
         soft_budget = min(self._settings.scrape_soft_budget_s, stage_budget)
         min_pages = self._settings.scrape_min_pages
 
-        sem = asyncio.Semaphore(self._settings.scrape_concurrency)
+        sem = asyncio.Semaphore(
+            concurrency if concurrency is not None else self._settings.scrape_concurrency
+        )
 
         async def one(url: str) -> PageContent | PageFailure:
             async with sem:
@@ -343,28 +351,20 @@ class Scraper:
                 if is_challenge_page(body):
                     logger.info("direct_fetch_captcha_detected_escalating", url=url)
                 else:
-                    if len(body) > self._settings.max_extract_bytes:
-                        logger.info(
-                            "direct_fetch_body_too_large_truncating",
-                            url=url,
-                            size=len(body),
-                            max_bytes=self._settings.max_extract_bytes,
-                        )
-                        body = body[: self._settings.max_extract_bytes]
-                    # docs/20 P2-1: PDFs get page-level extraction (## p.N headings)
-                    # so chunks stay page-addressable for "trang có X" queries.
+                    # Check PDF BEFORE truncating HTML bytes so xref tables at the tail stay intact.
                     from app.extraction.pdf import is_pdf_bytes, pdf_pages_to_markdown
 
-                    if is_pdf_bytes(body) or url.lower().split("?")[0].endswith(".pdf"):
+                    is_pdf = is_pdf_bytes(body) or url.lower().split("?")[0].endswith(".pdf")
+                    if is_pdf:
+                        pdf_cap = max(self._settings.max_extract_bytes, 12 * 1024 * 1024)
+                        truncated_pdf = len(body) > pdf_cap
                         pdf_md = await run_cpu(
-                            pdf_pages_to_markdown, body, max_pages=self._settings.pdf_max_pages
+                            pdf_pages_to_markdown,
+                            body[:pdf_cap],
+                            max_pages=self._settings.pdf_max_pages,
                         )
                         if pdf_md:
-                            # Pass 2 P2#3: a >2MB PDF body was truncated by the
-                            # fetch cap BEFORE parsing — trailing pages were
-                            # never read. Mark the markdown honestly so the
-                            # citation coverage is visible to the consumer.
-                            if len(body) >= self._settings.max_extract_bytes:
+                            if truncated_pdf:
                                 pdf_md += (
                                     "\n\n[truncated: body exceeded the fetch cap"
                                     " — trailing pages missing]"
@@ -378,7 +378,15 @@ class Scraper:
                                 extractor_used="pdf-pages",
                                 fetched_at=_utcnow(),
                             )
-                    markdown, title, extractor = await run_cpu(extract_static, body)
+                    if len(body) > self._settings.max_extract_bytes:
+                        logger.info(
+                            "direct_fetch_body_too_large_truncating",
+                            url=url,
+                            size=len(body),
+                            max_bytes=self._settings.max_extract_bytes,
+                        )
+                        body = body[: self._settings.max_extract_bytes]
+                    markdown, title, extractor = await run_cpu(extract_static, body, url=final_url)
                     if markdown:
                         if len(markdown) > self._settings.max_page_markdown_chars:
                             markdown = markdown[: self._settings.max_page_markdown_chars]
@@ -478,13 +486,18 @@ class Scraper:
                                 redirect_target = str(httpx.URL(current).join(location))
                             break
                         resp.raise_for_status()
+                        ct = (resp.headers.get("content-type") or "").lower()
+                        is_pdf_resp = "application/pdf" in ct or current.lower().split("?")[
+                            0
+                        ].endswith(".pdf")
+                        byte_cap = self._settings.max_scrape_bytes
+                        if is_pdf_resp and byte_cap >= 5 * 1024 * 1024:
+                            byte_cap = max(byte_cap, 12 * 1024 * 1024)
                         buf = bytearray()
                         async for chunk in resp.aiter_bytes():
                             buf.extend(chunk)
-                            if len(buf) > self._settings.max_scrape_bytes:
-                                raise RuntimeError(
-                                    f"page larger than {self._settings.max_scrape_bytes} bytes"
-                                )
+                            if len(buf) > byte_cap:
+                                raise RuntimeError(f"page larger than {byte_cap} bytes")
                         body_result = bytes(buf)
                         break
                 except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
@@ -509,6 +522,10 @@ class Scraper:
         self, url: str, timeout_s: float, *, original_url: str | None = None
     ) -> PageContent | None:
         settings = self._settings
+        if not getattr(settings, "crawl4ai_enabled", True):
+            return None
+        if time.monotonic() < self._crawl4ai_down_until:
+            return None
         headers: dict[str, str] = {}
         if settings.crawl4ai_api_token:
             headers["Authorization"] = f"Bearer {settings.crawl4ai_api_token}"
@@ -522,6 +539,10 @@ class Scraper:
             )
             resp.raise_for_status()
             payload = resp.json()
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            self._crawl4ai_down_until = time.monotonic() + 60.0
+            logger.info("crawl4ai_cooldown", url=url, error=type(exc).__name__)
+            return None
         except Exception as exc:
             logger.info("crawl4ai_unavailable", url=url, error=type(exc).__name__)
             return None
@@ -583,16 +604,23 @@ class Scraper:
         if not text:
             return None
         title = ""
-        for line in text.splitlines():
+        body_text = text
+        # Strip Jina Reader header preamble (Title / URL Source / Published / Content).
+        marker = "\nMarkdown Content:"
+        marker_idx = text.find(marker)
+        head_lines = text[:marker_idx].splitlines() if marker_idx != -1 else text.splitlines()[:10]
+        for line in head_lines:
             if line.startswith("Title:"):
                 title = line[len("Title:") :].strip()
                 break
+        if marker_idx != -1:
+            body_text = text[marker_idx + len(marker) :].strip()
         req_url = original_url or url
         return PageContent(
             url=req_url,
             final_url=url,
             title=title or req_url,
-            markdown=self._cap(text),
+            markdown=self._cap(body_text or text),
             extractor_used="jina",
             fetched_at=_utcnow(),
         )
@@ -685,7 +713,7 @@ _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
 def extract_static(
-    html: str | bytes, *, max_extract_bytes: int | None = None
+    html: str | bytes, *, max_extract_bytes: int | None = None, url: str | None = None
 ) -> tuple[str, str, str]:
     """trafilatura extraction -> (markdown, title, extractor). Empty on failure."""
     if not html or len(html) < 200:  # too small to be a real page worth parsing
@@ -707,9 +735,11 @@ def extract_static(
         markdown = (
             trafilatura.extract(
                 html,
+                url=url,
                 favor_recall=True,
                 output_format="markdown",
                 include_formatting=True,
+                include_tables=True,
                 include_links=False,
                 include_images=False,
             )

@@ -69,6 +69,7 @@ UNIT_COST_POST = {
     "/v1/memory",
     "/v1/memory/observations",
     "/v1/spaces",
+    "/v1/research/{research_id}/cancel",
 }
 
 

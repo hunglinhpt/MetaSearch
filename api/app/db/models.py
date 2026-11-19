@@ -369,6 +369,27 @@ class KgEdge(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     weight: Mapped[float] = mapped_column(REAL, nullable=False, server_default="1")
 
 
+class SentimentSnapshot(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
+    """Daily sentiment snapshot per ticker for rolling 20-day S-Score baselines."""
+
+    __tablename__ = "sentiment_snapshots"
+    __table_args__ = (
+        Index("idx_sentiment_snapshots_ticker_date", "ticker", "snapshot_date"),
+        UniqueConstraint("ticker", "snapshot_date", name="uq_sentiment_snapshot_ticker_day"),
+    )
+
+    ticker: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    market: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    composite_score: Mapped[float] = mapped_column(REAL, nullable=False)
+    text_score: Mapped[float | None] = mapped_column(REAL)
+    quant_score: Mapped[float | None] = mapped_column(REAL)
+    social_volume: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    mention_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    regime: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(REAL, nullable=False)
+
+
 __all__ = [
     "Answer",
     "ApiKey",
@@ -385,6 +406,7 @@ __all__ = [
     "Query",
     "SearchResult",
     "SemanticCache",
+    "SentimentSnapshot",
     "Session",
     "Space",
     "User",

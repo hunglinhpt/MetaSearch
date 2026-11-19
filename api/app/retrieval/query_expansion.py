@@ -21,8 +21,10 @@ logger = get_logger(__name__)
 
 _EXPAND_SYSTEM = (
     "You rewrite search queries. Given a search query, output up to {n} alternative "
-    "paraphrases that would retrieve the same information from a web search engine. "
-    "Keep the language of the query. One per line, no numbering, no quotes, no commentary."
+    "paraphrases that improve recall on web search engines (for Vietnamese technical/global "
+    "finance queries, include concise high-signal synonyms or an English technical twin when "
+    "helpful; for purely domestic Vietnamese law/tax/company queries, keep Vietnamese). "
+    "One per line, no numbering, no quotes, no commentary."
 )
 
 _LINE_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")

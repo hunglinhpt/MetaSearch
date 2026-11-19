@@ -20,6 +20,23 @@ DEFAULT_BASE_URL = "https://api.openalex.org/works"
 _LANG_RE = re.compile(r"^[a-z]{2}$")
 
 
+def _reconstruct_abstract(inv_index: Any, max_chars: int = 400) -> str:
+    if not isinstance(inv_index, dict) or not inv_index:
+        return ""
+    pos_words: list[tuple[int, str]] = []
+    for word, positions in inv_index.items():
+        if not isinstance(word, str) or not isinstance(positions, list):
+            continue
+        for pos in positions:
+            if isinstance(pos, int) and 0 <= pos < 500:
+                pos_words.append((pos, word))
+    if not pos_words:
+        return ""
+    pos_words.sort(key=lambda pair: pair[0])
+    text = " ".join(w for _, w in pos_words)
+    return text[:max_chars].rstrip()
+
+
 def _parse_date(value: Any) -> datetime | None:
     if not value:
         return None
@@ -60,8 +77,8 @@ class OpenAlexAdapter:
             return []
         raw_lang = (lang or "").split("-")[0].lower()
         filters = []
-        if raw_lang and _LANG_RE.match(raw_lang):
-            filters.append(f"language:{raw_lang}")
+        if raw_lang == "en" and _LANG_RE.match(raw_lang):
+            filters.append("language:en")
         if freshness_days:
             from datetime import timedelta
 
@@ -86,9 +103,12 @@ class OpenAlexAdapter:
         for w in works:
             if not isinstance(w, dict):
                 continue
-            wid = w.get("id") or ""
-            doi = w.get("doi") or ""
-            url = doi or (f"https://openalex.org/{wid}" if wid else "")
+            wid = str(w.get("id") or "").strip()
+            doi = str(w.get("doi") or "").strip()
+            wid_url = (
+                wid if wid.startswith("http") else (f"https://openalex.org/{wid}" if wid else "")
+            )
+            url = doi or wid_url
             title = str(w.get("title") or "").strip()
             if not url or not title:
                 continue
@@ -107,6 +127,9 @@ class OpenAlexAdapter:
             if names:
                 snippet = f"{names} — {snippet}" if snippet else names
             snippet = f"cited_by {w.get('cited_by_count') or 0} · {snippet}"
+            abstract = _reconstruct_abstract(w.get("abstract_inverted_index"), max_chars=320)
+            if abstract:
+                snippet = f"{snippet} — {abstract}"
             results.append(
                 RawResult(
                     url=url,

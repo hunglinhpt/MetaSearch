@@ -15,16 +15,17 @@ from app.retrieval.models import RawResult
 DEFAULT_BASE_URL = "https://api.search.brave.com/res"
 
 
-def _parse_age(value: Any) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
+def _parse_age(value: Any, *, page_age: Any = None) -> datetime | None:
+    for cand in (page_age, value):
+        if not cand:
+            continue
+        s = str(cand).strip()
+        try:
+            parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+        except ValueError:
+            pass
+    return None
 
 
 class BraveAdapter:
@@ -54,6 +55,15 @@ class BraveAdapter:
         params: dict[str, str] = {"q": query, "count": str(min(max_results, 20))}
         if lang:
             params["search_lang"] = lang
+        if freshness_days:
+            if freshness_days <= 1:
+                params["freshness"] = "pd"
+            elif freshness_days <= 7:
+                params["freshness"] = "pw"
+            elif freshness_days <= 31:
+                params["freshness"] = "pm"
+            else:
+                params["freshness"] = "py"
         client = self._client or get_http_client("search")
         try:
             resp = await client.get(
@@ -106,7 +116,7 @@ class BraveAdapter:
                     snippet=str(item.get("description") or ""),
                     adapter=self.id,
                     source_engines=["brave"],
-                    published_at=_parse_age(item.get("age")),
+                    published_at=_parse_age(item.get("age"), page_age=item.get("page_age")),
                     rank=len(results),
                 )
             )

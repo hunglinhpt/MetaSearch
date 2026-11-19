@@ -52,7 +52,13 @@ from app.llm.citations import ClaimCheck, check_claims, validate_citations
 from app.llm.compressor import compress_chunks
 from app.llm.embeddings import EmbeddingClient, EmbeddingError
 from app.llm.gateway import LLMError, LLMGateway, Usage, record_usage
-from app.llm.prompts import SYSTEM_PROMPT, build_context, build_messages, render_context
+from app.llm.prompts import (
+    SYSTEM_PROMPT,
+    build_context,
+    build_domain_system_prompt,
+    build_messages,
+    render_context,
+)
 from app.llm.providers import LLMOverride
 from app.llm.tokens import make_counter
 from app.orchestration import persist
@@ -70,9 +76,9 @@ from app.retrieval.merger import diversity_cap, merge
 from app.retrieval.models import EngineConfig, EngineStatus, RawResult, ScoredResult
 from app.retrieval.query_expansion import expand_query, expansion_signature, parse_variants
 from app.retrieval.reranker import Reranker, RerankerUnavailable, heuristic_order
-from app.retrieval.router import classify_complexity
+from app.retrieval.router import classify_complexity, extract_implicit_freshness_days
 from app.retrieval.scoring import heuristic_chunk_score
-from app.retrieval.vn_tickers import is_vn_ticker
+from app.retrieval.vn_tickers import _VIET_STOCK_STOP_WORDS, is_vn_ticker
 
 logger = get_logger(__name__)
 
@@ -85,9 +91,24 @@ _QUANT_ADAPTERS = frozenset({"viet_stock", "stooq", "yahoo_finance", "sec_edgar"
 
 _DOLLAR_TICKER_RE = re.compile(r"\$[a-zA-Z]{1,6}\b")
 
+_BIOMED_QUERY_RE = re.compile(
+    r"\b(?:clinical|trial|medical|disease|patient|protein|gene|genomic|drug|therapy|"
+    r"cancer|virus|vaccine|pubmed|europepmc|pmid|pmcid)\b|y\s+tế|bệnh\s|thuốc\s|lâm\s+sàng",
+    re.IGNORECASE,
+)
+
 
 def _has_vn_ticker(query: str) -> bool:
-    return any(is_vn_ticker(word) for word in re.findall(r"\b[A-Za-z0-9]{3}\b", query))
+    for word in re.findall(r"\b[A-Za-z0-9]{3}\b", query):
+        up = word.upper()
+        if up in _VIET_STOCK_STOP_WORDS:
+            if up == "GAS" and word == "GAS":
+                return True
+            continue
+        # Only treat bare 3-char words as tickers when uppercase (avoid "nha", "hay", "sam")
+        if word.isupper() and is_vn_ticker(up):
+            return True
+    return False
 
 
 # Pass 1 P2: process-local memo of LLM query-expansion variants (10-min TTL).
@@ -157,9 +178,35 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "kế hoạch kinh doanh",
         "kết quả kinh doanh",
         "pháp y tài chính",
+        "lợi nhuận",
+        "doanh thu",
+        "định giá",
+        "lãi suất",
+        "lạm phát",
+        "tỷ giá",
+        "gdp",
+        "earnings",
+        "valuation",
+        "dividend",
+        "market cap",
+        "fed rate",
+        "stock price",
     )
     if _has_term(fin_terms) or _DOLLAR_TICKER_RE.search(q) or _has_vn_ticker(query):
         inferred.add("financial")
+
+    ref_terms = (
+        "là gì",
+        "định nghĩa",
+        "tiểu sử",
+        "lịch sử",
+        "what is",
+        "who is",
+        "definition",
+        "wikipedia",
+    )
+    if _has_term(ref_terms):
+        inferred.add("reference")
 
     fengshui_terms = (
         "phong thủy",
@@ -199,6 +246,9 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "clinical trial",
         "nghiên cứu lâm sàng",
         "peer-reviewed",
+        "luận văn",
+        "citation",
+        "benchmark",
     )
     if _has_term(acad_terms):
         inferred.add("academic")
@@ -216,6 +266,21 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         "nullpointerexception",
         "hacker news",
         "news.ycombinator",
+        "python",
+        "typescript",
+        "javascript",
+        "fastapi",
+        "postgresql",
+        "postgres",
+        "redis",
+        "docker",
+        "kubernetes",
+        "golang",
+        "algorithm",
+        "thuật toán",
+        "microservices",
+        "dijkstra",
+        "rag",
     )
     if _has_term(dev_terms):
         inferred.add("developer")
@@ -302,7 +367,20 @@ def infer_categories_from_query(query: str, *, news: bool = False) -> set[str]:
         inferred.add("financial")
 
     # v2.4.0 global: world news signals (English included)
-    news_terms += ("gdelt", "world news", "global news", "international news", "breaking")
+    news_terms += (
+        "gdelt",
+        "world news",
+        "global news",
+        "international news",
+        "breaking",
+        "hôm nay",
+        "tuần này",
+        "today",
+        "latest",
+        "headlines",
+        "giá xăng",
+        "thời tiết",
+    )
     if _has_term(news_terms):
         inferred.add("news")
 
@@ -537,6 +615,10 @@ class SearchPipeline:
             == "deep"
         ):
             params = dataclasses.replace(params, deep=True)
+        if params.freshness_days is None and not params.skip_router:
+            inferred_days = extract_implicit_freshness_days(params.query)
+            if inferred_days is not None:
+                params = dataclasses.replace(params, freshness_days=inferred_days)
         boosts = await load_boosts(owner, max_per_key=self.settings.boosts_max_per_key)
         # docs/20 P1-5: per-key memory — 👍/👎 feedback becomes domain boosts,
         # and the query itself is remembered (fire-and-forget, fail-open).
@@ -638,7 +720,35 @@ class SearchPipeline:
             )
         else:
             outcome = await self._run_search(params, on_event=on_event)
-        return _apply_domain_filter(outcome, params)
+        filtered = _apply_domain_filter(outcome, params)
+        # Domain pushdown fallback: if include_domains wiped out cached/unscoped hits,
+        # retry once with explicit `site:` clauses so domain-scoped queries still recall.
+        budget_ctx = get_current_budget()
+        if (
+            params.include_domains
+            and not filtered.results
+            and outcome.results
+            and not params.skip_router
+            and (budget_ctx is None or budget_ctx.remaining() >= 0.8)
+        ):
+            site_clause = " OR ".join(
+                f"site:{_norm_domain(d)}" for d in params.include_domains[:3] if d.strip()
+            )
+            if site_clause:
+                pushed_params = dataclasses.replace(
+                    params,
+                    query=f"{normalize_query(params.query)} ({site_clause})",
+                    skip_router=True,
+                    expansion=False,
+                    expansion_variants=(),
+                    expansion_sig="",
+                    record_memory=False,
+                )
+                pushed = await self._run_search(pushed_params, on_event=on_event)
+                pushed_filtered = _apply_domain_filter(pushed, pushed_params)
+                if pushed_filtered.results:
+                    return pushed_filtered
+        return filtered
 
     async def _run_search(self, params: SearchParams, on_event: OnEvent = None) -> SearchOutcome:
         started = time.perf_counter()
@@ -786,7 +896,16 @@ class SearchPipeline:
     async def _fanout(
         self, query: str, params: SearchParams, on_event: OnEvent, *, general_only: bool = False
     ) -> tuple[list[RawResult], list[EngineStatus]]:
-        candidates = await self.registry.enabled()
+        all_enabled = await self.registry.enabled()
+        candidates = list(all_enabled)
+        categories = set(params.categories or [])
+        inferred_cats = infer_categories_from_query(query, news=params.news)
+        fengshui_wanted = ("fengshui" in categories) or ("fengshui" in inferred_cats)
+        biomed_wanted = (
+            ("academic" in categories)
+            or ("academic" in inferred_cats)
+            or bool(_BIOMED_QUERY_RE.search(query))
+        )
         if general_only:
             # v2.5 P0-3: expansion variants only hit general engines.
             candidates = [(cfg, ad) for cfg, ad in candidates if cfg.category == "general"]
@@ -795,20 +914,47 @@ class SearchPipeline:
             wanted = set(params.engines)
             candidates = [(cfg, ad) for cfg, ad in candidates if cfg.id in wanted]
         elif params.deep:
-            # Deep mode (docs/19 W4): every enabled engine joins the fan-out —
-            # general + all verticals (social, academic, developer, financial…).
-            pass
-        else:
-            # Vertical engines (arXiv, Wikipedia, VietStock, Stooq, ...) join when
-            # the request asks for their category OR when the query unambiguously
-            # targets their domain while categories is left at default ["general"].
-            categories = set(params.categories or [])
-            if categories == {"general"} or params.news:
-                categories |= infer_categories_from_query(query, news=params.news)
+            # Deep mode (docs/19 W4): all enabled engines minus off-topic verticals.
             candidates = [
                 (cfg, ad)
                 for cfg, ad in candidates
-                if cfg.category == "general" or cfg.category in categories
+                if (cfg.id != "fengshui" or fengshui_wanted)
+                and (cfg.id not in ("pubmed", "europepmc") or biomed_wanted)
+            ]
+        else:
+            # Vertical engines join when requested, inferred, or skill-preferred.
+            if categories == {"general"} or params.news:
+                categories |= inferred_cats
+            skill_engines: set[str] = set()
+            if self.settings.skill_orchestration_enabled and not general_only:
+                skill_hit = select_skill(
+                    query,
+                    requested_domain="auto",
+                    deep=params.deep,
+                    min_words_deep=self.settings.adaptive_router_min_words_deep,
+                )
+                if skill_hit.domain_id != "general_discovery":
+                    skill_engines = {
+                        eid
+                        for eid in skill_hit.preferred_engines
+                        if eid != "fengshui" or fengshui_wanted
+                    }
+            lite_fallback_ids: set[str] = set()
+            has_paid_general = any(
+                cfg.id in ("tavily", "serper", "brave") for cfg, _ in all_enabled
+            )
+            if not self.settings.searxng_enabled and not has_paid_general and not general_only:
+                lite_fallback_ids = {"bing_news", "google_news", "wikipedia", "fin_rss"}
+            candidates = [
+                (cfg, ad)
+                for cfg, ad in candidates
+                if (cfg.id != "fengshui" or fengshui_wanted)
+                and (
+                    cfg.category == "general"
+                    or cfg.category in categories
+                    or cfg.id in skill_engines
+                    or cfg.id in lite_fallback_ids
+                )
             ]
 
         if not candidates:
@@ -1005,7 +1151,13 @@ def _score_chunks_sync(
             date_hint = f"published {pub.strftime('%Y-%m-%d')} · {age_days}d ago"
         for chunk in page_chunks:
             chunk.date_hint = date_hint
-            score = heuristic_chunk_score(query, chunk.content, result_score, chunk.position)
+            score = heuristic_chunk_score(
+                query,
+                chunk.content,
+                result_score,
+                chunk.position,
+                heading_path=chunk.heading_path,
+            )
             scored_chunks.append((score, chunk))
 
     # Fallback: for any search result whose URL could not be scraped (or was blocked),
@@ -1027,7 +1179,13 @@ def _score_chunks_sync(
             date_hint = f"published {pub.strftime('%Y-%m-%d')} · {age_days}d ago"
         for chunk in fallback_chunks:
             chunk.date_hint = date_hint
-            score = heuristic_chunk_score(query, chunk.content, r.score, chunk.position)
+            score = heuristic_chunk_score(
+                query,
+                chunk.content,
+                r.score,
+                chunk.position,
+                heading_path=chunk.heading_path,
+            )
             scored_chunks.append((score, chunk))
 
     scored_chunks.sort(key=lambda pair: -pair[0])
@@ -1164,7 +1322,9 @@ class AnswerPipeline:
             if llm_override is not None and hasattr(self.gateway, "with_override")
             else self.gateway
         )
-        default_model = getattr(gateway, "default_quick_model", self.settings.llm_quick_model)
+        # docs/30 A5: the answer surface users judge defaults to the report
+        # model (not the quick model) — quality > speed for /v1/answer.
+        default_model = getattr(gateway, "default_report_model", self.settings.llm_report_model)
         override_model = llm_override.model if llm_override and llm_override.model else None
         effective_model = override_model or model or default_model
         use_council = council_mode or bool(council_endpoints) or self.settings.llm_council_enabled
@@ -1311,20 +1471,22 @@ class AnswerPipeline:
         scrape_timeout = (
             budget_ctx.stage("scrape", 5.0) if budget_ctx else self.settings.scrape_timeout_s
         )
-        try:
-            with _stage("scrape"):
-                async with asyncio.timeout(scrape_timeout):
-                    pages = await self.scraper.scrape_many([r.url for r in outcome.results])
-        except TimeoutError:
-            pages = [
-                PageFailure(url=r.url, status="failed", error="scrape stage deadline exceeded")
-                for r in outcome.results
-            ]
+        with _stage("scrape"):
+            try:
+                async with asyncio.timeout(max(0.05, float(scrape_timeout)) + 0.15):
+                    pages = await self.scraper.scrape_many(
+                        [r.url for r in outcome.results], timeout_s=scrape_timeout
+                    )
+            except TimeoutError:
+                pages = [
+                    PageFailure(url=r.url, status="failed", error="scrape stage deadline exceeded")
+                    for r in outcome.results
+                ]
         ok_pages = [p for p in pages if isinstance(p, PageContent)]
 
-        scored_chunks = await self._score_chunks(
-            normalize_query(params.query), outcome.results, ok_pages
-        )
+        normalized_q = normalize_query(params.query)
+        scored_chunks = await self._score_chunks(normalized_q, outcome.results, ok_pages)
+        scored_chunks = await self._merge_space_chunks(normalized_q, params, scored_chunks)
         if not scored_chunks:
             raise MetaSearchError(
                 ErrorCode.NO_RESULTS,
@@ -1332,8 +1494,7 @@ class AnswerPipeline:
                 details={"engines_status": _status_map(outcome.statuses)},
             )
 
-        chunks = await self._rerank(normalize_query(params.query), scored_chunks)
-        normalized_q = normalize_query(params.query)
+        chunks = await self._rerank(normalized_q, scored_chunks)
         counter = make_counter(self.settings)
         skill_sel = (
             select_skill(
@@ -1512,9 +1673,14 @@ class AnswerPipeline:
             if (self.settings.memory_recall_enabled and self.settings.memory_enabled)
             else ""
         )
+        # docs/30 A4: domain rubric system prompt for financial/legal/health
+        # queries — the domain_intelligence machinery was bypassed on the
+        # answer surface where users judge quality.
+        domain_sys = build_domain_system_prompt(SYSTEM_PROMPT, normalized_q, domain)
         messages = build_messages(
             normalized_q,
             included,
+            system_prompt=domain_sys,
             skill_prompt=skill_sel.prompt_instruction if skill_sel else "",
             memory_context=memory_context,
         )
@@ -1660,6 +1826,7 @@ class AnswerPipeline:
 
         done_payload: dict[str, Any] = {
             "answer_id": str(answer_id),
+            "answer_md": check.text,
             "latency_ms": latency_ms,
             "complete": outcome.complete and bool(ok_pages) and answer_status == "complete",
             "status": answer_status,
@@ -1748,18 +1915,21 @@ class AnswerPipeline:
         scrape_timeout = (
             budget_ctx.stage("scrape", 6.0) if budget_ctx else self.settings.scrape_timeout_s
         )
-        try:
-            with _stage("scrape"):
-                async with asyncio.timeout(scrape_timeout):
-                    pages = await self.scraper.scrape_many([r.url for r in outcome.results])
-        except TimeoutError:
-            pages = [
-                PageFailure(url=r.url, status="failed", error="scrape stage deadline exceeded")
-                for r in outcome.results
-            ]
+        with _stage("scrape"):
+            try:
+                async with asyncio.timeout(max(0.05, float(scrape_timeout)) + 0.15):
+                    pages = await self.scraper.scrape_many(
+                        [r.url for r in outcome.results], timeout_s=scrape_timeout
+                    )
+            except TimeoutError:
+                pages = [
+                    PageFailure(url=r.url, status="failed", error="scrape stage deadline exceeded")
+                    for r in outcome.results
+                ]
         ok_pages = [p for p in pages if isinstance(p, PageContent)]
 
         scored_chunks = await self._score_chunks(normalized, outcome.results, ok_pages)
+        scored_chunks = await self._merge_space_chunks(normalized, params, scored_chunks)
         if not scored_chunks:
             raise MetaSearchError(
                 ErrorCode.NO_RESULTS,
@@ -1916,6 +2086,61 @@ class AnswerPipeline:
         self, query: str, results: list[ScoredResult], pages: list[PageContent]
     ) -> list[tuple[float, Chunk]]:
         return await run_cpu(_score_chunks_sync, query, results, pages)
+
+    async def _merge_space_chunks(
+        self,
+        query: str,
+        params: SearchParams,
+        scored_chunks: list[tuple[float, Chunk]],
+    ) -> list[tuple[float, Chunk]]:
+        """Pull indexed Space chunks via hybrid dense+sparse retrieval (bounded, fail-open)."""
+        if not params.space or not self.settings.spaces_enabled:
+            return scored_chunks
+        try:
+            from app.retrieval.hybrid import hybrid_chunk_search
+
+            owner = current_api_key_id.get() or "anonymous"
+            domains = list(params.include_domains) if params.include_domains else None
+
+            async def _fetch_hybrid() -> list[dict[str, Any]]:
+                async with get_sessionmaker()() as session:
+                    return await hybrid_chunk_search(
+                        session,
+                        query,
+                        k=6,
+                        domains=domains,
+                        owner=owner,
+                    )
+
+            rows = await asyncio.wait_for(_fetch_hybrid(), timeout=1.5)
+        except Exception:
+            return scored_chunks
+
+        if not rows:
+            return scored_chunks
+        existing_ids = {c.id for _, c in scored_chunks}
+        merged = list(scored_chunks)
+        for idx, item in enumerate(rows):
+            cid = str(item.get("chunk_id") or "")
+            if cid in existing_ids:
+                continue
+            existing_ids.add(cid)
+            content = str(item.get("content") or "")
+            if not content:
+                continue
+            ch = Chunk(
+                id=cid or str(uuid.uuid4()),
+                document_url=str(item.get("url") or ""),
+                position=int(item.get("position") or 1),
+                heading_path=str(item.get("heading_path") or ""),
+                content=content,
+                word_count=len(content.split()),
+                source_title=str(item.get("title") or ""),
+            )
+            boost = max(0.55, 0.88 - idx * 0.04)
+            merged.append((boost, ch))
+        merged.sort(key=lambda pair: -pair[0])
+        return merged
 
     # -- answer cache (L1 + L2) ---------------------------------------------
 

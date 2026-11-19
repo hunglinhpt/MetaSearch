@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import secrets
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -616,50 +617,71 @@ class DreamRSICouncilEngine:
         usage_sink: list[Usage] | None = None,
     ) -> list[dict[str, Any]]:
         """Conduct blind anonymous cross-review where candidates are labeled only as
-        Candidate A, Candidate B, etc.
+        Candidate A, Candidate B, etc., presented in per-reviewer shuffled order with
+        self-review exclusion and up to two distinct peer reviewers.
         """
-        anonymized_block = "\n\n".join(
-            f"=== {d.candidate_id} ===\n{d.answer_md[:2500]}" for d in ok_drafts
-        )
         rubric_lines = "\n".join(f"- {r}" for r in pack.verification_rubric)
-        review_messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are an Anonymous Peer Reviewer on the MetaSearch LLM Council. "
-                    f"{pack.council_critic_prompt}\n"
-                    f"Verification Rubric:\n{rubric_lines}\n"
-                    "Evaluate each anonymized candidate strictly against the numbered sources. "
-                    "Respond with STRICT JSON only: "
-                    '{"reviews": [{"candidate_id": "Candidate A", "score": 8.5, '
-                    '"strengths": "...", "flaws": "..."}]}'
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Question: {question}\n\n"
-                    f"Sources:\n{context_text[:4000]}\n\n"
-                    f"Anonymized Candidates:\n{anonymized_block}"
-                ),
-            },
-        ]
+        reviewers = list(panel[:2]) if panel else []
+        if not reviewers:
+            return []
 
-        reviewer_ov = panel[0]
-        gw = (
-            self.gateway.with_override(reviewer_ov)
-            if hasattr(self.gateway, "with_override")
-            else self.gateway
-        )
-        reviewer_model = (
-            reviewer_ov.model
-            or reviewer_ov.quick_model
-            or getattr(gw, "default_quick_model", self.settings.llm_quick_model)
-        )
-        reviews_out: list[dict[str, Any]] = []
-        llm_scores_by_cand: dict[str, tuple[float, str]] = {}
+        draft_by_id = {d.candidate_id: d for d in ok_drafts}
+        rng = secrets.SystemRandom()
+        reviewer_orders: list[list[PanelistDraft]] = []
+        first_ids: list[str] | None = None
+        for idx in range(len(reviewers)):
+            shuffled = list(ok_drafts)
+            if len(shuffled) > 1:
+                rng.shuffle(shuffled)
+                cur_ids = [d.candidate_id for d in shuffled]
+                if idx == 0:
+                    first_ids = cur_ids
+                elif first_ids is not None and cur_ids == first_ids:
+                    shuffled.reverse()
+            reviewer_orders.append(shuffled)
 
-        try:
+        async def _one_review(
+            reviewer_ov: LLMOverride, ordered_drafts: list[PanelistDraft]
+        ) -> tuple[str, dict[str, tuple[float, str, str, str]]]:
+            anonymized_block = "\n\n".join(
+                f"=== {d.candidate_id} ===\n{d.answer_md[:2500]}" for d in ordered_drafts
+            )
+            review_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an Anonymous Peer Reviewer on the MetaSearch LLM Council. "
+                        f"{pack.council_critic_prompt}\n"
+                        f"Verification Rubric:\n{rubric_lines}\n"
+                        "Evaluate each anonymized candidate strictly against the numbered sources. "
+                        "Respond with STRICT JSON only: "
+                        '{"reviews": [{"candidate_id": "Candidate A", "score": 8.5, '
+                        '"strengths": "...", "flaws": "..."}]}'
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Question: {question}\n\n"
+                        f"Sources:\n{context_text[:8000]}\n\n"
+                        f"Anonymized Candidates:\n{anonymized_block}"
+                    ),
+                },
+            ]
+            gw = (
+                self.gateway.with_override(reviewer_ov)
+                if hasattr(self.gateway, "with_override")
+                else self.gateway
+            )
+            reviewer_model = (
+                reviewer_ov.model
+                or reviewer_ov.quick_model
+                or getattr(gw, "default_quick_model", self.settings.llm_quick_model)
+            )
+            gw_prov = str(getattr(gw, "provider", "council") or "council")
+            reviewer_prov = str(reviewer_ov.provider or gw_prov)
+            reviewer_label = f"{reviewer_prov}:{reviewer_model}"
+            scores_map: dict[str, tuple[float, str, str, str]] = {}
             parts: list[str] = []
             async for delta in gw.stream(review_messages, model=reviewer_model):
                 if delta.text:
@@ -676,18 +698,7 @@ class DreamRSICouncilEngine:
                             val_f = float(raw_val)
                             sc = val_f / 10.0 if val_f > 10.0 else val_f
                             sc = max(0.0, min(10.0, sc))
-                            llm_scores_by_cand[str(cid)] = (sc, crit_summary)
-                            reviews_out.append(
-                                {
-                                    "candidate_id": str(cid),
-                                    "reviewer": (
-                                        f"{reviewer_ov.provider or 'council'}:{reviewer_model}"
-                                    ),
-                                    "peer_score": round(sc, 2),
-                                    "strengths": crit_summary,
-                                    "flaws": "",
-                                }
-                            )
+                            scores_map[str(cid)] = (sc, crit_summary, "", reviewer_prov)
                         except (ValueError, TypeError):
                             continue
                 for item in parsed.get("reviews", []):
@@ -702,25 +713,65 @@ class DreamRSICouncilEngine:
                     sc = max(0.0, min(10.0, sc))
                     strengths = str(item.get("strengths") or "")
                     flaws = str(item.get("flaws") or "")
-                    summary = f"Strengths: {strengths} | Flaws: {flaws}".strip(" |")
-                    llm_scores_by_cand[cid] = (sc, summary)
-                    reviews_out.append(
-                        {
-                            "candidate_id": cid,
-                            "reviewer": f"{reviewer_ov.provider or 'council'}:{reviewer_model}",
-                            "peer_score": round(sc, 2),
-                            "strengths": strengths,
-                            "flaws": flaws,
-                        }
-                    )
-        except Exception as exc:
-            logger.info("council_cross_review_fallback_deterministic", reason=str(exc)[:120])
+                    scores_map[cid] = (sc, strengths, flaws, reviewer_prov)
+            return reviewer_label, scores_map
+
+        peer_results = await asyncio.gather(
+            *(
+                _one_review(rev_ov, ord_drafts)
+                for rev_ov, ord_drafts in zip(reviewers, reviewer_orders, strict=True)
+            ),
+            return_exceptions=True,
+        )
+
+        reviews_out: list[dict[str, Any]] = []
+        non_self_scores: dict[str, list[tuple[float, str]]] = {}
+        all_scores: dict[str, list[tuple[float, str]]] = {}
+        for res in peer_results:
+            if isinstance(res, BaseException):
+                logger.info(
+                    "council_cross_review_fallback_deterministic",
+                    reason=str(res)[:120],
+                )
+                continue
+            reviewer_label, scores_map = res
+            rev_prov_lower, _, rev_model_lower = reviewer_label.lower().partition(":")
+            for cid, (sc, strengths, flaws, _rp) in scores_map.items():
+                summary = (
+                    f"Strengths: {strengths} | Flaws: {flaws}".strip(" |") if flaws else strengths
+                )
+                cand_draft = draft_by_id.get(cid)
+                is_self = False
+                if cand_draft is not None:
+                    cand_prov = str(cand_draft.provider or "").lower()
+                    cand_mod = str(cand_draft.model or "").lower()
+                    if (
+                        rev_model_lower
+                        and cand_mod
+                        and (rev_prov_lower, rev_model_lower) == (cand_prov, cand_mod)
+                    ):
+                        is_self = True
+                all_scores.setdefault(cid, []).append((sc, summary))
+                if not is_self:
+                    non_self_scores.setdefault(cid, []).append((sc, summary))
+                reviews_out.append(
+                    {
+                        "candidate_id": cid,
+                        "reviewer": reviewer_label,
+                        "peer_score": round(sc, 2),
+                        "strengths": strengths,
+                        "flaws": flaws,
+                        "self_review_excluded": is_self,
+                    }
+                )
 
         for d in ok_drafts:
-            if d.candidate_id in llm_scores_by_cand:
-                peer_sc, critique = llm_scores_by_cand[d.candidate_id]
-                d.peer_score = peer_sc
-                d.composite_score = round(0.40 * d.deterministic_score + 0.60 * peer_sc, 2)
+            entries = non_self_scores.get(d.candidate_id) or all_scores.get(d.candidate_id)
+            if entries:
+                avg_peer = sum(sc for sc, _ in entries) / len(entries)
+                critique = " || ".join(c for _, c in entries if c)[:600]
+                d.peer_score = round(avg_peer, 2)
+                d.composite_score = round(0.40 * d.deterministic_score + 0.60 * d.peer_score, 2)
                 d.peer_critique_summary = critique
             else:
                 d.peer_score = d.deterministic_score

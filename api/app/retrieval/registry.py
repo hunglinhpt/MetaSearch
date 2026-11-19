@@ -17,12 +17,14 @@ from app.orchestration.engine_store import (
 )
 from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import SearchAdapter
+from app.retrieval.adapters.bing_news import BingNewsAdapter
 from app.retrieval.adapters.bluesky import BlueskyAdapter
 from app.retrieval.adapters.brave import BraveAdapter
 from app.retrieval.adapters.crossref import CrossrefAdapter
 from app.retrieval.adapters.ddg import DuckDuckGoAdapter
 from app.retrieval.adapters.europepmc import EuropePmcAdapter
 from app.retrieval.adapters.fengshui import FengShuiAdapter
+from app.retrieval.adapters.financial_rss import GlobalFinancialRssAdapter
 from app.retrieval.adapters.gdelt import GdeltAdapter
 from app.retrieval.adapters.github import GitHubAdapter
 from app.retrieval.adapters.google_news import GoogleNewsAdapter
@@ -40,6 +42,7 @@ from app.retrieval.adapters.stackoverflow import StackOverflowAdapter
 from app.retrieval.adapters.stooq import StooqFinanceAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
 from app.retrieval.adapters.viet_stock import VietStockAdapter
+from app.retrieval.adapters.vn_financial_wire import VnFinancialWireAdapter
 from app.retrieval.adapters.wikipedia import WikipediaAdapter
 from app.retrieval.adapters.yahoo_finance import YahooFinanceAdapter
 from app.retrieval.models import EngineConfig
@@ -108,6 +111,10 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "crossref": CrossrefAdapter(mailto=settings.global_search_mailto),
         "europepmc": EuropePmcAdapter(),
         "gdelt": GdeltAdapter(),
+        # v4.0 keyless verified live feeds
+        "bing_news": BingNewsAdapter(),
+        "vn_wire": VnFinancialWireAdapter(),
+        "fin_rss": GlobalFinancialRssAdapter(),
     }
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)

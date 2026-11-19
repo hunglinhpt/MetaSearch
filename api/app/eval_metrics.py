@@ -46,11 +46,22 @@ def mrr(urls: list[str], relevant: list[str]) -> float:
 def ndcg_at_k(urls: list[str], relevant: list[str], k: int = 10) -> float:
     if not relevant:
         return 0.0
-    gains = [1.0 if _matches(u, relevant) else 0.0 for u in urls[:k]]
+    matched_rels: set[str] = set()
+    gains: list[float] = []
+    for u in urls[:k]:
+        u_low = u.lower()
+        gain = 0.0
+        for rel in relevant:
+            rel_low = rel.lower()
+            if rel_low not in matched_rels and rel_low in u_low:
+                matched_rels.add(rel_low)
+                gain = 1.0
+                break
+        gains.append(gain)
     dcg = sum(g / math.log2(i + 2) for i, g in enumerate(gains))
     ideal = [1.0] * min(len(relevant), k)
     idcg = sum(g / math.log2(i + 2) for i, g in enumerate(ideal))
-    return dcg / idcg if idcg > 0 else 0.0
+    return min(1.0, dcg / idcg) if idcg > 0 else 0.0
 
 
 def context_precision(cited_urls: list[str], relevant: list[str]) -> float:
@@ -98,6 +109,54 @@ def claim_support_rate(
     return supported / checked if checked else 0.0
 
 
+def numeric_fidelity_rate(answer_md: str, chunk_contents: dict[int, str]) -> float:
+    """Share of numeric claims in cited sentences present in their cited chunk texts."""
+    if not answer_md or not chunk_contents:
+        return 0.0 if answer_md else 1.0
+    from app.extraction.chunker import Chunk
+    from app.llm.citations import verify_numeric_fidelity
+
+    included = [
+        (
+            n,
+            Chunk(
+                id=str(n),
+                document_url="",
+                position=n,
+                heading_path="",
+                content=txt,
+                word_count=len(txt.split()),
+            ),
+        )
+        for n, txt in chunk_contents.items()
+    ]
+    fidelity, _unverified = verify_numeric_fidelity(answer_md, included)
+    return fidelity
+
+
+def citation_precision_rate(answer_md: str, included_ids: set[int] | list[int]) -> float:
+    """Fraction of inline [n] citation markers that map to real included sources."""
+    markers = [int(m) for m in _CITE.findall(answer_md or "")]
+    if not markers:
+        return 0.0
+    valid_set = set(included_ids)
+    hits = sum(1 for m in markers if m in valid_set)
+    return round(hits / len(markers), 4)
+
+
+def latency_percentiles(latencies_ms: list[float]) -> dict[str, float]:
+    """Compute p50, p95, p99 latency in milliseconds over observed queries."""
+    clean = sorted(float(x) for x in latencies_ms if x >= 0)
+    if not clean:
+        return {"p50_ms": 0.0, "p95_ms": 0.0, "p99_ms": 0.0}
+
+    def _pct(p: float) -> float:
+        idx = min(len(clean) - 1, max(0, math.ceil(p * len(clean)) - 1))
+        return round(clean[idx], 2)
+
+    return {"p50_ms": _pct(0.50), "p95_ms": _pct(0.95), "p99_ms": _pct(0.99)}
+
+
 def aggregate(records: list[dict]) -> dict:
     """Mean of each metric over per-query records."""
     if not records:
@@ -111,7 +170,21 @@ def aggregate(records: list[dict]) -> dict:
         "context_precision",
         "context_recall",
         "claim_support",
+        "numeric_fidelity",
+        "citation_precision",
     )
-    out = {k: round(sum(r.get(k, 0.0) for r in records) / len(records), 4) for k in keys}
+    out: dict = {}
+    for k in keys:
+        vals = [float(r[k]) for r in records if r.get(k) is not None]
+        out[k] = round(sum(vals) / len(vals), 4) if vals else 0.0
     out["n_queries"] = len(records)
     return out
+
+
+def aggregate_by_slice(records: list[dict], key: str = "slice") -> dict[str, dict]:
+    """Group records by ``key`` and compute aggregate metrics per slice."""
+    grouped: dict[str, list[dict]] = {}
+    for rec in records:
+        label = str(rec.get(key) or "unknown")
+        grouped.setdefault(label, []).append(rec)
+    return {label: aggregate(group) for label, group in sorted(grouped.items())}

@@ -258,6 +258,16 @@ def _calc_cung_phi_nu(year: int) -> str:
     return mapping.get(val, "Khôn")
 
 
+_FENGSHUI_INTENT_RE = re.compile(
+    r"phong\s*th[uủ]y|b[aá]t\s*tr[aạ]ch|can\s*chi|ng[uũ]\s*h[aà]nh|"
+    r"cung\s*m[eệ]nh|t[uử]\s*vi|tam\s*h[oợ]p|t[uứ]\s*h[aà]nh\s*xung|"
+    r"sinh\s*kh[ií]|thi[eê]n\s*y|di[eê]n\s*ni[eê]n|ph[uụ]c\s*v[iị]|"
+    r"m[eệ]nh\s+(?:kim|m[oộ]c|th[uủ]y|h[oỏ]a|th[oổ])|"
+    r"h[uư][oớ]ng\s+nh[aà]|xu[aấ]t\s+h[aà]nh|b[aà]n\s+l[aà]m\s+vi[eệ]c.*(?:h[uư][oớ]ng|h[oợ]p|phong)",
+    re.IGNORECASE,
+)
+
+
 class FengShuiAdapter:
     """Specialized Eastern Geomancy and Feng Shui calculation adapter."""
 
@@ -279,6 +289,10 @@ class FengShuiAdapter:
             return []
 
         q_lower = q.lower()
+        explicit_cat = categories is not None and "fengshui" in categories
+        if not explicit_cat and not _FENGSHUI_INTENT_RE.search(q_lower):
+            return []
+
         # 1. Find 4-digit years in query (supporting 1800 - 2099)
         years = [int(m) for m in re.findall(r"\b(18\d{2}|19\d{2}|20\d{2})\b", q)]
 
@@ -347,16 +361,18 @@ class FengShuiAdapter:
             w in q_lower
             for w in [
                 "bàn làm việc",
-                "nhà",
+                "nhà ở",
+                "hướng nhà",
                 "phòng khách",
                 "cửa chính",
                 "tài lộc",
-                "kinh doanh",
                 "bếp",
                 "giường ngủ",
             ]
         )
         if is_office_or_house or not results:
+            if not is_office_or_house and not _FENGSHUI_INTENT_RE.search(q_lower):
+                return results[:max_results]
             results.append(
                 RawResult(
                     url="https://vi.wikipedia.org/wiki/Phong_th%E1%BB%A7y",

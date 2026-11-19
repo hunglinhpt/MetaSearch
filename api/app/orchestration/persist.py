@@ -623,9 +623,15 @@ async def _persist_report(
     citations: list[tuple[int, str, str, str | None]],
     truncated: bool,
     owner: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Persist the research report as an Answer(kind="research") row."""
     answer_id = uuid.uuid4()
+    query_params: dict[str, Any] = {"kind": "research", "truncated": truncated}
+    if isinstance(metadata, dict):
+        for k, v in metadata.items():
+            if k not in ("kind", "truncated"):
+                query_params[k] = v
     async with sqlite_write_lock(), get_sessionmaker()() as session:
         insert = _dialect_insert(session)
         await session.execute(
@@ -635,7 +641,7 @@ async def _persist_report(
                 raw_text=question,
                 normalized_text=question,
                 lang=lang,
-                params={"kind": "research", "truncated": truncated},
+                params=query_params,
                 api_key_id=owner if owner is not None else current_api_key_id.get(),
             )
             .on_conflict_do_nothing(index_elements=["id"])
@@ -690,6 +696,8 @@ def persist_report(
     latency_ms: int,
     citations: list[tuple[int, str, str, str | None]],
     truncated: bool,
+    *,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Fire-and-forget report persistence (called from the research task)."""
     owner = current_api_key_id.get()  # producer-context snapshot (Pass 2 P1)
@@ -708,6 +716,7 @@ def persist_report(
             citations,
             truncated,
             owner,
+            metadata,
         ),
     )
 

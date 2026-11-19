@@ -1,6 +1,31 @@
 # Changelog
 
+## [4.0.0] - 2026-11-19
+
+### Added & Upgraded — Search/Retrieval Overhaul, Institutional Sentiment Engine v3, Deep Research v2 & Eval Benchmarks (`docs/31`)
+
+- **Wave 1 — Search & Retrieval Core Overhaul (`scoring.py`, `tiers.py`, `merger.py`, `router.py`, `query_expansion.py`, `reranker.py`, `pipeline.py`, `engine_store.py`, `registry.py`)**:
+  - Registered 3 keyless adapters (`bing_news`, `vn_wire`, `fin_rss`) and fixed trailing syntax bug in `ddg.py`.
+  - Upgraded relevance & authority scoring (`tokenize_dual`, `compute_batch_idf`, bigram + accented matching, normalized RRF rank fusion, Google News / Bing wrapper `_effective_domain`, `0.45x` multi-term relevance gate, Title Jaccard `>= 0.72` near-dup folding, `low_trust` tier, `.gov*`/`.edu*` rules).
+  - Upgraded `HeuristicReranker` to hybrid BM25 + heuristic + MMR (`max_per_url=4`, 24-chunk cap), added ONNX 512-token truncation, nested `BGEReranker._pick_file`, optional `LLMListwiseReranker` (`RERANKER=llm`), implicit freshness extraction in `router.py`, and `test_v40_search_upgrade.py`.
+- **Wave 2 — Institutional Sentiment Engine v3 (`sentiment_quant.py`, `sentiment.py`, `market.py`, `alembic/versions/0011_sentiment_snapshots.py`, `SentimentPanel.tsx`)**:
+  - Integrated verified keyless market & macro feeds (CNN Fear & Greed, CBOE Put/Call, FRED HY OAS, Yahoo `^VIX`/`^VIX3M`, CafeF foreign/prop/insider flows, SSI iBoard orderflow & HOSE breadth TRIN/McClellan RANA, DNSE OHLCV fallback, Simplize extended consensus & news).
+  - Fixed down-day volume surge polarity and enforced >= 2 independent signal groups for BofA Bull & Bear analog; added 350+ VI/EN phrases, extended rumor & anti-collision patterns (`GAS`, `VNM`), SEntFiN sentence-level target attribution + `tanh` saturation, SimHash seeding dedup, `BEARISH_MARKDOWN`/`DISTRIBUTION_PRESSURE` regimes, hybrid text+quant composite score, opt-in `run_llm_sentiment_judge`, `SentimentSnapshot` (migration `0011`) for 20-day S-Score / SV-Score, and Web UI cards in `SentimentPanel.tsx`.
+- **Wave 3 — Deep Research v2 & LLM Council Debiasing (`research.py`, `council.py`, `persist.py`, `research_jobs.py`, `api/v1/research.py`, `ResearchPanel.tsx`)**:
+  - Fixed `research.py` (`_MAX_CHUNKS_PER_DOC_IN_MERGE=6`, diacritic-folded profile & coverage gate, duplicate follow-up avoidance, pre-scrape `seen_urls` dedup, multi-batch strict-ID `_extract_with_conflicts`, `admit("research")` + `RequestBudget`).
+  - Added Stage 0 Specialist Tool Mesh (Spaces hybrid RAG/KG + Finance live wire/events/quant), STORM `outline`, Devil's Advocate counter-thesis query, global rerank + contiguous citation remapping + `flag_injection`, `RESEARCH_REPORT_SYSTEM_PROMPT`, FACT `verification` event, and rich `Query.params` persistence/restore.
+  - Debiased `council.py` `_run_anonymous_cross_review` (dual concurrent reviewers, shuffled candidate presentation, 8000-char context slice, self-review score exclusion).
+  - Exposed `GET /v1/research` history, `POST /v1/research/{research_id}/cancel`, `after_seq`/`Last-Event-ID` resumable SSE with `id:` lines, `space` field, and Web UI controls in `ResearchPanel.tsx`.
+- **Wave 4 — Evaluation Suites & Metrics (`eval_metrics.py`, `eval_v2.py`, `eval_sentiment.py`, `eval_research.py`)**:
+  - Fixed `ndcg_at_k` duplicate substring matching (`<= 1.0` guarantee), cleaned `evals/golden_v3_vi.json`, added latency percentiles, slice aggregation, numeric fidelity, citation precision, and `--judge` wiring in `scripts/eval_v2.py`.
+  - Added `evals/sentiment_golden.json` (64 bilingual cases) + `scripts/eval_sentiment.py`, `evals/search_offline_ir.json`, and `evals/research_golden.json` + `scripts/eval_research.py`.
+
 ## [Unreleased]
+
+### Fixed — `/v1/meta/full` keyless access + sentiment regime/confidence calibration
+
+- **`/v1/meta/full` now always requires a real admin API key (`api/app/core/auth.py::require_admin_key`, `api/app/api/v1/router.py`)**: previously `AUTH_ENABLED=false` + `DEV_ANON_ADMIN=true` (Lite profile) made the endpoint answer `200` to keyless callers. Now keyless/invalid key → `401`, non-admin key → `403`, admin key → `200` regardless of the Lite flags. `/v1/meta` (name + version) stays public. Regression test: `api/tests/test_v40_meta_full_auth.py` (3 auth/anon-admin matrices).
+- **Sentiment regime & confidence calibration (`api/app/retrieval/sentiment.py`)**: `EVENT_DRIVEN_BINARY` is no longer the catch-all (any one positive + one negative headline, or a plain neutral book); polarization now needs each side to hold >= 30% of the evidence weight and weak catalyst-free evidence maps to `LOW_SIGNAL_NOISE`. Confidence is reduced when the text and quant pillars point in opposite directions instead of reading pure evidence volume as certainty. Test: `test_v40_sentiment_upgrade.py::test_regime_not_binary_for_weak_unpolarized_and_confidence_penalizes_conflict`.
 
 ### Added & Fixed — LLM Endpoint Privacy Policy + Bilingual Wire Entity Tagging (docs/30)
 

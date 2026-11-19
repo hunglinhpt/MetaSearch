@@ -975,7 +975,7 @@ class VietStockAdapter:
 
                 results.append(
                     RawResult(
-                        url=fa_url,
+                        url=f"{fa_url}#fa",
                         title=(
                             f"[{stock.exchange}:{stock.symbol}] {stock.name} - "
                             "Báo Cáo Phân Tích Cơ Bản (FA) & Chỉ Số Định Giá"
@@ -1043,7 +1043,7 @@ class VietStockAdapter:
                     )
                     results.append(
                         RawResult(
-                            url=fa_url,
+                            url=f"{fa_url}#forensics",
                             title=(
                                 f"{stock.symbol} - Thẩm Định Pháp Y BCTC: Cấu Trúc Nợ, "
                                 "Chất Lượng Phải Thu & Dòng Tiền Thật"

@@ -13,10 +13,11 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Path
+from fastapi import APIRouter, Path, Query, Request
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from app.config import get_settings
 from app.core.auth import current_api_key_id, current_role
 from app.core.errors import ErrorCode, MetaSearchError
 from app.llm.providers import LLMOverride
@@ -38,7 +39,20 @@ class ResearchRequest(BaseModel):
     max_time_s: int | None = Field(default=None, ge=10, le=600)
     k: int = Field(default=6, ge=1, le=20)
     profile: str = Field(default="auto", pattern=_PROFILE_PATTERN)
+    space: str | None = Field(default=None, max_length=64)
     llm: LLMOverride | None = None
+
+
+@router.get("/research")
+async def list_research(limit: int = Query(default=20, ge=1, le=50)) -> dict[str, Any]:
+    """List recent Deep Research jobs scoped to the caller (admin sees all)."""
+    is_admin = (not get_settings().auth_enabled) or current_role.get() == "admin"
+    jobs = await get_job_store().list_jobs(
+        owner_key_id=current_api_key_id.get(),
+        is_admin=is_admin,
+        limit=limit,
+    )
+    return {"jobs": jobs}
 
 
 @router.post("/research", status_code=202)
@@ -54,18 +68,18 @@ async def create_research(request: ResearchRequest) -> dict[str, Any]:
         max_time_s=request.max_time_s,
         k=request.k,
         profile=request.profile,
+        space=request.space,
         research_id=job.id,
         llm_override=request.llm,
     )
     task = asyncio.create_task(run_job(job, params))
+    job.task = task
     _active_research_tasks.add(task)
     task.add_done_callback(_log_task)
     return {"research_id": str(job.id), "status": job.status}
 
 
 def _check_job_owner(job) -> None:
-    from app.config import get_settings
-
     if not get_settings().auth_enabled or current_role.get() == "admin":
         return
     owner = current_api_key_id.get()
@@ -84,33 +98,64 @@ async def get_research(research_id: str = Path(max_length=64)) -> dict[str, Any]
         "report_md": job.result.get("report_md", ""),
         "citations": job.result.get("citations", []),
         "learnings": job.result.get("learnings", []),
+        "outline": job.result.get("outline", []),
+        "conflicts": job.result.get("conflicts", []),
+        "verification": job.result.get("verification"),
+        "tools": job.result.get("tools", []),
+        "profile": job.result.get("profile"),
         "cost_usd": job.result.get("cost_usd", 0.0),
         "error": job.error,
     }
 
 
+@router.post("/research/{research_id}/cancel")
+async def cancel_research(research_id: str = Path(max_length=64)) -> dict[str, Any]:
+    store = get_job_store()
+    job = await store.get(research_id)
+    _check_job_owner(job)
+    job = await store.cancel(research_id)
+    return {"research_id": str(job.id), "status": job.status}
+
+
 @router.get("/research/{research_id}/events")
-async def research_events(research_id: str = Path(max_length=64)) -> EventSourceResponse:
+async def research_events(
+    request: Request,
+    research_id: str = Path(max_length=64),
+    after_seq: int = Query(default=0, ge=0),
+) -> EventSourceResponse:
     job = await get_job_store().get(research_id)
     _check_job_owner(job)
-    return EventSourceResponse(_event_stream(job))
+    last_ev = request.headers.get("last-event-id", "").strip()
+    try:
+        header_seq = max(0, int(last_ev)) if last_ev else 0
+    except ValueError:
+        header_seq = 0
+    return EventSourceResponse(_event_stream(job, start_seq=max(after_seq, header_seq)))
 
 
-async def _event_stream(job) -> AsyncIterator[dict]:
-    """Replay buffered events, then follow live until the job terminates."""
-    index = 0
+async def _event_stream(job, *, start_seq: int = 0) -> AsyncIterator[dict]:
+    """Replay buffered events from ``start_seq``, then follow live until termination."""
+    index = start_seq
     while True:
         index, event = await job.wait_event(index, 15.0)
         if event is not None:
             name, data = event
-            yield {"event": name, "data": json.dumps(data, ensure_ascii=False)}
+            yield {
+                "id": str(index),
+                "event": name,
+                "data": json.dumps(data, ensure_ascii=False),
+            }
             if name in ("done", "error"):
                 return
         else:
             if job.finished:
                 if job.terminal is not None and index < job.terminal[0]:
-                    _t_seq, t_event = job.terminal
-                    yield {"event": t_event[0], "data": json.dumps(t_event[1], ensure_ascii=False)}
+                    t_seq, t_event = job.terminal
+                    yield {
+                        "id": str(t_seq),
+                        "event": t_event[0],
+                        "data": json.dumps(t_event[1], ensure_ascii=False),
+                    }
                 return
         await asyncio.sleep(0)
 

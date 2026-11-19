@@ -11,14 +11,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  cancelResearchJob,
   createResearch,
   getResearch,
+  listResearchJobs,
   researchEventsUrl,
   safeHref,
   streamSse,
   ttsCapabilities,
   type Citation,
+  type ResearchConflict,
+  type ResearchHistoryItem,
   type ResearchStatus,
+  type ResearchToolSummary,
+  type ResearchVerification,
 } from "../lib/api";
 import {
   getPreferredEngine,
@@ -36,12 +42,23 @@ type Phase = "idle" | "running" | "done" | "error";
 const DEPTHS = [1, 2, 3, 4, 5] as const;
 const BREADTHS = [2, 3, 4, 5] as const;
 const TIME_BUDGETS = [60, 180, 300] as const;
+const PROFILES = [
+  "auto",
+  "financial",
+  "comparative",
+  "developer",
+  "academic",
+  "news",
+  "general",
+] as const;
 
 export default function ResearchPanel() {
   const [query, setQuery] = useState("");
   const [depth, setDepth] = useState<number>(3);
   const [breadth, setBreadth] = useState<number>(4);
   const [maxTimeS, setMaxTimeS] = useState<number>(180);
+  const [profile, setProfile] = useState<string>("auto");
+  const [space, setSpace] = useState<string>("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [stage, setStage] = useState("");
   const [reportMd, setReportMd] = useState("");
@@ -53,6 +70,13 @@ export default function ResearchPanel() {
     [citations]
   );
   const [learnings, setLearnings] = useState<string[]>([]);
+  const [outline, setOutline] = useState<string[]>([]);
+  const [conflicts, setConflicts] = useState<ResearchConflict[]>([]);
+  const [verification, setVerification] = useState<ResearchVerification | null>(null);
+  const [tools, setTools] = useState<ResearchToolSummary[]>([]);
+  const [resolvedProfile, setResolvedProfile] = useState<string | null>(null);
+  const [history, setHistory] = useState<ResearchHistoryItem[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState("");
   const [error, setError] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
 
@@ -68,18 +92,29 @@ export default function ResearchPanel() {
   const reportRef = useRef("");
   const rafRef = useRef<number | null>(null);
 
+  const refreshHistory = useCallback((signal?: AbortSignal) => {
+    listResearchJobs(15, signal)
+      .then((res) => setHistory(res.jobs ?? []))
+      .catch(() => {
+        /* ignore offline history errors */
+      });
+  }, []);
+
   useEffect(() => {
     setTtsReady(ttsIsSupported());
     ttsCapabilities()
       .then((c) => setVsEnabled(Boolean(c.voicestudio.enabled)))
       .catch(() => setVsEnabled(false));
+    const histCtrl = new AbortController();
+    refreshHistory(histCtrl.signal);
     return () => {
+      histCtrl.abort();
       abortRef.current?.abort();
       ttsHandleRef.current?.cancel();
       ttsStop();
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
-  }, []);
+  }, [refreshHistory]);
 
   const stopSpeaking = useCallback(() => {
     ttsHandleRef.current?.cancel();
@@ -125,17 +160,31 @@ export default function ResearchPanel() {
     sectionsRef.current = [];
     setCitations([]);
     setLearnings([]);
+    setOutline([]);
+    setConflicts([]);
+    setVerification(null);
+    setTools([]);
+    setResolvedProfile(null);
     setError("");
     setJobId(null);
     settledRef.current = false;
     stopSpeaking();
     try {
       const created = await createResearch(
-        { query: q, breadth, depth, max_time_s: maxTimeS },
+        {
+          query: q,
+          breadth,
+          depth,
+          max_time_s: maxTimeS,
+          profile,
+          space: space.trim() || undefined,
+        },
         controller.signal
       );
       setJobId(created.research_id);
+      setSelectedHistoryId(created.research_id);
       setStage("Đang lên kế hoạch nghiên cứu...");
+      refreshHistory();
       // attachStream re-attaches on a dropped connection (the backend replays
       // its event buffer) and only settles on a TERMINAL job status.
       await attachStream(created.research_id, controller.signal, 3);
@@ -144,6 +193,62 @@ export default function ResearchPanel() {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
     }
+  };
+
+  const handleCancel = async () => {
+    if (!jobId) return;
+    try {
+      await cancelResearchJob(jobId);
+      setStage("Đã hủy tác vụ nghiên cứu.");
+      setPhase("error");
+      setError("Người dùng đã hủy nghiên cứu.");
+    } catch {
+      /* fallback abort */
+    } finally {
+      abortRef.current?.abort();
+      refreshHistory();
+    }
+  };
+
+  const loadHistoricalJob = async (id: string) => {
+    setSelectedHistoryId(id);
+    if (!id) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      const st = await getResearch(id, controller.signal);
+      if (controller.signal.aborted) return;
+      setJobId(st.research_id);
+      setReportMd(st.report_md ?? "");
+      reportRef.current = st.report_md ?? "";
+      setCitations(st.citations ?? []);
+      setLearnings(st.learnings ?? []);
+      setOutline(st.outline ?? []);
+      setConflicts(st.conflicts ?? []);
+      setVerification(st.verification ?? null);
+      setTools(st.tools ?? []);
+      setResolvedProfile(st.profile ?? null);
+      setError(st.error ?? "");
+      setPhase(st.status === "done" ? "done" : st.status === "running" ? "running" : "error");
+    } catch (e) {
+      if (!controller.signal.aborted) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  };
+
+  const downloadMarkdown = () => {
+    if (!reportMd) return;
+    const blob = new Blob([reportMd], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `metasearch-research-${(jobId || "report").slice(0, 8)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   // Ref mirror so the stream-closed fallback can read the latest phase.
@@ -175,14 +280,21 @@ export default function ResearchPanel() {
         reportRef.current = status.report_md ?? "";
         setCitations(status.citations ?? []);
         setLearnings(status.learnings ?? []);
+        setOutline(status.outline ?? []);
+        setConflicts(status.conflicts ?? []);
+        setVerification(status.verification ?? null);
+        setTools(status.tools ?? []);
+        setResolvedProfile(status.profile ?? null);
         setStage("");
         setError(""); // a transient poll failure must not shadow the report
         setPhase("done");
+        refreshHistory();
         return;
       }
-      if (status.status === "failed" || status.error) {
+      if (status.status === "failed" || status.status === "cancelled" || status.error) {
         setError(status.error || "Job nghiên cứu thất bại");
         setPhase("error");
+        refreshHistory();
         return;
       }
       // Still queued/running: release lock before re-attaching or stopping.
@@ -220,6 +332,27 @@ export default function ResearchPanel() {
               setStage([d.stage, d.detail].filter(Boolean).join(" — "));
             } catch {
               /* partial event */
+            }
+          } else if (name === "outline") {
+            try {
+              const d = JSON.parse(dataJson) as { sections?: string[]; profile?: string };
+              if (Array.isArray(d.sections)) setOutline(d.sections);
+              if (d.profile) setResolvedProfile(d.profile);
+            } catch {
+              /* ignore */
+            }
+          } else if (name === "tool_results") {
+            try {
+              const d = JSON.parse(dataJson) as { tools?: ResearchToolSummary[] };
+              if (Array.isArray(d.tools)) setTools(d.tools);
+            } catch {
+              /* ignore */
+            }
+          } else if (name === "verification") {
+            try {
+              setVerification(JSON.parse(dataJson) as ResearchVerification);
+            } catch {
+              /* ignore */
             }
           } else if (name === "report_token") {
             try {
@@ -329,6 +462,43 @@ export default function ResearchPanel() {
               ))}
             </select>
           </label>
+          <label>
+            Chế độ:{" "}
+            <select value={profile} onChange={(e) => setProfile(e.target.value)} disabled={phase === "running"}>
+              {PROFILES.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Space:{" "}
+            <input
+              type="text"
+              placeholder="(tùy chọn)"
+              value={space}
+              onChange={(e) => setSpace(e.target.value)}
+              disabled={phase === "running"}
+              style={{ width: "8rem" }}
+            />
+          </label>
+          {history.length > 0 && (
+            <label>
+              Lịch sử:{" "}
+              <select
+                value={selectedHistoryId}
+                onChange={(e) => void loadHistoricalJob(e.target.value)}
+              >
+                <option value="">-- Chọn báo cáo --</option>
+                {history.map((h) => (
+                  <option key={h.research_id} value={h.research_id}>
+                    [{h.status}] {h.query.slice(0, 40)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       </form>
 
@@ -336,19 +506,64 @@ export default function ResearchPanel() {
         <div className="card status">
           <div className="spinner" />
           <span>{stage || "Đang nghiên cứu..."}</span>
+          {jobId && (
+            <button
+              type="button"
+              className="tts-btn"
+              onClick={() => void handleCancel()}
+              style={{ marginLeft: "auto" }}
+            >
+              ⏹ Hủy
+            </button>
+          )}
         </div>
       )}
       {error && <div className="card error">{error}</div>}
       {jobId && phase !== "idle" && (
-        <p className="research-job">Job: <code>{jobId}</code>{phase === "done" ? " · hoàn tất" : ""}</p>
+        <p className="research-job">
+          Job: <code>{jobId}</code>
+          {resolvedProfile ? ` · ${resolvedProfile}` : ""}
+          {phase === "done" ? " · hoàn tất" : ""}
+        </p>
+      )}
+
+      {(outline.length > 0 || tools.length > 0 || verification) && (
+        <div className="card status" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+          {tools.map((t, idx) => (
+            <span key={`${t.tool}-${idx}`} className="chip">
+              🔧 {t.tool}
+            </span>
+          ))}
+          {outline.length > 0 && (
+            <span className="chip">📐 Outline: {outline.length} mục</span>
+          )}
+          {verification && (
+            <span className="chip">
+              ✓ Fact: coverage {Math.round(verification.citation_coverage * 100)}% · numeric fidelity{" "}
+              {Math.round(verification.numeric_fidelity * 100)}%
+              {verification.unsupported_markers.length > 0
+                ? ` · ⚠ ${verification.unsupported_markers.length} unsupported`
+                : ""}
+            </span>
+          )}
+        </div>
       )}
 
       {reportMd && (
         <article className="card answer">
           <header className="answer-header">
             <h2>Báo cáo nghiên cứu</h2>
+            <span className="answer-header-actions">
+              <button
+                type="button"
+                className="tts-btn"
+                onClick={downloadMarkdown}
+                title="Tải báo cáo Markdown (.md)"
+              >
+                ⬇ Tải .md
+              </button>
             {(ttsReady || vsEnabled) && (
-              <span className="answer-header-actions">
+              <>
                 {playingSection === null ? (
                   <button
                     type="button"
@@ -386,8 +601,9 @@ export default function ResearchPanel() {
                     </button>
                   </>
                 )}
-              </span>
+              </>
             )}
+            </span>
           </header>
 
           {sections.length > 1 && (
@@ -424,15 +640,32 @@ export default function ResearchPanel() {
             </div>
           )}
 
-          {learnings.length > 0 && (
-            <div className="research-learnings">
-              <h3>Kết luận rút ra ({learnings.length})</h3>
-              <ul>
-                {learnings.map((l, i) => (
-                  <li key={i}>{l}</li>
-                ))}
-              </ul>
-            </div>
+          {(learnings.length > 0 || conflicts.length > 0) && (
+            <details className="research-learnings">
+              <summary>
+                <strong>
+                  Fact Ledger & Xung đột ({learnings.length} kết luận · {conflicts.length} mâu thuẫn)
+                </strong>
+              </summary>
+              {learnings.length > 0 && (
+                <ul>
+                  {learnings.map((l, i) => (
+                    <li key={i}>{l}</li>
+                  ))}
+                </ul>
+              )}
+              {conflicts.length > 0 && (
+                <ul>
+                  {conflicts.map((cf, i) => (
+                    <li key={`cf-${i}`}>
+                      <strong>{cf.topic}</strong>: {cf.claim_a}{" "}
+                      {cf.citation_a ? `[${cf.citation_a}]` : ""} vs {cf.claim_b}{" "}
+                      {cf.citation_b ? `[${cf.citation_b}]` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </details>
           )}
         </article>
       )}

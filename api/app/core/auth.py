@@ -518,6 +518,28 @@ async def require_operator(request: Request) -> AuthContext:
     return ctx
 
 
+async def require_admin_key(request: Request) -> AuthContext:
+    """Strict admin gate for sensitive config surfaces (e.g. ``/v1/meta/full``).
+
+    Unlike ``require_admin`` this ALWAYS demands a real, valid admin API key —
+    ``AUTH_ENABLED=false`` and ``DEV_ANON_ADMIN=true`` do NOT grant access, so a
+    keyless caller gets 401 (missing/invalid key) or 403 (non-admin key).
+    """
+    raw_auth = request.headers.get("authorization", "").strip()
+    bearer = raw_auth[7:].strip() if raw_auth[:7].lower() == "bearer " else raw_auth
+    ctx = await authenticate(bearer)
+    if ctx.role != "admin":
+        raise MetaSearchError(
+            ErrorCode.UNAUTHORIZED,
+            "admin role required for this operation",
+            status_code=403,
+        )
+    current_api_key_id.set(ctx.key_id)
+    current_role.set(ctx.role)
+    current_auth_context.set(ctx)
+    return ctx
+
+
 async def require_admin(request: Request) -> AuthContext:
     """FastAPI dependency: require an admin role when AUTH_ENABLED=true."""
     ctx = await require_api_key(request)

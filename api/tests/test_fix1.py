@@ -121,12 +121,14 @@ class TestBreakerRecovery:
 class TestAlertsYaml:
     def test_alerts_yaml_valid(self):
         """FIX1: alerts.yml must be valid YAML (was Python docstring)."""
-        with open("../deploy/prometheus/alerts.yml") as f:
+        alerts_path = Path(__file__).resolve().parents[2] / "deploy" / "prometheus" / "alerts.yml"
+        with alerts_path.open(encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert "groups" in data
 
     def test_slow_answers_filter_matches_real_labels(self):
-        with open("../deploy/prometheus/alerts.yml") as f:
+        alerts_path = Path(__file__).resolve().parents[2] / "deploy" / "prometheus" / "alerts.yml"
+        with alerts_path.open(encoding="utf-8") as f:
             content = f.read()
         # B4: the alert must use the actual metric label value
         assert 'path="/answer"' in content
