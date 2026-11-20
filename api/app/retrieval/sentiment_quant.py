@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
 import logging
 import math
 import statistics
@@ -24,6 +25,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypeGuard
 from urllib.parse import quote
+
+import httpx
 
 from app.http import get_http_client
 from app.retrieval.adapters.viet_stock import (
@@ -960,7 +963,7 @@ async def fetch_cboe_daily_pcr(
             if resp.status_code != 200 or len(resp.content or b"") > MAX_RESPONSE_BYTES:
                 continue
             payload = resp.json()
-        except Exception:
+        except (httpx.HTTPError, ValueError, json.JSONDecodeError):
             continue
         if not isinstance(payload, dict):
             continue

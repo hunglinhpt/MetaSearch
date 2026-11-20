@@ -240,6 +240,11 @@ class Settings(BaseSettings):
     sec_edgar_user_agent: str = "MetaSearch info@metasearch.ai"
     # FireAnt Bearer JWT (docs/15 §5.5). Empty = FireAnt source disabled.
     fa_fireant_token: str = ""
+    # Last30Days-inspired sources (docs/26: Polymarket, StockTwits, USPTO, Careers)
+    polymarket_api_key: str = ""
+    stocktwits_api_key: str = ""
+    uspto_api_key: str = ""
+    scrapecreators_api_key: str = ""  # For TikTok, Instagram, Threads
 
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------
     # docs/20 P0-2: "bge" = BAAI/bge-reranker-v2-m3 cross-encoder, local ONNX

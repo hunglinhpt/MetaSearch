@@ -20,6 +20,7 @@ from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.adapters.bing_news import BingNewsAdapter
 from app.retrieval.adapters.bluesky import BlueskyAdapter
 from app.retrieval.adapters.brave import BraveAdapter
+from app.retrieval.adapters.careers import CareersAdapter
 from app.retrieval.adapters.crossref import CrossrefAdapter
 from app.retrieval.adapters.ddg import DuckDuckGoAdapter
 from app.retrieval.adapters.europepmc import EuropePmcAdapter
@@ -31,6 +32,7 @@ from app.retrieval.adapters.google_news import GoogleNewsAdapter
 from app.retrieval.adapters.hackernews import HackerNewsAdapter
 from app.retrieval.adapters.huggingface import HuggingFaceAdapter
 from app.retrieval.adapters.openalex import OpenAlexAdapter
+from app.retrieval.adapters.polymarket import PolymarketAdapter, PolymarketTrendingAdapter
 from app.retrieval.adapters.pubmed import PubMedAdapter
 from app.retrieval.adapters.reddit import RedditAdapter
 from app.retrieval.adapters.searxng import SearXNGAdapter
@@ -39,8 +41,10 @@ from app.retrieval.adapters.semanticscholar import SemanticScholarAdapter
 from app.retrieval.adapters.serper import SerperAdapter
 from app.retrieval.adapters.stackexchange import StackExchangeAdapter
 from app.retrieval.adapters.stackoverflow import StackOverflowAdapter
+from app.retrieval.adapters.stocktwits import StockTwitsAdapter, StockTwitsTrendingAdapter
 from app.retrieval.adapters.stooq import StooqFinanceAdapter
 from app.retrieval.adapters.tavily import TavilyAdapter
+from app.retrieval.adapters.uspto import USPTOAdapter, USPTOCompanyAdapter
 from app.retrieval.adapters.viet_stock import VietStockAdapter
 from app.retrieval.adapters.vn_financial_wire import VnFinancialWireAdapter
 from app.retrieval.adapters.wikipedia import WikipediaAdapter
@@ -115,6 +119,18 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "bing_news": BingNewsAdapter(),
         "vn_wire": VnFinancialWireAdapter(),
         "fin_rss": GlobalFinancialRssAdapter(),
+        # v4.1.2 Last30Days-inspired sources (docs/26)
+        "polymarket": PolymarketAdapter(api_key=getattr(settings, "polymarket_api_key", None)),
+        "polymarket_trending": PolymarketTrendingAdapter(
+            api_key=getattr(settings, "polymarket_api_key", None)
+        ),
+        "stocktwits": StockTwitsAdapter(api_key=getattr(settings, "stocktwits_api_key", None)),
+        "stocktwits_trending": StockTwitsTrendingAdapter(
+            api_key=getattr(settings, "stocktwits_api_key", None)
+        ),
+        "uspto": USPTOAdapter(api_key=getattr(settings, "uspto_api_key", None)),
+        "uspto_company": USPTOCompanyAdapter(api_key=getattr(settings, "uspto_api_key", None)),
+        "careers": CareersAdapter(),
     }
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)
