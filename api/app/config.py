@@ -244,6 +244,7 @@ class Settings(BaseSettings):
     polymarket_api_key: str = ""
     stocktwits_api_key: str = ""
     uspto_api_key: str = ""
+    careers_enabled: bool = True
     scrapecreators_api_key: str = ""  # For TikTok, Instagram, Threads
 
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------

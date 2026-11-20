@@ -130,8 +130,9 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         ),
         "uspto": USPTOAdapter(api_key=getattr(settings, "uspto_api_key", None)),
         "uspto_company": USPTOCompanyAdapter(api_key=getattr(settings, "uspto_api_key", None)),
-        "careers": CareersAdapter(),
     }
+    if getattr(settings, "careers_enabled", True):
+        adapters["careers"] = CareersAdapter()
     if settings.tavily_api_key:
         adapters["tavily"] = TavilyAdapter(settings.tavily_api_key)
     if settings.serper_api_key:
