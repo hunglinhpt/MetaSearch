@@ -3,15 +3,20 @@
 Tests cover:
 - Last30Days-inspired: Careers, Polymarket, StockTwits, USPTO
 - Public APIs (no key required): IP-API, OpenTrivia, DogCEO
+- New public API adapters: Alpha Vantage, NewsAPI, OpenWeather, CoinGecko
 """
 
 from __future__ import annotations
 
 from app.config import Settings, get_settings
+from app.retrieval.adapters.alpha_vantage import AlphaVantageAdapter
 from app.retrieval.adapters.careers import CareersAdapter
+from app.retrieval.adapters.coingecko import CoinGeckoAdapter
 from app.retrieval.adapters.dogceo import DogCEOAdapter
 from app.retrieval.adapters.ipapi import IPAPIGeolocationAdapter
+from app.retrieval.adapters.newsapi import NewsAPIAdapter, NewsAPITopHeadlinesAdapter
 from app.retrieval.adapters.opentdb import OpenTriviaAdapter
+from app.retrieval.adapters.openweather import OpenWeatherMapAdapter
 from app.retrieval.adapters.polymarket import PolymarketAdapter, PolymarketTrendingAdapter
 from app.retrieval.adapters.stocktwits import StockTwitsAdapter, StockTwitsTrendingAdapter
 from app.retrieval.adapters.uspto import USPTOAdapter, USPTOCompanyAdapter
@@ -62,6 +67,27 @@ class TestAdapterInstantiation:
         adapter = DogCEOAdapter()
         assert adapter.id == "dogceo"
 
+    # New public API adapters
+    def test_alpha_vantage_adapter_instantiation(self):
+        adapter = AlphaVantageAdapter(api_key="test_key")
+        assert adapter.id == "alpha_vantage"
+
+    def test_newsapi_adapter_instantiation(self):
+        adapter = NewsAPIAdapter(api_key="test_key")
+        assert adapter.id == "newsapi"
+
+    def test_newsapi_top_headlines_adapter_instantiation(self):
+        adapter = NewsAPITopHeadlinesAdapter(api_key="test_key")
+        assert adapter.id == "newsapi_headlines"
+
+    def test_openweather_adapter_instantiation(self):
+        adapter = OpenWeatherMapAdapter(api_key="test_key")
+        assert adapter.id == "openweather"
+
+    def test_coingecko_adapter_instantiation(self):
+        adapter = CoinGeckoAdapter()
+        assert adapter.id == "coingecko"
+
 
 class TestAdapterRegistry:
     """Test that adapters are properly registered."""
@@ -82,6 +108,12 @@ class TestAdapterRegistry:
         assert "ipapi" in adapters
         assert "opentdb" in adapters
         assert "dogceo" in adapters
+        # New public API adapters
+        assert "alpha_vantage" in adapters
+        assert "newsapi" in adapters
+        assert "newsapi_headlines" in adapters
+        assert "openweather" in adapters
+        assert "coingecko" in adapters
 
     def test_adapter_types_in_registry(self):
         settings = get_settings()
@@ -99,6 +131,12 @@ class TestAdapterRegistry:
         assert isinstance(adapters["ipapi"], IPAPIGeolocationAdapter)
         assert isinstance(adapters["opentdb"], OpenTriviaAdapter)
         assert isinstance(adapters["dogceo"], DogCEOAdapter)
+        # New public API adapters
+        assert isinstance(adapters["alpha_vantage"], AlphaVantageAdapter)
+        assert isinstance(adapters["newsapi"], NewsAPIAdapter)
+        assert isinstance(adapters["newsapi_headlines"], NewsAPITopHeadlinesAdapter)
+        assert isinstance(adapters["openweather"], OpenWeatherMapAdapter)
+        assert isinstance(adapters["coingecko"], CoinGeckoAdapter)
 
 
 class TestConfigSettings:
@@ -112,6 +150,11 @@ class TestConfigSettings:
         assert hasattr(settings, "stocktwits_api_key")
         assert hasattr(settings, "uspto_api_key")
         assert hasattr(settings, "careers_enabled")
+        # New public API config keys
+        assert hasattr(settings, "alpha_vantage_api_key")
+        assert hasattr(settings, "newsapi_key")
+        assert hasattr(settings, "openweather_api_key")
+        assert hasattr(settings, "coingecko_api_key")
 
     def test_config_defaults(self):
         settings = Settings()
@@ -121,6 +164,11 @@ class TestConfigSettings:
         assert settings.stocktwits_api_key == ""
         assert settings.uspto_api_key == ""
         assert settings.careers_enabled is True
+        # New public API default values
+        assert settings.alpha_vantage_api_key == ""
+        assert settings.newsapi_key == ""
+        assert settings.openweather_api_key == ""
+        assert settings.coingecko_api_key == ""
 
 
 class TestCareersAdapterHasSearchMethod:
@@ -155,5 +203,50 @@ class TestUSPTOAdapterHasSearchMethod:
 
     def test_uspto_has_search(self):
         adapter = USPTOAdapter(api_key="test_key")
+        assert hasattr(adapter, "search")
+        assert callable(adapter.search)
+
+
+class TestAlphaVantageAdapterHasSearchMethod:
+    """Test that AlphaVantageAdapter has search method."""
+
+    def test_alpha_vantage_has_search(self):
+        adapter = AlphaVantageAdapter(api_key="test_key")
+        assert hasattr(adapter, "search")
+        assert callable(adapter.search)
+
+
+class TestNewsAPIAdapterHasSearchMethod:
+    """Test that NewsAPIAdapter has search method."""
+
+    def test_newsapi_has_search(self):
+        adapter = NewsAPIAdapter(api_key="test_key")
+        assert hasattr(adapter, "search")
+        assert callable(adapter.search)
+
+
+class TestNewsAPITopHeadlinesAdapterHasSearchMethod:
+    """Test that NewsAPITopHeadlinesAdapter has search method."""
+
+    def test_newsapi_top_headlines_has_search(self):
+        adapter = NewsAPITopHeadlinesAdapter(api_key="test_key")
+        assert hasattr(adapter, "search")
+        assert callable(adapter.search)
+
+
+class TestOpenWeatherMapAdapterHasSearchMethod:
+    """Test that OpenWeatherMapAdapter has search method."""
+
+    def test_openweather_has_search(self):
+        adapter = OpenWeatherMapAdapter(api_key="test_key")
+        assert hasattr(adapter, "search")
+        assert callable(adapter.search)
+
+
+class TestCoinGeckoAdapterHasSearchMethod:
+    """Test that CoinGeckoAdapter has search method."""
+
+    def test_coingecko_has_search(self):
+        adapter = CoinGeckoAdapter()
         assert hasattr(adapter, "search")
         assert callable(adapter.search)

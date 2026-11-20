@@ -245,6 +245,11 @@ class Settings(BaseSettings):
     stocktwits_api_key: str = ""
     uspto_api_key: str = ""
     careers_enabled: bool = True
+    # Giai Đoạn 2: Free API Keys (instant approval)
+    alpha_vantage_api_key: str = ""  # Financial market data
+    newsapi_key: str = ""  # Global news aggregator
+    openweather_api_key: str = ""  # Weather data
+    coingecko_api_key: str = ""  # Cryptocurrency data (optional)
     scrapecreators_api_key: str = ""  # For TikTok, Instagram, Threads
 
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------

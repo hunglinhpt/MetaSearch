@@ -15,12 +15,14 @@ from app.orchestration.engine_store import (
     EngineStore,
     InMemoryEngineStore,
 )
+from app.retrieval.adapters.alpha_vantage import AlphaVantageAdapter
 from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.adapters.bing_news import BingNewsAdapter
 from app.retrieval.adapters.bluesky import BlueskyAdapter
 from app.retrieval.adapters.brave import BraveAdapter
 from app.retrieval.adapters.careers import CareersAdapter
+from app.retrieval.adapters.coingecko import CoinGeckoAdapter
 from app.retrieval.adapters.crossref import CrossrefAdapter
 from app.retrieval.adapters.ddg import DuckDuckGoAdapter
 from app.retrieval.adapters.dogceo import DogCEOAdapter
@@ -33,8 +35,10 @@ from app.retrieval.adapters.google_news import GoogleNewsAdapter
 from app.retrieval.adapters.hackernews import HackerNewsAdapter
 from app.retrieval.adapters.huggingface import HuggingFaceAdapter
 from app.retrieval.adapters.ipapi import IPAPIGeolocationAdapter
+from app.retrieval.adapters.newsapi import NewsAPIAdapter, NewsAPITopHeadlinesAdapter
 from app.retrieval.adapters.openalex import OpenAlexAdapter
 from app.retrieval.adapters.opentdb import OpenTriviaAdapter
+from app.retrieval.adapters.openweather import OpenWeatherMapAdapter
 from app.retrieval.adapters.polymarket import PolymarketAdapter, PolymarketTrendingAdapter
 from app.retrieval.adapters.pubmed import PubMedAdapter
 from app.retrieval.adapters.reddit import RedditAdapter
@@ -137,7 +141,21 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "ipapi": IPAPIGeolocationAdapter(),
         "opentdb": OpenTriviaAdapter(),
         "dogceo": DogCEOAdapter(),
+        # Giai Đoạn 2: Free API Keys (instant approval)
+        # Alpha Vantage - Financial data
     }
+    # Always register adapters; they handle missing keys gracefully
+    adapters["alpha_vantage"] = AlphaVantageAdapter(
+        api_key=getattr(settings, "alpha_vantage_api_key", None)
+    )
+    adapters["newsapi"] = NewsAPIAdapter(api_key=getattr(settings, "newsapi_key", None))
+    adapters["newsapi_headlines"] = NewsAPITopHeadlinesAdapter(
+        api_key=getattr(settings, "newsapi_key", None)
+    )
+    adapters["openweather"] = OpenWeatherMapAdapter(
+        api_key=getattr(settings, "openweather_api_key", None)
+    )
+    adapters["coingecko"] = CoinGeckoAdapter(api_key=getattr(settings, "coingecko_api_key", None))
     if getattr(settings, "careers_enabled", True):
         adapters["careers"] = CareersAdapter()
     if settings.tavily_api_key:
