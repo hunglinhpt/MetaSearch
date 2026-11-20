@@ -1,9 +1,17 @@
-"""Tests for Last30Days-inspired adapters: Careers, Polymarket, StockTwits, USPTO."""
+"""Tests for Last30Days-inspired and public API adapters.
+
+Tests cover:
+- Last30Days-inspired: Careers, Polymarket, StockTwits, USPTO
+- Public APIs (no key required): IP-API, OpenTrivia, DogCEO
+"""
 
 from __future__ import annotations
 
 from app.config import Settings, get_settings
 from app.retrieval.adapters.careers import CareersAdapter
+from app.retrieval.adapters.dogceo import DogCEOAdapter
+from app.retrieval.adapters.ipapi import IPAPIGeolocationAdapter
+from app.retrieval.adapters.opentdb import OpenTriviaAdapter
 from app.retrieval.adapters.polymarket import PolymarketAdapter, PolymarketTrendingAdapter
 from app.retrieval.adapters.stocktwits import StockTwitsAdapter, StockTwitsTrendingAdapter
 from app.retrieval.adapters.uspto import USPTOAdapter, USPTOCompanyAdapter
@@ -41,6 +49,19 @@ class TestAdapterInstantiation:
         adapter = USPTOCompanyAdapter(api_key="test_key")
         assert adapter.id == "uspto_company"
 
+    # Public API adapters (no API key required)
+    def test_ipapi_adapter_instantiation(self):
+        adapter = IPAPIGeolocationAdapter()
+        assert adapter.id == "ipapi"
+
+    def test_opentdb_adapter_instantiation(self):
+        adapter = OpenTriviaAdapter()
+        assert adapter.id == "opentdb"
+
+    def test_dogceo_adapter_instantiation(self):
+        adapter = DogCEOAdapter()
+        assert adapter.id == "dogceo"
+
 
 class TestAdapterRegistry:
     """Test that adapters are properly registered."""
@@ -57,6 +78,10 @@ class TestAdapterRegistry:
         assert "stocktwits_trending" in adapters
         assert "uspto" in adapters
         assert "uspto_company" in adapters
+        # Public API adapters (no key required)
+        assert "ipapi" in adapters
+        assert "opentdb" in adapters
+        assert "dogceo" in adapters
 
     def test_adapter_types_in_registry(self):
         settings = get_settings()
@@ -70,6 +95,10 @@ class TestAdapterRegistry:
         assert isinstance(adapters["stocktwits_trending"], StockTwitsTrendingAdapter)
         assert isinstance(adapters["uspto"], USPTOAdapter)
         assert isinstance(adapters["uspto_company"], USPTOCompanyAdapter)
+        # Public API adapters
+        assert isinstance(adapters["ipapi"], IPAPIGeolocationAdapter)
+        assert isinstance(adapters["opentdb"], OpenTriviaAdapter)
+        assert isinstance(adapters["dogceo"], DogCEOAdapter)
 
 
 class TestConfigSettings:
