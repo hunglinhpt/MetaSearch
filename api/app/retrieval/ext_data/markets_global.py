@@ -61,8 +61,7 @@ async def fetch_global_quote(
         return None
 
     cache_key = (
-        f"quote:{','.join(clean)}:"
-        f"{_key_tag(alpha_vantage_api_key)}:{_key_tag(twelvedata_api_key)}"
+        f"quote:{','.join(clean)}:{_key_tag(alpha_vantage_api_key)}:{_key_tag(twelvedata_api_key)}"
     )
     cached = _quote_cache.get(cache_key)
     if cached is not None:

@@ -185,6 +185,7 @@ async def generate_briefing(
 
     task = asyncio.create_task(_run())
     _active[channel_id] = task
+
     # docs/33 audit P2-4: identity-guarded cleanup — the entry must stay in
     # _active while the (shielded) generation is still running, so a client
     # cancellation cannot orphan a run and let a second one start concurrently;
@@ -260,7 +261,10 @@ async def latest_briefing(
             ErrorCode.INTERNAL, "briefing store unavailable", status_code=500
         ) from exc
     for row in rows:
-        if "ai-briefing" in (row.tags or []):
+        # Both briefing kinds qualify — "ai-briefing" (Step A+B pipeline) and
+        # "extractive-briefing" (honest fallback). A scanner digest (no
+        # briefing tag) never qualifies (docs/33 audit P3-7).
+        if {"ai-briefing", "extractive-briefing"} & set(row.tags or []):
             return BlogPostDetail(
                 id=str(row.id),
                 slug=row.slug,

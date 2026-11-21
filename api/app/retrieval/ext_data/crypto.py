@@ -22,6 +22,7 @@ def _key_tag(api_key: str) -> str:
     cache separately without storing the secret itself)."""
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:8] if api_key else ""
 
+
 logger = get_logger(__name__)
 
 _BASE_URL = "https://api.coingecko.com/api/v3"
