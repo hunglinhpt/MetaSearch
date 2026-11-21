@@ -21,7 +21,12 @@ from app.retrieval.adapters.base import AdapterError
 from app.retrieval.health import Outcome
 from app.retrieval.models import RawResult
 
-DEFAULT_BASE_URL = "https://developer.uspto.gov/ibd-api/v1"
+# docs/32 §6 live probe 2026-11-21: the old developer.uspto.gov/ibd-api
+# endpoint 301-redirects to a marketing page (API retired); the replacement
+# api.uspto.gov host requires an API token (free at the USPTO Open Data
+# Portal). The adapter sends it via X-Api-Key — no key → the engine stays
+# disabled (default_configs gates on settings.uspto_api_key).
+DEFAULT_BASE_URL = "https://api.uspto.gov/ibd-api/v1"
 
 
 class USPTOAdapter:

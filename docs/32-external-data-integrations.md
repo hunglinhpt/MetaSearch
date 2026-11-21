@@ -100,12 +100,17 @@ keyless docs/19 + bing_news/vn_wire/fin_rss docs/20). Điểm nghẽn thật:
    của bing_news). EngineConfig: category `general`, weight 0.9.
 2. **7 adapters Last30Days (docs/26) có trong `build_adapters` nhưng KHÔNG có
    EngineConfig → không bao giờ được fan-out (dead code)**. Bổ sung config cho
-   các adapter **query-aware**: `polymarket`, `stocktwits`, `uspto`,
-   `uspto_company`, `careers` (enabled mặc định, keyless graceful). Hai
-   adapter **query-blind** (`polymarket_trending`, `stocktwits_trending`) cố
-   tình KHÔNG có EngineConfig — bật sẽ pollute relevance bằng kết quả không
-   liên quan query; vẫn dùng được qua hot-config khi cần.
+   các adapter **query-aware**: `polymarket`, `stocktwits`, `careers`
+   (enabled mặc định, keyless graceful); `uspto` + `uspto_company`
+   **key-gated** — live probe 2026-11-21 cho thấy endpoint keyless cũ
+   (`developer.uspto.gov/ibd-api`) đã retired (301 về trang chủ), host mới
+   `api.uspto.gov` yêu cầu token (`USPTO_API_KEY`, miễn phí đăng ký USPTO
+   Open Data Portal) → không key thì 2 engines tắt (không đốt call chết).
+   Hai adapter **query-blind** (`polymarket_trending`, `stocktwits_trending`)
+   cố tình KHÔNG có EngineConfig — bật sẽ pollute relevance bằng kết quả
+   không liên quan query; vẫn dùng được qua hot-config khi cần.
 
-Sau thay đổi: Lite fan-out 26 engines keyless (25 cũ + bing_web + 5 verticals
-mới = 31 configs, searxng/tavily/serper/brave vẫn disabled đúng vai trò).
-Tất cả keyless — Lite không cần bất kỳ đăng ký nào.
+Sau thay đổi: Lite fan-out 29 engines enabled (25 cũ + bing_web +
+polymarket/stocktwits/careers; uspto* bật khi có key), 35 configs —
+searxng/tavily/serper/brave vẫn disabled đúng vai trò. Toàn bộ nhóm mới
+keyless trừ uspto (free key tùy chọn).

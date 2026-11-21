@@ -62,11 +62,16 @@ async def test_bing_web_blocked_raises():
 
 def test_new_engine_configs_present_and_enabled():
     cfgs = default_configs(get_settings())
-    new = ("bing_web", "polymarket", "stocktwits", "uspto", "uspto_company", "careers")
-    for engine in new:
+    for engine in ("bing_web", "polymarket", "stocktwits", "careers"):
         assert engine in cfgs, f"{engine} missing from default_configs"
         assert cfgs[engine].enabled, f"{engine} must be enabled by default (keyless)"
         assert engine in ADAPTER_PATHS
+    # USPTO retired the keyless endpoint (301 probe 2026-11-21): the new
+    # api.uspto.gov host requires a token — engines stay OFF without a key
+    # (no dead upstream calls in the default fan-out).
+    assert cfgs["uspto"].enabled == bool(getattr(get_settings(), "uspto_api_key", ""))
+    assert cfgs["uspto"].requires_key is True
+    assert cfgs["uspto_company"].requires_key is True
     # The query-blind trending adapters must NOT join the default fan-out.
     assert "polymarket_trending" not in cfgs
     assert "stocktwits_trending" not in cfgs
