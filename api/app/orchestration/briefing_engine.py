@@ -338,7 +338,9 @@ def _num_in_evidence(num: str, evidence_text: str) -> bool:
 def _parse_review(text: str) -> dict[str, Any]:
     """Defensively parse a reviewer verdict (JSON or key: value lines)."""
     verdict: dict[str, Any] = {"hallucination_free": True, "depth_ok": True, "issues": []}
-    try:
+    parsed_json = False
+    # JSON-first; any parse failure falls through to the heuristic scan below.
+    with contextlib.suppress(Exception):
         start = text.find("{")
         end = text.rfind("}")
         if start >= 0 and end > start:
@@ -349,14 +351,13 @@ def _parse_review(text: str) -> dict[str, Any]:
                 issues = payload.get("issues")
                 if isinstance(issues, list):
                     verdict["issues"] = [str(i)[:200] for i in issues[:8]]
-                return verdict
-    except Exception:
-        pass
-    lowered = text.lower()
-    if "hallucination: no" in lowered or "hallucination_free: false" in lowered:
-        verdict["hallucination_free"] = False
-    if "depth: shallow" in lowered or "depth_ok: false" in lowered:
-        verdict["depth_ok"] = False
+                parsed_json = True
+    if not parsed_json:
+        lowered = text.lower()
+        if "hallucination: no" in lowered or "hallucination_free: false" in lowered:
+            verdict["hallucination_free"] = False
+        if "depth: shallow" in lowered or "depth_ok: false" in lowered:
+            verdict["depth_ok"] = False
     return verdict
 
 

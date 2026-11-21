@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from enum import StrEnum
 from typing import Any
 
@@ -99,10 +100,25 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _handle_validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        # exc.errors() can carry non-JSON-serializable context (e.g. raw
+        # `bytes` input when the body is not valid JSON) — sanitizing each
+        # error to a JSON-safe shape keeps the 400 envelope from crashing
+        # into a 500 (observed live: /v1/digests/scan with a missing
+        # Content-Type).
+        safe_errors: list[dict[str, Any]] = []
+        for item in exc.errors():
+            safe: dict[str, Any] = {}
+            for key, value in item.items():
+                try:
+                    json.dumps(value)
+                    safe[key] = value
+                except (TypeError, ValueError):
+                    safe[key] = repr(value)[:300]
+            safe_errors.append(safe)
         err = MetaSearchError(
             ErrorCode.INVALID_REQUEST,
             "Request validation failed",
-            details={"errors": exc.errors()},
+            details={"errors": safe_errors},
         )
         return JSONResponse(
             status_code=err.status_code, content=err.to_payload(_request_id(request))
