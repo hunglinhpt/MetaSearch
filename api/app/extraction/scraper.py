@@ -540,8 +540,12 @@ class Scraper:
             resp.raise_for_status()
             payload = resp.json()
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            self._crawl4ai_down_until = time.monotonic() + 60.0
-            logger.info("crawl4ai_cooldown", url=url, error=type(exc).__name__)
+            # docs/32 Lite: an unreachable LOCAL service means the tier is
+            # absent for a long while — cool down 300s instead of re-hitting
+            # every 60s. Remote hosts keep the 60s retry (transient network).
+            cooldown = 300.0 if _is_local_crawl4ai(settings.crawl4ai_url) else 60.0
+            self._crawl4ai_down_until = time.monotonic() + cooldown
+            logger.info("crawl4ai_cooldown", url=url, error=type(exc).__name__, cooldown_s=cooldown)
             return None
         except Exception as exc:
             logger.info("crawl4ai_unavailable", url=url, error=type(exc).__name__)
@@ -692,6 +696,18 @@ class Scraper:
             },
             ttl_s=self._settings.cache_page_ttl_s,
         )
+
+
+def _is_local_crawl4ai(crawl4ai_url: str) -> bool:
+    """True when the configured crawl4ai host is this machine (Lite profile
+    points at 127.0.0.1/localhost when an optional local server is set up).
+    A refused connection on loopback means the tier is genuinely absent —
+    retrying sooner than 300s only burns request time (docs/32 Lite)."""
+    try:
+        host = urlsplit(crawl4ai_url).hostname or ""
+    except ValueError:
+        return False
+    return host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
 
 def _crawl4ai_markdown(payload: dict[str, Any]) -> tuple[str, str]:

@@ -69,3 +69,43 @@ keyless/keyed mà không lưu secret. Single-flight chống stampede cùng key.
 - UI panels cho nhóm nguồn mới (tab Tin tức có thể trộn NewsAPI khi có key).
 - Open-Meteo air-quality (PM2.5) + OWM One Call 3.0 forecast khi cần.
 - Sector metadata cho peer discovery (docs/31 §5.1) — các nguồn trên không cung cấp.
+
+---
+
+## 6. Lite profile upgrades (2026-11-21 — extraction pipeline + global search expansion)
+
+### 6.1 Extraction pipeline cho Lite (trafilatura → crawl4ai → Jina)
+
+Trước: tier crawl4ai trỏ về Docker hostname `http://crawl4ai:11222` — trên Lite
+không có service → mỗi 60s thử lại fail (DNS fail + cooldown 60s), tier thực
+chết. Sau:
+
+- **Tier 1 trafilatura**: in-process, luôn chạy (không đổi).
+- **Tier 2 crawl4ai (optional, autodetect)**: trỏ `CRAWL4AI_URL=http://127.0.0.1:11235`
+  khi đã cài server local (theo docs crawl4ai — `pip install crawl4ai` + serve
+  FastAPI); connection refused trên **loopback → cooldown 300s fast-fail**
+  (`_is_local_crawl4ai`), remote host giữ 60s (lỗi tạm thời). Không còn đốt
+  thời gian mỗi request khi tier vắng.
+- **Tier 3 Jina Reader**: keyless `r.jina.ai` (~20 rpm) — `JINA_KEYLESS=true`
+  mặc định; `JINA_API_KEY` nâng ceiling.
+- `.env.lite.example` cập nhật chú thích 3-tier + giá trị 11235.
+
+### 6.2 Global search expansion cho Lite
+
+Live check (2026-11-21): Lite đã có 25/29 engines enabled (tất cả adapters
+keyless docs/19 + bing_news/vn_wire/fin_rss docs/20). Điểm nghẽn thật:
+
+1. **Web tổng hợp chỉ có DDG** → thêm `bing_web` (Bing Web Search RSS,
+   keyless — probe thật trả kết quả web + tiếng Việt; reuse unwrap helpers
+   của bing_news). EngineConfig: category `general`, weight 0.9.
+2. **7 adapters Last30Days (docs/26) có trong `build_adapters` nhưng KHÔNG có
+   EngineConfig → không bao giờ được fan-out (dead code)**. Bổ sung config cho
+   các adapter **query-aware**: `polymarket`, `stocktwits`, `uspto`,
+   `uspto_company`, `careers` (enabled mặc định, keyless graceful). Hai
+   adapter **query-blind** (`polymarket_trending`, `stocktwits_trending`) cố
+   tình KHÔNG có EngineConfig — bật sẽ pollute relevance bằng kết quả không
+   liên quan query; vẫn dùng được qua hot-config khi cần.
+
+Sau thay đổi: Lite fan-out 26 engines keyless (25 cũ + bing_web + 5 verticals
+mới = 31 configs, searxng/tavily/serper/brave vẫn disabled đúng vai trò).
+Tất cả keyless — Lite không cần bất kỳ đăng ký nào.

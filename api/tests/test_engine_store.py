@@ -143,6 +143,13 @@ class TestDefaults:
             "bing_news",
             "vn_wire",
             "fin_rss",
+            # docs/32 §6 Lite global expansion (query-aware verticals only)
+            "bing_web",
+            "polymarket",
+            "stocktwits",
+            "uspto",
+            "uspto_company",
+            "careers",
         }
         assert configs["arxiv"].category == "academic"
         assert configs["wikipedia"].category == "reference"

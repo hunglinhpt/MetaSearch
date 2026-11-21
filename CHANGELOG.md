@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.3.0] - 2026-11-21
+
+### Added — Lite profile: full extraction pipeline + global search expansion (`docs/32` §6)
+
+- **Extraction pipeline cho Lite (trafilatura → crawl4ai → Jina)**: tier crawl4ai trên Lite trước giờ trỏ Docker hostname (không tồn tại) — fail mỗi 60s. Nay: trỏ `CRAWL4AI_URL=http://127.0.0.1:11235` khi đã cài server local (autodetect qua connect); **connection refused trên loopback → cooldown 300s fast-fail** (`_is_local_crawl4ai`) thay vì thử lại mỗi 60s; remote host giữ 60s (lỗi tạm thời). Tier 1 trafilatura in-process và tier 3 Jina keyless (~20 rpm) không đổi. `.env.lite.example` ghi chú 3-tier.
+- **Global search expansion cho Lite**: live check cho thấy Lite đã có 25 engines keyless; điểm nghẽn thật là (a) web tổng hợp chỉ có DDG và (b) 7 adapters Last30Days có trong `build_adapters` nhưng **không có EngineConfig → không bao giờ được fan-out**.
+  - **Adapter mới `bing_web`** (Bing Web Search RSS, keyless, probe thật 2026-11-21 — kết quả web + tiếng Việt; reuse `_unwrap_bing_url`/`_parse_pubdate` từ bing_news): EngineConfig `general` weight 0.9 → Lite có **nguồn web tổng hợp thứ hai độc lập index** cạnh DDG.
+  - **5 verticals Last30Days query-aware** vào fan-out mặc định: `polymarket` (news), `stocktwits` (social, symbol-aware), `uspto` + `uspto_company` (reference, patents), `careers` (general, theo `careers_enabled`). Hai adapter **query-blind** (`polymarket_trending`, `stocktwits_trending`) cố tình KHÔNG có config — bật sẽ trộn kết quả không liên quan; dùng được qua hot-config.
+  - Engine seeding upsert sẵn có tự thêm 6 config mới vào SQLite DB cũ khi restart (không đè tweak của operator).
+- **Tests**: 5 mới (`tests/test_lite_expansion.py`) — bing_web RSS unwrap/dedupe/403, config presence + query-blind exclusion, `_is_local_crawl4ai`, cooldown 300s cho localhost refused.
+
 ## [4.2.0] - 2026-11-21
 
 ### Added — External Data Integrations, keyless-first (`docs/32`; giai đoạn Tích Hợp API Free Key + nhóm Mở Rộng)

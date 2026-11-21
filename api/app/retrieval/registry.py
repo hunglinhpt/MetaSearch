@@ -19,6 +19,7 @@ from app.retrieval.adapters.alpha_vantage import AlphaVantageAdapter
 from app.retrieval.adapters.arxiv import ArxivAdapter
 from app.retrieval.adapters.base import SearchAdapter
 from app.retrieval.adapters.bing_news import BingNewsAdapter
+from app.retrieval.adapters.bing_web import BingWebSearchAdapter
 from app.retrieval.adapters.bluesky import BlueskyAdapter
 from app.retrieval.adapters.brave import BraveAdapter
 from app.retrieval.adapters.careers import CareersAdapter
@@ -124,6 +125,7 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "gdelt": GdeltAdapter(),
         # v4.0 keyless verified live feeds
         "bing_news": BingNewsAdapter(),
+        "bing_web": BingWebSearchAdapter(),
         "vn_wire": VnFinancialWireAdapter(),
         "fin_rss": GlobalFinancialRssAdapter(),
         # v4.1.2 Last30Days-inspired sources (docs/26)
