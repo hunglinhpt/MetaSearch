@@ -61,6 +61,7 @@ class ScanTopic:
     category: str
     tags: list[str]
     description: str
+    extra_categories: list[str] = field(default_factory=list)
     last_run: datetime | None = None
     last_post_id: str | None = None
 
@@ -94,6 +95,7 @@ DEFAULT_TOPICS: dict[str, ScanTopic] = {
         query="thị trường chứng khoán việt nam VN-Index cổ phiếu thanh khoản lãi suất vĩ mô FPT HPG VCB",
         category="financial",
         tags=["chung-khoan-vn", "vn-index", "tai-chinh", "co-phieu", "vi-mo"],
+        extra_categories=["news"],
         description=(
             "Phân tích chuyên sâu diễn biến chỉ số VN-Index, thanh khoản thị trường, định giá P/E, "
             "biến động các mã cổ phiếu dẫn dắt (FPT, HPG, VCB,...) và chính sách tiền tệ."
@@ -105,6 +107,7 @@ DEFAULT_TOPICS: dict[str, ScanTopic] = {
         query="kinh tế vĩ mô kinh doanh đầu tư lạm phát lãi suất fed startup công nghệ",
         category="news",
         tags=["kinh-doanh", "vi-mo", "lai-suat", "dau-tu", "startup"],
+        extra_categories=["financial"],
         description=(
             "Nhận định vĩ mô kinh tế, xu hướng lãi suất, chuỗi cung ứng toàn cầu "
             "và các thương vụ đầu tư công nghệ nổi bật."
@@ -176,6 +179,7 @@ def _dedup_results(results: list[Any]) -> list[dict[str, Any]]:
             "snippet": snippet,
             "engines": [engine] if engine else [],
             "hash": simhash64(f"{title} {snippet}"),
+            "published_at": getattr(r, "published_at", None),
         }
         groups[key] = entry
         order.append(key)
@@ -275,14 +279,46 @@ def synthesize_blog_content(
     pre_deduped: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str, str, str, list[dict[str, Any]]]:
     """Extractive per-topic briefing (docs/29 P0-1): every factual line is a
-    real result; headers only frame the topic, they never assert facts."""
+    real result; headers only frame the topic, they never assert facts.
+
+    docs/32 §7 recency gate: entries carrying a REAL published_at older than
+    ``scan_max_result_age_days`` are dropped when enough dated items remain,
+    and every citation line shows its source date — a "Bản Tin Ngày <today>"
+    must not lead with a story from previous years (the 21/11/2026 macro
+    digest led with "Hội thảo đầu tư 2024" before this gate)."""
     date_str = now.strftime("%d/%m/%Y")
     slug_date = now.strftime("%Y-%m-%d")
     slug = f"{topic.id}-{slug_date}-{str(uuid.uuid4())[:8]}"
 
     deduped = pre_deduped if pre_deduped is not None else _dedup_results(results)
+    max_age_days = max(30, int(getattr(get_settings(), "scan_max_result_age_days", 365)))
+    age_cutoff = now - timedelta(days=max_age_days)
+
+    def _published(entry: dict[str, Any]) -> datetime | None:
+        value = entry.get("published_at")
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=UTC)
+            return value.astimezone(UTC)
+        return None
+
+    dated = [(e, _published(e)) for e in deduped]
+    fresh = [e for e, pub in dated if pub is not None and pub >= age_cutoff]
+    undated = [e for e, pub in dated if pub is None]
+    stale = [e for e, pub in dated if pub is not None and pub < age_cutoff]
+
+    # Prefer fresh items; keep undated (age unknowable — never fabricated);
+    # stale entries only fill leftover citation slots when fresh evidence is
+    # scarce, and then with an explicit old-date label.
+    ranked = (
+        sorted(fresh, key=lambda e: _published(e) or now, reverse=True)
+        + undated
+        + sorted(stale, key=lambda e: _published(e) or now, reverse=True)
+    )
+
     citations: list[dict[str, Any]] = []
-    for idx, entry in enumerate(deduped[:_MAX_CITATIONS_PER_TOPIC], start=1):
+    for idx, entry in enumerate(ranked[:_MAX_CITATIONS_PER_TOPIC], start=1):
+        pub = _published(entry)
         citations.append(
             {
                 "n": idx,
@@ -290,8 +326,10 @@ def synthesize_blog_content(
                 "url": entry["url"],
                 "snippet": entry["snippet"],
                 "engines": entry["engines"],
+                "published": pub.strftime("%d/%m/%Y") if pub else None,
             }
         )
+    stale_count = len(stale)
     delta_section = _build_delta_section(previous_post, deduped)
 
     engine_line = (
@@ -300,6 +338,9 @@ def synthesize_blog_content(
         + (f", {engines_failed} engine lỗi." if engines_failed else ".")
         if deduped
         else f"Không thu được tin nào từ {engines_ok} engine đã hỏi."
+    ) + (
+        f" Cửa sổ thời gian: {max(1, int(getattr(get_settings(), 'scan_freshness_days', 7)))} ngày qua"
+        f"{'.' if stale_count == 0 else f'; {stale_count} tin cũ hơn ngưỡng đã được xếp sau và gắn nhãn ngày.'}"
     )
 
     title = f"{topic.name} — Bản Tin Ngày {date_str}"
@@ -308,16 +349,19 @@ def synthesize_blog_content(
         f"{len(deduped)} tin sau khử trùng lặp, trích dẫn đầy đủ."
     )
 
-    if deduped:
+    def _date_label(c: dict[str, Any]) -> str:
+        return f" *(ngày {c['published']})*" if c.get("published") else " *(ngày không rõ)*"
+
+    if citations:
         top_block = "\n".join(
-            f"{idx}. **{c['title']}** — {c['snippet'][:200]}"
+            f"{idx}. **{c['title']}**{_date_label(c)} — {c['snippet'][:200]}"
             + ("…" if len(c["snippet"]) > 200 else "")
             + (f" *(engine: {', '.join(c['engines'])})*" if c["engines"] else "")
             + f" [Nguồn {c['n']}]"
             for idx, c in enumerate(citations[:5], start=1)
         )
         detail_block = "\n".join(
-            f"- **{c['title']}** [Nguồn {c['n']}]: {c['snippet'][:300]}"
+            f"- **{c['title']}**{_date_label(c)} [Nguồn {c['n']}]: {c['snippet'][:300]}"
             + ("…" if len(c["snippet"]) > 300 else "")
             for c in citations[:3]
         )
@@ -644,10 +688,17 @@ class AutomatedScanner:
         previous_post = await self._fetch_previous_post(topic_id)
 
         enabled_engines = await self.registry.enabled()
+        # docs/32 §7 freshness fix: the scan used to fan out WITHOUT a
+        # freshness window, so relevance-only ranking surfaced evergreen
+        # stories from previous years ("Hội thảo đầu tư 2024" ranked #1 in the
+        # 21/11/2026 macro digest). Every scan query now carries a hard
+        # freshness window; adapters that support it (google_news `when:`,
+        # bing_news qft, gdelt time window, ddg df, fin_rss date filter) honor
+        # it, others ignore it gracefully.
+        freshness_days = max(1, int(getattr(get_settings(), "scan_freshness_days", 7)))
+        allowed_categories = {topic.category, "news", "general", *topic.extra_categories}
         matching_adapters = [
-            (cfg, adapter)
-            for cfg, adapter in enabled_engines
-            if cfg.category in (topic.category, "news", "general")
+            (cfg, adapter) for cfg, adapter in enabled_engines if cfg.category in allowed_categories
         ]
         if not matching_adapters:
             matching_adapters = enabled_engines[:3]
@@ -657,6 +708,7 @@ class AutomatedScanner:
                 return await c_adapter.search(
                     topic.query,
                     max_results=5,
+                    freshness_days=freshness_days,
                     timeout_s=c_cfg.timeout_ms / 1000,
                 )
             except Exception as exc:
@@ -668,7 +720,7 @@ class AutomatedScanner:
                 )
                 return None  # sentinel: engine failed (kept out of results)
 
-        tasks = [_query_engine(cfg, adapter) for cfg, adapter in matching_adapters[:3]]
+        tasks = [_query_engine(cfg, adapter) for cfg, adapter in matching_adapters[:6]]
         gathered = await asyncio.gather(*tasks, return_exceptions=True)
         collected_results: list[Any] = []
         for res in gathered:

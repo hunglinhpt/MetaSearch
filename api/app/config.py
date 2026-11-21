@@ -251,6 +251,14 @@ class Settings(BaseSettings):
     openweather_api_key: str = ""  # Weather data
     coingecko_api_key: str = ""  # Cryptocurrency data (optional quota upgrade)
     scrapecreators_api_key: str = ""  # For TikTok, Instagram, Threads
+    # docs/32 §7 scanner freshness: every scan query carries a hard freshness
+    # window (the 2026-11-21 macro digest surfaced a 2024 story ranked #1
+    # because relevance-only ranking favors evergreen content).
+    scan_freshness_days: int = 7
+    # Results with a real published_at older than this are dropped from the
+    # digest citations when enough fresh items remain (never fabricated —
+    # only real source dates are considered).
+    scan_max_result_age_days: int = 365
     # docs/32 external data integrations (Mở Rộng group)
     twelvedata_api_key: str = ""  # Global quotes/OHLCV upgrade
     fmp_api_key: str = ""  # Financial statements (FMP)

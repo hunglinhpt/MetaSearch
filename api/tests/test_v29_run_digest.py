@@ -257,7 +257,7 @@ class _FakeAdapter:
         self.fail = fail
         self.calls = 0
 
-    async def search(self, query, max_results=5, timeout_s=1.0):
+    async def search(self, query, max_results=5, timeout_s=1.0, freshness_days=None, **kw):
         self.calls += 1
         if self.fail:
             raise RuntimeError("engine down")

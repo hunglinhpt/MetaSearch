@@ -707,7 +707,10 @@ def _is_local_crawl4ai(crawl4ai_url: str) -> bool:
         host = urlsplit(crawl4ai_url).hostname or ""
     except ValueError:
         return False
-    return host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+    # Comparison against hostname literals (never a bind call) — B104 heuristic
+    # flags the string set, same as the local-inference allowlist in
+    # llm/endpoint_policy.py.
+    return host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}  # nosec B104
 
 
 def _crawl4ai_markdown(payload: dict[str, Any]) -> tuple[str, str]:

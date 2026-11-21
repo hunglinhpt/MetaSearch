@@ -1,5 +1,15 @@
 # Changelog
 
+## [4.3.1] - 2026-11-21
+
+### Fixed — Scanner freshness gate: bản tin chuyên sâu không còn dẫn tin cũ năm trước (báo cáo "dữ liệu cuối 2024")
+
+- **Không phải ảo giác — reproduced bằng chứng thật**: scan topic "Kinh Doanh & Kinh Tế Vĩ Mô" ngày 21/11/2026 dẫn TOP 1 bằng tin thật "Hội thảo đầu tư **2024**" (24h.com.vn); 10 nhắc "2024" vs 9 nhắc "2026" trong cùng bản tin. Synthesizer là extractive thuần (`docs/29 P0-1`) — tin cũ đến từ kết quả search thật, vì scanner fan-out **KHÔNG truyền `freshness_days`** nên relevance-only ranking ưu tiên nội dung "evergreen" hàng năm.
+- **Freshness bắt buộc (`app/orchestration/scheduler.py`, `config.py`)**: mọi scan query giờ truyền `freshness_days=scan_freshness_days` (mặc định 7) — google_news (`when:`), bing_news (qft interval), gdelt (time window), ddg (`df`), fin_rss (date filter) đều đã hỗ trợ sẵn; adapters khác bỏ qua param một cách graceful. Config mới: `scan_freshness_days`, `scan_max_result_age_days` (365).
+- **Recency gate trong `synthesize_blog_content`**: citations sắp **mới nhất trước** theo `published_at` THẬT của nguồn; tin có ngày cũ hơn ngưỡng 365 ngày chỉ lấp slot còn lại khi tin mới khan hiếm — và **mọi dòng citation hiển thị ngày nguồn** (`*(ngày 18/11/2026)*` / `*(ngày không rõ)*`) — không bao giờ bịa ngày.
+- **Category matching mở rộng**: `ScanTopic.extra_categories` — macro_business thêm `financial`, viet_finance thêm `news` (tin vĩ mô giờ fan-out cả vn_wire/fin_rss/yahoo_finance); fan-out tăng `[:3]` → `[:6]` engines.
+- **Fix test debt**: fake adapters trong `test_v29_run_digest.py` chấp nhận `freshness_days` kwarg (hợp đồng adapter chuẩn có sẵn từ docs/19). 5 test mới (`tests/test_scan_freshness.py`): freshness truyền xuống, newest-first, drop stale khi đủ tin mới, giữ stale + nhãn khi khan hiếm, undated giữ không bịa ngày.
+
 ## [4.3.0] - 2026-11-21
 
 ### Added — Lite profile: full extraction pipeline + global search expansion (`docs/32` §6)

@@ -114,3 +114,30 @@ Sau thay đổi: Lite fan-out 29 engines enabled (25 cũ + bing_web +
 polymarket/stocktwits/careers; uspto* bật khi có key), 35 configs —
 searxng/tavily/serper/brave vẫn disabled đúng vai trò. Toàn bộ nhóm mới
 keyless trừ uspto (free key tùy chọn).
+
+---
+
+## 7. Scanner freshness gate (2026-11-21 — bug "bản tin ra dữ liệu cuối 2024")
+
+**Bằng chứng reproduced**: scan `macro_business` ngày 21/11/2026 trả bản tin
+dẫn TOP 1 bằng tin thật "Hội thảo đầu tư 2024" (24h.com.vn). Đồng hồ hệ thống
+đúng (2026-11-21 ICT). Synthesizer là extractive thuần — tin cũ đến từ kết
+quả search thật vì scanner fan-out KHÔNG truyền `freshness_days` và
+relevance-only ranking ưu tiên nội dung evergreen hàng năm.
+
+**Sửa**:
+
+1. **Freshness bắt buộc**: mọi scan query truyền `freshness_days`
+   (`scan_freshness_days`, mặc định 7) — 5 adapters chính hỗ trợ sẵn:
+   google_news `when:{n}d` (v2.2.0), bing_news `qft interval`, gdelt time
+   window, ddg `df`, fin_rss date filter; adapters khác bỏ qua graceful.
+2. **Recency gate trong synthesizer**: citations sort newest-first theo
+   `published_at` THẬT; tin cũ hơn `scan_max_result_age_days` (365) chỉ lấp
+   slot khi tin mới khan hiếm; **mọi citation hiển thị ngày nguồn** —
+   `*(ngày 18/11/2026)*` / `*(ngày không rõ)*`. Không bao giờ bịa ngày.
+3. **Category matching**: `ScanTopic.extra_categories` — macro_business thêm
+   `financial`, viet_finance thêm `news` (fan-out cả vn_wire/fin_rss/yahoo_finance);
+   engines/matched tăng 3 → 6.
+4. **Contract note**: fake/test adapters phải chấp nhận `freshness_days` kwarg
+   (chuẩn `SearchAdapter.search` docs/19) — hợp đồng có sẵn, chỉ là scanner
+   chưa từng dùng tới trước bug này.

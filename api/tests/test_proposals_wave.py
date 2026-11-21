@@ -297,7 +297,12 @@ async def test_scheduler_guarded_executive_synthesis(
 
     class _FakeAdapter:
         async def search(
-            self, _q: str, max_results: int = 5, timeout_s: float = 1.0
+            self,
+            _q: str,
+            max_results: int = 5,
+            timeout_s: float = 1.0,
+            freshness_days: int | None = None,
+            **_kw: Any,
         ) -> list[RawResult]:
             return [
                 RawResult(
