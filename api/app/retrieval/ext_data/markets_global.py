@@ -183,8 +183,12 @@ async def _fetch_yahoo_quote(
 ) -> dict[str, Any] | None:
     try:
         http_cli = client or get_http_client("search")
+        # Yahoo ticker format uses DASHES for share classes (BRK-B), while
+        # AV/FMP use dots (BRK.B) — convert per-source, keep the canonical
+        # dotted form in our output (verified live 2026-11-21: BRK.B → empty
+        # on Yahoo until converted).
         resp = await http_cli.get(
-            _YAHOO_CHART_URL.format(symbol=sym),
+            _YAHOO_CHART_URL.format(symbol=sym.replace(".", "-")),
             params={"interval": "1d", "range": "5d"},
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=timeout_s,

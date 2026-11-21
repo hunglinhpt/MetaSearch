@@ -180,13 +180,16 @@ async def fetch_crypto_global(
 
         def _pct(dotted: str) -> float | None:
             # market_cap_percentage is a nested dict — walk the dotted path.
+            # CoinGecko /global already reports PERCENT values (57.76 = 57.76%);
+            # verified live 2026-11-21 — do NOT multiply by 100 (unit test was
+            # wrong about this; the live smoke caught it).
             raw: Any = node
             for part in dotted.split("."):
                 if not isinstance(raw, dict):
                     return None
                 raw = raw.get(part)
             try:
-                return round(float(raw) * 100, 2) if raw is not None else None
+                return round(float(raw), 2) if raw is not None else None
             except (TypeError, ValueError):
                 return None
 

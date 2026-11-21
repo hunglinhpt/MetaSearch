@@ -111,7 +111,7 @@ async def test_crypto_global():
                     "total_market_cap": {"usd": 2.4e12},
                     "total_volume": {"usd": 8.0e10},
                     "market_cap_percentage": {"btc": 52.5, "eth": 17.1},
-                    "market_cap_change_percentage_24h_usd": -0.031,
+                    "market_cap_change_percentage_24h_usd": -3.1,
                 }
             },
         )
@@ -121,7 +121,10 @@ async def test_crypto_global():
     cg._global_cache.clear()
     data = await fetch_crypto_global(client=_client(handler))
     assert data is not None
-    assert data["btc_dominance_pct"] == 5250.0  # fraction → percent conversion
+    # CoinGecko /global reports PERCENT values already — passed through as-is
+    # (live smoke 2026-11-21: 57.76% BTC dominance, not a fraction).
+    assert data["btc_dominance_pct"] == 52.5
+    assert data["market_cap_change_24h_pct"] == -3.1
     assert data["active_cryptocurrencies"] == 17000
 
 
