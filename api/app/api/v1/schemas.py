@@ -1263,3 +1263,203 @@ class MarketEventsResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     partial: bool = False
     latency_ms: int = 0
+
+
+# --- External Data Integrations (docs/32) ----------------------------------------
+
+
+class ExtCoinPriceOut(BaseModel):
+    id: str = Field(max_length=64)
+    price: float | None = Field(default=None, ge=0, le=1e15)
+    change_24h_pct: float | None = Field(default=None, ge=-1e6, le=1e6)
+    volume_24h: float | None = Field(default=None, ge=0, le=1e18)
+    market_cap: float | None = Field(default=None, ge=0, le=1e18)
+    last_updated: int | None = Field(default=None, ge=0, le=4_102_444_800)
+
+
+class ExtCryptoResponse(BaseModel):
+    """GET /v1/market/crypto — CoinGecko simple prices (keyless; optional
+    registered key upgrades quota)."""
+
+    vs_currency: str = Field(max_length=8)
+    coins: list[ExtCoinPriceOut] = Field(default_factory=list, max_length=25)
+    source_name: str = Field(max_length=80)
+    source_url: str = Field(max_length=200)
+    cached: bool = False
+
+
+class ExtCryptoGlobalResponse(BaseModel):
+    """GET /v1/market/crypto/global — CoinGecko global market stats."""
+
+    active_cryptocurrencies: int | None = Field(default=None, ge=0, le=1e7)
+    markets: int | None = Field(default=None, ge=0, le=1e5)
+    total_market_cap_usd: float | None = Field(default=None, ge=0, le=1e18)
+    total_volume_24h_usd: float | None = Field(default=None, ge=0, le=1e18)
+    btc_dominance_pct: float | None = Field(default=None, ge=0, le=100)
+    eth_dominance_pct: float | None = Field(default=None, ge=0, le=100)
+    market_cap_change_24h_pct: float | None = Field(default=None, ge=-100, le=100)
+    source_name: str = Field(max_length=80)
+    source_url: str = Field(max_length=200)
+
+
+class ExtFxRateOut(BaseModel):
+    currency: str = Field(max_length=3)
+    rate: float = Field(gt=0, le=1e9)
+    source_name: str = Field(max_length=60)
+    source_url: str = Field(max_length=200)
+    as_of: str = Field(max_length=40)
+
+
+class ExtFxResponse(BaseModel):
+    """GET /v1/market/fx — merged Frankfurter (ECB) + ExchangeRate-API rates
+    with per-currency provenance (ECB print wins ties)."""
+
+    base: str = Field(max_length=3)
+    rates: list[ExtFxRateOut] = Field(default_factory=list, max_length=170)
+    sources_used: list[str] = Field(default_factory=list, max_length=4)
+    requested_symbols: list[str] = Field(default_factory=list, max_length=20)
+    as_of: str = Field(default="", max_length=40)
+    cached: bool = False
+
+
+class ExtWeatherCurrentOut(BaseModel):
+    time: str | None = Field(default=None, max_length=40)
+    temperature_c: float | None = Field(default=None, ge=-100, le=100)
+    humidity_pct: float | None = Field(default=None, ge=0, le=100)
+    wind_speed_kmh: float | None = Field(default=None, ge=0, le=500)
+    wind_speed_mps: float | None = Field(default=None, ge=0, le=150)
+    condition: str | None = Field(default=None, max_length=80)
+
+
+class ExtWeatherDayOut(BaseModel):
+    date: str = Field(max_length=40)
+    temp_max_c: float | None = Field(default=None, ge=-100, le=100)
+    temp_min_c: float | None = Field(default=None, ge=-100, le=100)
+    precipitation_mm: float | None = Field(default=None, ge=0, le=1e4)
+    condition: str | None = Field(default=None, max_length=80)
+
+
+class ExtWeatherResponse(BaseModel):
+    """GET /v1/weather — Open-Meteo keyless forecast (+ OpenWeatherMap
+    current block when OPENWEATHER_API_KEY is configured)."""
+
+    location: str | dict[str, Any] | None = None
+    open_meteo: dict[str, Any] | None = None
+    openweather_current: dict[str, Any] | None = None
+    sources_used: list[str] = Field(default_factory=list, max_length=4)
+    cached: bool = False
+
+
+class ExtNewsItemOut(BaseModel):
+    title: str = Field(max_length=200)
+    url: str = Field(max_length=500)
+    source: str = Field(default="", max_length=80)
+    published_at: str = Field(default="", max_length=32)
+    description: str = Field(default="", max_length=300)
+    image_url: str | None = Field(default=None, max_length=500)
+
+
+class ExtNewsResponse(BaseModel):
+    """GET /v1/news/external — NewsAPI headlines (key-gated: 503 without
+    NEWSAPI_KEY; MetaSearch's google_news engine stays the keyless path)."""
+
+    endpoint: str = Field(max_length=32)
+    items: list[ExtNewsItemOut] = Field(default_factory=list, max_length=50)
+    total_results: int = Field(default=0, ge=0, le=1000)
+    source_name: str = Field(max_length=80)
+    source_url: str = Field(max_length=200)
+    cached: bool = False
+
+
+class ExtQuoteBlockOut(BaseModel):
+    """One source's quote for one symbol — never blended into a single 'truth'."""
+
+    source_name: str = Field(max_length=60)
+    source_url: str = Field(max_length=200)
+    price: float | None = Field(default=None, ge=0, le=1e12)
+    previous_close: float | None = Field(default=None, ge=0, le=1e12)
+    change_pct: float | None = Field(default=None, ge=-1e5, le=1e5)
+    volume: float | None = Field(default=None, ge=0, le=1e15)
+    currency: str | None = Field(default=None, max_length=8)
+    exchange: str | None = Field(default=None, max_length=40)
+    market_time: int | None = Field(default=None, ge=0, le=4_102_444_800)
+    latest_trading_day: str | None = Field(default=None, max_length=16)
+
+
+class ExtSymbolQuotesOut(BaseModel):
+    symbol: str = Field(max_length=15)
+    quotes: list[ExtQuoteBlockOut] = Field(default_factory=list, max_length=4)
+
+
+class ExtGlobalQuoteResponse(BaseModel):
+    """GET /v1/market/global-quote — Yahoo keyless (+ Twelve Data / Alpha
+    Vantage blocks when their keys are configured)."""
+
+    symbols: list[ExtSymbolQuotesOut] = Field(default_factory=list, max_length=5)
+    sources_used: list[str] = Field(default_factory=list, max_length=4)
+    cached: bool = False
+
+
+class ExtFundamentalsPeriodOut(BaseModel):
+    date: str = Field(max_length=32)
+    fiscal_period: str = Field(max_length=16)
+    currency: str = Field(max_length=8)
+    revenue: float | None = Field(default=None, ge=0, le=1e15)
+    net_income: float | None = Field(default=None, ge=-1e15, le=1e15)
+    gross_profit: float | None = Field(default=None, ge=-1e15, le=1e15)
+    operating_income: float | None = Field(default=None, ge=-1e15, le=1e15)
+    total_assets: float | None = Field(default=None, ge=0, le=1e15)
+    total_liabilities: float | None = Field(default=None, ge=0, le=1e15)
+    total_equity: float | None = Field(default=None, ge=-1e15, le=1e15)
+    operating_cash_flow: float | None = Field(default=None, ge=-1e15, le=1e15)
+    free_cash_flow: float | None = Field(default=None, ge=-1e15, le=1e15)
+
+
+class ExtFundamentalsResponse(BaseModel):
+    """GET /v1/market/fundamentals — FMP statements (key-gated: 503 without
+    FMP_API_KEY)."""
+
+    symbol: str = Field(max_length=15)
+    statement: str = Field(max_length=32)
+    periods: list[ExtFundamentalsPeriodOut] = Field(default_factory=list, max_length=4)
+    source_name: str = Field(max_length=80)
+    source_url: str = Field(max_length=200)
+    cached: bool = False
+
+
+class ExtIpWhoOut(BaseModel):
+    country: str | None = Field(default=None, max_length=80)
+    country_code: str | None = Field(default=None, max_length=8)
+    region: str | None = Field(default=None, max_length=80)
+    city: str | None = Field(default=None, max_length=80)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    timezone: str | None = Field(default=None, max_length=64)
+    asn: str | None = Field(default=None, max_length=16)
+    org: str | None = Field(default=None, max_length=120)
+    isp: str | None = Field(default=None, max_length=120)
+    flag_emoji: str | None = Field(default=None, max_length=8)
+    source_name: str = Field(max_length=60)
+    source_url: str = Field(max_length=200)
+
+
+class ExtIpInfoOut(BaseModel):
+    city: str | None = Field(default=None, max_length=80)
+    region: str | None = Field(default=None, max_length=80)
+    country: str | None = Field(default=None, max_length=8)
+    loc: str | None = Field(default=None, max_length=40)
+    org: str | None = Field(default=None, max_length=120)
+    timezone: str | None = Field(default=None, max_length=64)
+    source_name: str = Field(max_length=60)
+    source_url: str = Field(max_length=200)
+
+
+class ExtIpGeoResponse(BaseModel):
+    """GET /v1/net/ipgeo — ipwho.is keyless (+ IPinfo block when
+    IPINFO_TOKEN is configured)."""
+
+    ip: str = Field(max_length=45)
+    ipwho: ExtIpWhoOut | None = None
+    ipinfo: ExtIpInfoOut | None = None
+    sources_used: list[str] = Field(default_factory=list, max_length=4)
+    cached: bool = False

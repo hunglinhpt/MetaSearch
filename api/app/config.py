@@ -249,8 +249,13 @@ class Settings(BaseSettings):
     alpha_vantage_api_key: str = ""  # Financial market data
     newsapi_key: str = ""  # Global news aggregator
     openweather_api_key: str = ""  # Weather data
-    coingecko_api_key: str = ""  # Cryptocurrency data (optional)
+    coingecko_api_key: str = ""  # Cryptocurrency data (optional quota upgrade)
     scrapecreators_api_key: str = ""  # For TikTok, Instagram, Threads
+    # docs/32 external data integrations (Mở Rộng group)
+    twelvedata_api_key: str = ""  # Global quotes/OHLCV upgrade
+    fmp_api_key: str = ""  # Financial statements (FMP)
+    ipinfo_token: str = ""  # IP geolocation upgrade (ipwho.is stays keyless)
+    exchangerate_api_key: str = ""  # ER-API keyed host upgrade (open host stays keyless)
 
     # --- quality knobs (hardware-aware, see ADR-008) ----------------------
     # docs/20 P0-2: "bge" = BAAI/bge-reranker-v2-m3 cross-encoder, local ONNX

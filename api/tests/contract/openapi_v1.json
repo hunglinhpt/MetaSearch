@@ -1662,6 +1662,1137 @@
         "title": "EnginePatchRequest",
         "type": "object"
       },
+      "ExtCoinPriceOut": {
+        "properties": {
+          "change_24h_pct": {
+            "anyOf": [
+              {
+                "maximum": 1000000.0,
+                "minimum": -1000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change 24H Pct"
+          },
+          "id": {
+            "maxLength": 64,
+            "title": "Id",
+            "type": "string"
+          },
+          "last_updated": {
+            "anyOf": [
+              {
+                "maximum": 4102444800.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Updated"
+          },
+          "market_cap": {
+            "anyOf": [
+              {
+                "maximum": 1e+18,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Cap"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "volume_24h": {
+            "anyOf": [
+              {
+                "maximum": 1e+18,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume 24H"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ExtCoinPriceOut",
+        "type": "object"
+      },
+      "ExtCryptoGlobalResponse": {
+        "description": "GET /v1/market/crypto/global — CoinGecko global market stats.",
+        "properties": {
+          "active_cryptocurrencies": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Cryptocurrencies"
+          },
+          "btc_dominance_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Btc Dominance Pct"
+          },
+          "eth_dominance_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eth Dominance Pct"
+          },
+          "market_cap_change_24h_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": -100.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Cap Change 24H Pct"
+          },
+          "markets": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Markets"
+          },
+          "source_name": {
+            "maxLength": 80,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "source_url": {
+            "maxLength": 200,
+            "title": "Source Url",
+            "type": "string"
+          },
+          "total_market_cap_usd": {
+            "anyOf": [
+              {
+                "maximum": 1e+18,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Market Cap Usd"
+          },
+          "total_volume_24h_usd": {
+            "anyOf": [
+              {
+                "maximum": 1e+18,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Volume 24H Usd"
+          }
+        },
+        "required": [
+          "source_name",
+          "source_url"
+        ],
+        "title": "ExtCryptoGlobalResponse",
+        "type": "object"
+      },
+      "ExtCryptoResponse": {
+        "description": "GET /v1/market/crypto — CoinGecko simple prices (keyless; optional\nregistered key upgrades quota).",
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "coins": {
+            "items": {
+              "$ref": "#/components/schemas/ExtCoinPriceOut"
+            },
+            "maxItems": 25,
+            "title": "Coins",
+            "type": "array"
+          },
+          "source_name": {
+            "maxLength": 80,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "source_url": {
+            "maxLength": 200,
+            "title": "Source Url",
+            "type": "string"
+          },
+          "vs_currency": {
+            "maxLength": 8,
+            "title": "Vs Currency",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vs_currency",
+          "source_name",
+          "source_url"
+        ],
+        "title": "ExtCryptoResponse",
+        "type": "object"
+      },
+      "ExtFundamentalsPeriodOut": {
+        "properties": {
+          "currency": {
+            "maxLength": 8,
+            "title": "Currency",
+            "type": "string"
+          },
+          "date": {
+            "maxLength": 32,
+            "title": "Date",
+            "type": "string"
+          },
+          "fiscal_period": {
+            "maxLength": 16,
+            "title": "Fiscal Period",
+            "type": "string"
+          },
+          "free_cash_flow": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": -1000000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Cash Flow"
+          },
+          "gross_profit": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": -1000000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Profit"
+          },
+          "net_income": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": -1000000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Income"
+          },
+          "operating_cash_flow": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": -1000000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operating Cash Flow"
+          },
+          "operating_income": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": -1000000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operating Income"
+          },
+          "revenue": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revenue"
+          },
+          "total_assets": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Assets"
+          },
+          "total_equity": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": -1000000000000000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Equity"
+          },
+          "total_liabilities": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Liabilities"
+          }
+        },
+        "required": [
+          "date",
+          "fiscal_period",
+          "currency"
+        ],
+        "title": "ExtFundamentalsPeriodOut",
+        "type": "object"
+      },
+      "ExtFundamentalsResponse": {
+        "description": "GET /v1/market/fundamentals — FMP statements (key-gated: 503 without\nFMP_API_KEY).",
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/ExtFundamentalsPeriodOut"
+            },
+            "maxItems": 4,
+            "title": "Periods",
+            "type": "array"
+          },
+          "source_name": {
+            "maxLength": 80,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "source_url": {
+            "maxLength": 200,
+            "title": "Source Url",
+            "type": "string"
+          },
+          "statement": {
+            "maxLength": 32,
+            "title": "Statement",
+            "type": "string"
+          },
+          "symbol": {
+            "maxLength": 15,
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "statement",
+          "source_name",
+          "source_url"
+        ],
+        "title": "ExtFundamentalsResponse",
+        "type": "object"
+      },
+      "ExtFxRateOut": {
+        "properties": {
+          "as_of": {
+            "maxLength": 40,
+            "title": "As Of",
+            "type": "string"
+          },
+          "currency": {
+            "maxLength": 3,
+            "title": "Currency",
+            "type": "string"
+          },
+          "rate": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1000000000.0,
+            "title": "Rate",
+            "type": "number"
+          },
+          "source_name": {
+            "maxLength": 60,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "source_url": {
+            "maxLength": 200,
+            "title": "Source Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "currency",
+          "rate",
+          "source_name",
+          "source_url",
+          "as_of"
+        ],
+        "title": "ExtFxRateOut",
+        "type": "object"
+      },
+      "ExtFxResponse": {
+        "description": "GET /v1/market/fx — merged Frankfurter (ECB) + ExchangeRate-API rates\nwith per-currency provenance (ECB print wins ties).",
+        "properties": {
+          "as_of": {
+            "default": "",
+            "maxLength": 40,
+            "title": "As Of",
+            "type": "string"
+          },
+          "base": {
+            "maxLength": 3,
+            "title": "Base",
+            "type": "string"
+          },
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "rates": {
+            "items": {
+              "$ref": "#/components/schemas/ExtFxRateOut"
+            },
+            "maxItems": 170,
+            "title": "Rates",
+            "type": "array"
+          },
+          "requested_symbols": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Requested Symbols",
+            "type": "array"
+          },
+          "sources_used": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Sources Used",
+            "type": "array"
+          }
+        },
+        "required": [
+          "base"
+        ],
+        "title": "ExtFxResponse",
+        "type": "object"
+      },
+      "ExtGlobalQuoteResponse": {
+        "description": "GET /v1/market/global-quote — Yahoo keyless (+ Twelve Data / Alpha\nVantage blocks when their keys are configured).",
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "sources_used": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Sources Used",
+            "type": "array"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/ExtSymbolQuotesOut"
+            },
+            "maxItems": 5,
+            "title": "Symbols",
+            "type": "array"
+          }
+        },
+        "title": "ExtGlobalQuoteResponse",
+        "type": "object"
+      },
+      "ExtIpGeoResponse": {
+        "description": "GET /v1/net/ipgeo — ipwho.is keyless (+ IPinfo block when\nIPINFO_TOKEN is configured).",
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "ip": {
+            "maxLength": 45,
+            "title": "Ip",
+            "type": "string"
+          },
+          "ipinfo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtIpInfoOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ipwho": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtIpWhoOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sources_used": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Sources Used",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ip"
+        ],
+        "title": "ExtIpGeoResponse",
+        "type": "object"
+      },
+      "ExtIpInfoOut": {
+        "properties": {
+          "city": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "maxLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "loc": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loc"
+          },
+          "org": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "source_name": {
+            "maxLength": 60,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "source_url": {
+            "maxLength": 200,
+            "title": "Source Url",
+            "type": "string"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "required": [
+          "source_name",
+          "source_url"
+        ],
+        "title": "ExtIpInfoOut",
+        "type": "object"
+      },
+      "ExtIpWhoOut": {
+        "properties": {
+          "asn": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asn"
+          },
+          "city": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "country_code": {
+            "anyOf": [
+              {
+                "maxLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country Code"
+          },
+          "flag_emoji": {
+            "anyOf": [
+              {
+                "maxLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flag Emoji"
+          },
+          "isp": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isp"
+          },
+          "latitude": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": -90.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latitude"
+          },
+          "longitude": {
+            "anyOf": [
+              {
+                "maximum": 180.0,
+                "minimum": -180.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Longitude"
+          },
+          "org": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "source_name": {
+            "maxLength": 60,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "source_url": {
+            "maxLength": 200,
+            "title": "Source Url",
+            "type": "string"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          }
+        },
+        "required": [
+          "source_name",
+          "source_url"
+        ],
+        "title": "ExtIpWhoOut",
+        "type": "object"
+      },
+      "ExtNewsItemOut": {
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Description",
+            "type": "string"
+          },
+          "image_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "published_at": {
+            "default": "",
+            "maxLength": 32,
+            "title": "Published At",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "maxLength": 80,
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 500,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "url"
+        ],
+        "title": "ExtNewsItemOut",
+        "type": "object"
+      },
+      "ExtNewsResponse": {
+        "description": "GET /v1/news/external — NewsAPI headlines (key-gated: 503 without\nNEWSAPI_KEY; MetaSearch's google_news engine stays the keyless path).",
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "endpoint": {
+            "maxLength": 32,
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExtNewsItemOut"
+            },
+            "maxItems": 50,
+            "title": "Items",
+            "type": "array"
+          },
+          "source_name": {
+            "maxLength": 80,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "source_url": {
+            "maxLength": 200,
+            "title": "Source Url",
+            "type": "string"
+          },
+          "total_results": {
+            "default": 0,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Total Results",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "endpoint",
+          "source_name",
+          "source_url"
+        ],
+        "title": "ExtNewsResponse",
+        "type": "object"
+      },
+      "ExtQuoteBlockOut": {
+        "description": "One source's quote for one symbol — never blended into a single 'truth'.",
+        "properties": {
+          "change_pct": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": -100000.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Pct"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "maxLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "exchange": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exchange"
+          },
+          "latest_trading_day": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Trading Day"
+          },
+          "market_time": {
+            "anyOf": [
+              {
+                "maximum": 4102444800.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Time"
+          },
+          "previous_close": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Close"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
+          "source_name": {
+            "maxLength": 60,
+            "title": "Source Name",
+            "type": "string"
+          },
+          "source_url": {
+            "maxLength": 200,
+            "title": "Source Url",
+            "type": "string"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "maximum": 1000000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          }
+        },
+        "required": [
+          "source_name",
+          "source_url"
+        ],
+        "title": "ExtQuoteBlockOut",
+        "type": "object"
+      },
+      "ExtSymbolQuotesOut": {
+        "properties": {
+          "quotes": {
+            "items": {
+              "$ref": "#/components/schemas/ExtQuoteBlockOut"
+            },
+            "maxItems": 4,
+            "title": "Quotes",
+            "type": "array"
+          },
+          "symbol": {
+            "maxLength": 15,
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "title": "ExtSymbolQuotesOut",
+        "type": "object"
+      },
+      "ExtWeatherResponse": {
+        "description": "GET /v1/weather — Open-Meteo keyless forecast (+ OpenWeatherMap\ncurrent block when OPENWEATHER_API_KEY is configured).",
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "open_meteo": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Meteo"
+          },
+          "openweather_current": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openweather Current"
+          },
+          "sources_used": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Sources Used",
+            "type": "array"
+          }
+        },
+        "title": "ExtWeatherResponse",
+        "type": "object"
+      },
       "FaCompareRequest": {
         "description": "POST /v1/fa/compare — cross-source fundamentals for 1..N symbols.",
         "properties": {
@@ -8532,6 +9663,86 @@
         ]
       }
     },
+    "/v1/market/crypto": {
+      "get": {
+        "description": "Crypto spot prices + 24h change/volume/market-cap from CoinGecko\n(keyless; COINGECKO_API_KEY upgrades quota). Comma-separated ids, e.g.\n`bitcoin,ethereum,solana`.",
+        "operationId": "market_crypto_v1_market_crypto_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ids",
+            "required": true,
+            "schema": {
+              "maxLength": 400,
+              "minLength": 1,
+              "title": "Ids",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "vs_currency",
+            "required": false,
+            "schema": {
+              "default": "usd",
+              "maxLength": 8,
+              "minLength": 2,
+              "title": "Vs Currency",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtCryptoResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Market Crypto",
+        "tags": [
+          "v1",
+          "ext-data"
+        ]
+      }
+    },
+    "/v1/market/crypto/global": {
+      "get": {
+        "operationId": "market_crypto_global_v1_market_crypto_global_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtCryptoGlobalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Market Crypto Global",
+        "tags": [
+          "v1",
+          "ext-data"
+        ]
+      }
+    },
     "/v1/market/events": {
       "post": {
         "description": "Structured corporate actions, ex-dividend calendar, risk notices & ratio proof.",
@@ -8572,6 +9783,167 @@
         "tags": [
           "v1",
           "market"
+        ]
+      }
+    },
+    "/v1/market/fundamentals": {
+      "get": {
+        "description": "Financial statements via Financial Modeling Prep (key-gated: 503\nwithout FMP_API_KEY). Up to 4 recent periods.",
+        "operationId": "market_fundamentals_v1_market_fundamentals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "symbol",
+            "required": true,
+            "schema": {
+              "maxLength": 15,
+              "minLength": 1,
+              "title": "Symbol",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "statement",
+            "required": false,
+            "schema": {
+              "default": "income-statement",
+              "pattern": "^(income-statement|balance-sheet-statement|cash-flow-statement)$",
+              "title": "Statement",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtFundamentalsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Market Fundamentals",
+        "tags": [
+          "v1",
+          "ext-data"
+        ]
+      }
+    },
+    "/v1/market/fx": {
+      "get": {
+        "description": "FX rates for `base` (e.g. USD) merged from Frankfurter (ECB, official\nprints) + ExchangeRate-API open endpoint — both keyless; per-currency\nprovenance included. `symbols` = comma-separated codes (VND,EUR,...).",
+        "operationId": "market_fx_v1_market_fx_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "base",
+            "required": false,
+            "schema": {
+              "default": "USD",
+              "maxLength": 3,
+              "minLength": 3,
+              "title": "Base",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "symbols",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 120,
+              "title": "Symbols",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtFxResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Market Fx",
+        "tags": [
+          "v1",
+          "ext-data"
+        ]
+      }
+    },
+    "/v1/market/global-quote": {
+      "get": {
+        "description": "Global ticker quotes (US/international): Yahoo Finance keyless\nprimary; TWELVEDATA_API_KEY / ALPHA_VANTAGE_API_KEY add per-source\nblocks. `symbols` = comma-separated (AAPL,MSFT,BRK.B), max 5.",
+        "operationId": "market_global_quote_v1_market_global_quote_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "symbols",
+            "required": true,
+            "schema": {
+              "maxLength": 120,
+              "minLength": 1,
+              "title": "Symbols",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtGlobalQuoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Market Global Quote",
+        "tags": [
+          "v1",
+          "ext-data"
         ]
       }
     },
@@ -9162,6 +10534,165 @@
         "summary": "Full service configuration (admin key required)",
         "tags": [
           "v1"
+        ]
+      }
+    },
+    "/v1/net/ipgeo": {
+      "get": {
+        "description": "IP geolocation: ipwho.is keyless; IPINFO_TOKEN adds an IPinfo block.",
+        "operationId": "net_ipgeo_v1_net_ipgeo_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ip",
+            "required": true,
+            "schema": {
+              "maxLength": 45,
+              "minLength": 3,
+              "title": "Ip",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtIpGeoResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Net Ipgeo",
+        "tags": [
+          "v1",
+          "ext-data"
+        ]
+      }
+    },
+    "/v1/news/external": {
+      "get": {
+        "description": "Global news via NewsAPI (top-headlines, or everything matching `q`).\nKey-gated: without NEWSAPI_KEY the endpoint explains the setup (the\nkeyless google_news engine remains available).",
+        "operationId": "news_external_v1_news_external_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2,
+                  "minLength": 2,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 20,
+                  "minLength": 3,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 3,
+              "maximum": 7,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtNewsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "News External",
+        "tags": [
+          "v1",
+          "ext-data"
         ]
       }
     },
@@ -10588,6 +12119,107 @@
         "tags": [
           "v1",
           "watchlist"
+        ]
+      }
+    },
+    "/v1/weather": {
+      "get": {
+        "description": "Weather by city name (geocoded) or lat/lon: Open-Meteo keyless\nforecast; OPENWEATHER_API_KEY adds a current-conditions block.",
+        "operationId": "weather_v1_weather_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 90,
+                  "minimum": -90,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lat"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lon",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 180,
+                  "minimum": -180,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lon"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 3,
+              "maximum": 7,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtWeatherResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Weather",
+        "tags": [
+          "v1",
+          "ext-data"
         ]
       }
     }

@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.2.0] - 2026-11-21
+
+### Added — External Data Integrations, keyless-first (`docs/32`; giai đoạn Tích Hợp API Free Key + nhóm Mở Rộng)
+
+- **Keyless-first design law (`docs/32` §1)**: mọi khả năng hoạt động KHÔNG cần đăng ký qua nguồn public đã probe thật; key free của nhà cung cấp chỉ là nâng cấp tùy chọn. Demo key của nhà cung cấp bị loại (trả dữ liệu mẫu = ngụy tạo). Mỗi khối dữ liệu mang provenance riêng (`source_name`/`source_url`/`as_of`); thiếu key/nguồn chết → 503 + hint hoặc khối rỗng — không bao giờ bịa số.
+- **Package `api/app/retrieval/ext_data/`**: TTL cache bounded (monotonic) + single-flight + key-tag (sha256[:8]) phân biệt biến thể keyless/keyed trong cache mà không lưu secret; mọi fetch qua pool `search` dùng chung, cap 5MB.
+  - **Crypto (`crypto.py`)**: CoinGecko simple prices (24h change/volume/mcap) + global stats; demo key → `x-cg-demo-api-key`, `CG-*` → `x-cg-pro-api-key` (verbatim, đúng hợp đồng CoinGecko).
+  - **FX (`fx.py`)**: fan-out Frankfurter (ECB — thắng hòa) + ExchangeRate-API open (160+ mã, có VND), merge với provenance từng mã; key `EXCHANGERATE_API_KEY` nâng lên host keyed v6.
+  - **Weather (`weather.py`)**: Open-Meteo geocoding + forecast 1..7 ngày với bảng WMO code chuẩn (không bịa mô tả); `OPENWEATHER_API_KEY` thêm khối current OWM.
+  - **News (`news_ext.py`)**: NewsAPI everything/top-headlines — key-gated, thiếu `NEWSAPI_KEY` → 503 kèm hướng dẫn (google_news của MetaSearch là đường keyless). Filter article thiếu title/url.
+  - **Global quotes (`markets_global.py`)**: Yahoo Finance chart API keyless (AAPL probe thật); `TWELVEDATA_API_KEY`/`ALPHA_VANTAGE_API_KEY` thêm khối riêng từng nguồn (không trộn thành "giá thật"); FMP income/balance/cash-flow — key-gated, 4 kỳ gần nhất, bounded fields.
+  - **IP geo (`ipgeo.py`)**: ipwho.is keyless (success flag check) + `IPINFO_TOKEN` thêm khối IPinfo.
+- **8 GET endpoints (`api/app/api/v1/extdata.py`)**: `/v1/market/crypto`, `/v1/market/crypto/global`, `/v1/market/fx`, `/v1/weather`, `/v1/news/external`, `/v1/market/global-quote`, `/v1/market/fundamentals`, `/v1/net/ipgeo` — auth theo `_auth` của `/v1`, W5 bounds đầy đủ (Query + schema), GET-only.
+- **Config (`config.py`, `deploy/.env.example`)**: `twelvedata_api_key`, `fmp_api_key`, `ipinfo_token`, `exchangerate_api_key` thêm vào nhóm "Free API Keys" (alpha_vantage/newsapi/openweather/coingecko đã có sẵn).
+- **Tests**: 22 unit MockTransport (`tests/test_ext_data.py`) — merge FX, key gating + hint, WMO decode, demo/pro header CoinGecko, dead-upstream fail-open, bounds; OpenAPI snapshot regen; W5 + mypy 189 file xanh. Loại trừ có chứng cứ: Stooq CSV bị chặn ở egress này (probe 2026-11-21) — thay bằng Yahoo keyless.
+
 ## [4.1.1] - 2026-11-19
 
 ### Fixed — Round-2 adversarial audit of the v4.1.0 wave (2 read-only auditors + live-registry probes; details in `docs/31` §5.1)
