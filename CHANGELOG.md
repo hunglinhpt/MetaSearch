@@ -1,5 +1,19 @@
 # Changelog
 
+## [4.4.0] - 2026-11-21
+
+### Added — Expert Briefing Engine: Multi-AI Consensus & Audio-Enabled Intelligence (`docs/33`)
+
+- **Briefing Channel Registry (`api/app/orchestration/briefing_registry.py`)** — single source of truth: 6 core windowed news channels (vĩ mô 72h *Chief Macroeconomist*, tài chính 48h *Senior Equity Strategist & Portfolio Manager*, kinh doanh 72h *M&A Analyst*, công nghệ-AI 72h *Principal AI Architect*, ngân hàng 72h *Banking/Credit/Monetary Policy Specialist*, thế giới 72h *Global Macro & Geopolitical Strategist*) + 5 deep channels (AI Coding 96h, AI Agents & MCP 96h, Chứng Khoán VN 72h *Vietnam Market Strategist*, Phong Thủy 168h *non-superstitious researcher*, Y Học 168h *evidence-based, never diagnosing*). Thêm kênh mới = 1 entry JSON qua `BRIEFING_CHANNELS_FILE` — không đổi code; row lỗi skip an toàn.
+- **Deterministic pre-processing (`briefing_engine.collect_channel_evidence`)**: fan-out ≤6 engines khớp category + `freshness_days=ceil(window/24)`; **STRICT window filter** chỉ nhận bài có `published_at` thật trong cửa sổ (undated/stale bị loại, `dropped_stale` minh bạch); canonical-URL + SimHash event-thread clustering (thread_members giữ mọi URL syndication); authority ranking `tier_score` + đa-engine + decay recency → evidence packet đánh số `[n]` có ngày + URL.
+- **Step A — persona synthesis**: LLM call trusted-only (docs/30 allowlist) với persona + hợp đồng zero-fabrication; cấu trúc 3 phần bắt buộc: *Bức tranh tổng quan* / *Các diễn biến trọng yếu* (What → Why → Tác động bậc hai) / *Góc nhìn chuyên gia & Điểm cần theo dõi*; citation `[n]` vào packet.
+- **Deterministic grounding verifier**: mọi `[n]` out-of-range bị strip; **số liệu trong draft phải tồn tại trong text bằng chứng** — câu vi phạm bị LOẠI trước publish (`stripped_unverified`) — zero-hallucination cưỡng chế bởi hệ thống, không phụ thuộc lời hứa model.
+- **Step B — council review + revision**: Fact-Checker + Domain Skeptic verify `{hallucination_free, depth_ok, issues}`; fail → 1 revision pass → verifier chạy lại; outcome ghi Dream-RSI policy store (`record_endpoint_outcome`) để endpoint selection học tiếp.
+- **Endpoints + audio**: `GET /v1/briefings/channels`, `POST /v1/briefings/{channel_id}` (require_admin, single-flight per channel, W5 cost 8), `GET /v1/briefings/{channel_id}/latest`. Briefings persist BlogPost (tags `ai-briefing`/`council-reviewed`) → Blog Chuyên Sâu + `/v1/digests` + RSS tiêu thụ tự nhiên; đọc audio bằng Web Speech có sẵn + pipeline VoiceStudio chung — không thêm adapter.
+- **Frontend**: `NewsPanel` — nút `🧠 Tổng hợp chuyên gia` + `📄 Bản tin đã lưu` mỗi category (map 1:1 sang registry channels), render qua `AnswerMarkdown` với citation chips; `api.ts` thêm `generateBriefing`/`latestBriefing`/`listBriefingChannels`.
+- **Config**: `BRIEFING_AI_ENABLED` / `BRIEFING_REVIEW_ENABLED` / `BRIEFING_MAX_EVIDENCE` / `BRIEFING_CHANNELS_FILE` (`.env.example` docs). AI tắt → extractive fallback trung thực từ cùng evidence.
+- **Tests**: 12 mới (`tests/test_briefing_engine.py`) — registry/JSON override, STRICT window, thread clustering, grounding verifier, council pass/revision trigger, fallback, endpoint gating; W5 47 + contract regen + full pytest exit 0 + mypy 193 + frontend tsc/110 vitest/build xanh.
+
 ## [4.3.1] - 2026-11-21
 
 ### Fixed — Scanner freshness gate: bản tin chuyên sâu không còn dẫn tin cũ năm trước (báo cáo "dữ liệu cuối 2024")

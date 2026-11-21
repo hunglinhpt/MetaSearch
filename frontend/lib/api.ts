@@ -545,6 +545,85 @@ export async function listSkills(
   return resp.json();
 }
 
+// --- Expert briefings (docs/33) ------------------------------------------------
+
+export type BriefingSource = {
+  n: number;
+  title: string;
+  url: string;
+  snippet?: string;
+  published?: string | null;
+};
+
+export type BriefingDetail = {
+  id: string;
+  slug: string;
+  topic: string;
+  title: string;
+  summary: string | null;
+  content_md: string;
+  tags: string[] | null;
+  sources: BriefingSource[] | null;
+  published_at: string | null;
+};
+
+export type BriefingChannelInfo = {
+  id: string;
+  name: string;
+  kind: string;
+  window_hours: number;
+  persona_name: string;
+  description: string;
+  tags: string[];
+  enabled: boolean;
+  freshness_days: number;
+};
+
+export type BriefingChannelsResponse = {
+  news_channels: BriefingChannelInfo[];
+  deep_channels: BriefingChannelInfo[];
+  ai_enabled: boolean;
+  review_enabled: boolean;
+};
+
+export async function listBriefingChannels(
+  signal?: AbortSignal
+): Promise<BriefingChannelsResponse> {
+  const resp = await fetch(`${API_BASE_URL}/v1/briefings/channels`, { signal });
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function generateBriefing(
+  channelId: string,
+  signal?: AbortSignal
+): Promise<BriefingDetail> {
+  const resp = await fetch(
+    `${API_BASE_URL}/v1/briefings/${encodeURIComponent(channelId)}`,
+    { method: "POST", signal }
+  );
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
+export async function latestBriefing(
+  channelId: string,
+  signal?: AbortSignal
+): Promise<BriefingDetail> {
+  const resp = await fetch(
+    `${API_BASE_URL}/v1/briefings/${encodeURIComponent(channelId)}/latest`,
+    { signal }
+  );
+  if (!resp.ok) {
+    throw await parseError(resp);
+  }
+  return resp.json();
+}
+
 export async function getSkillTelemetry(
   signal?: AbortSignal
 ): Promise<SkillTelemetryResponse> {

@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.core import auth as auth_mod
 from app.core.admission import _TIER_CONFIG
-from app.core.auth import AuthContext, static_route_cost
+from app.core.auth import AuthContext, _route_cost, static_route_cost
 from app.core.errors import ErrorCode, MetaSearchError
 from app.main import create_app
 
@@ -52,7 +52,14 @@ COSTED_POST = {
     "/v1/spaces/{slug}/graph/query": 2,
 }
 # Payload-proportional (computed in _route_cost), so not in the static table.
-DYNAMIC_COST_POST = {"/v1/fa/compare", "/v1/market/events", "/v1/market/alerts"}
+DYNAMIC_COST_POST = {
+    "/v1/fa/compare",
+    "/v1/market/events",
+    "/v1/market/alerts",
+    # docs/33: billed via the "/briefings/" prefix special-case in
+    # _route_cost (mid-path segment — static suffix matching cannot match it).
+    "/v1/briefings/{channel_id}",
+}
 # Reviewed on purpose: cheap (DB/CPU only, one upstream call) or admin-gated.
 UNIT_COST_POST = {
     "/v1/search",
@@ -674,3 +681,19 @@ async def test_concurrent_sqlite_writers_with_slow_commits_do_not_lock(
     finally:
         await session_mod.dispose_engine()
         get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_briefings_route_bills_weight_8():
+    """docs/33 audit P1-3 regression: the briefings cost lives in a PREFIX
+    special-case (mid-path segment defeats static suffix matching) — assert
+    the real billed weight, not just the classification."""
+
+    class _FakeRequest:
+        url = SimpleNamespace(path="/v1/briefings/macro_economy")
+        method = "POST"
+
+        async def body(self):
+            return b"{}"
+
+    assert await _route_cost(_FakeRequest()) == 8

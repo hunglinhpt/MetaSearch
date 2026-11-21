@@ -429,6 +429,11 @@ async def _route_cost(request: Request) -> int:
         # docs/30 Part 2: each symbol fetches OHLCV (VNDIRECT + fallback) —
         # 2 units base + 1 per symbol, capped at 5 (schema cap).
         return 2 + min(await _request_item_count(request), 5)
+    if "/briefings/" in path and method == "POST":
+        # docs/33 audit P1-3: static suffix matching can never match a
+        # mid-path segment — briefings bill via this prefix special-case
+        # (engine fan-out + LLM synthesis + council review).
+        return 8
     if path.endswith("/market/events") and method == "POST":
         return 3 + min(await _request_item_count(request), 10)
     if path.endswith("/watchlist/alerts"):

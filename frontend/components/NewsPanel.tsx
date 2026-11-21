@@ -19,12 +19,16 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import AnswerMarkdown from "./AnswerMarkdown";
+
 import {
   addWatchlist,
   createPersonalPodcast,
   createPodcastBriefing,
   fetchMarketEvents,
   fetchMarketNewsWire,
+  generateBriefing,
+  latestBriefing,
   listWatchlist,
   personalPodcastLatestUrl,
   personalPodcastStatus,
@@ -37,6 +41,9 @@ import {
   search,
   ttsCapabilities,
   watchlistAlerts,
+  type BriefingDetail,
+  type BriefingSource,
+  type Citation,
   type MarketEventsResponse,
   type MarketNewsWireResponse,
   type PodcastBriefingStatus,
@@ -67,6 +74,7 @@ import {
 export type NewsCategory = {
   id: string;
   label: string;
+  channelId: string;
   icon: string;
   query: string;
   engines: string[];
@@ -76,6 +84,7 @@ export type NewsCategory = {
 export const NEWS_CATEGORIES: NewsCategory[] = [
   {
     id: "macro",
+    channelId: "macro_economy",
     label: "Kinh tế vĩ mô",
     icon: "🏛️",
     query: "tin tức kinh tế vĩ mô Việt Nam GDP CPI",
@@ -84,6 +93,7 @@ export const NEWS_CATEGORIES: NewsCategory[] = [
   },
   {
     id: "finance",
+    channelId: "markets_stocks",
     label: "Tài chính – Chứng khoán",
     icon: "📈",
     query: "thị trường chứng khoán Việt Nam VN-Index tin tức",
@@ -92,6 +102,7 @@ export const NEWS_CATEGORIES: NewsCategory[] = [
   },
   {
     id: "business",
+    channelId: "business_corporate",
     label: "Kinh doanh – Doanh nghiệp",
     icon: "🏢",
     query: "tin kinh doanh doanh nghiệp Việt Nam",
@@ -100,6 +111,7 @@ export const NEWS_CATEGORIES: NewsCategory[] = [
   },
   {
     id: "tech",
+    channelId: "tech_ai",
     label: "Công nghệ – AI",
     icon: "💻",
     query: "tin tức công nghệ AI phần mềm",
@@ -108,6 +120,7 @@ export const NEWS_CATEGORIES: NewsCategory[] = [
   },
   {
     id: "banking",
+    channelId: "banking_fx",
     label: "Ngân hàng – Tiền tệ",
     icon: "🏦",
     query: "tin tức ngân hàng lãi suất chính sách tiền tệ",
@@ -116,6 +129,7 @@ export const NEWS_CATEGORIES: NewsCategory[] = [
   },
   {
     id: "world",
+    channelId: "global_economy",
     label: "Kinh tế thế giới",
     icon: "🌍",
     query: "kinh tế thế giới thị trường toàn cầu tin tức",
@@ -179,6 +193,11 @@ export default function NewsPanel() {
   const micHandleRef = useRef<DictationHandle | null>(null);
   const micBaseRef = useRef("");
   const [micHint, setMicHint] = useState("");
+  // docs/33: expert AI briefing per category — generated on demand, rendered
+  // inline above the raw headline list; also persisted to the Blog Chuyên Sâu feed.
+  const [briefing, setBriefing] = useState<BriefingDetail | null>(null);
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const [briefingError, setBriefingError] = useState("");
   const [watchAddBusy, setWatchAddBusy] = useState(false);
   // Watchlist + alerts (docs/18 C) — poll-on-demand, no background poller.
   const [watchItems, setWatchItems] = useState<WatchlistItem[]>([]);
@@ -544,6 +563,34 @@ export default function NewsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const openBriefing = useCallback(
+    async (mode: "generate" | "latest") => {
+      const cat = NEWS_CATEGORIES.find((c) => c.id === activeCatId) ?? NEWS_CATEGORIES[0];
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 120_000);
+      setBriefingLoading(true);
+      setBriefingError("");
+      try {
+        const detail =
+          mode === "generate"
+            ? await generateBriefing(cat.channelId, controller.signal)
+            : await latestBriefing(cat.channelId, controller.signal);
+        setBriefing(detail);
+      } catch (e) {
+        setBriefingError(
+          e instanceof Error ? e.message : String(e)
+        );
+      } finally {
+        clearTimeout(timer);
+        setBriefingLoading(false);
+      }
+    },
+    [activeCatId]
+  );
+
+  const briefingCitationMap = new Map<number, BriefingSource>();
+  (briefing?.sources ?? []).forEach((s) => briefingCitationMap.set(s.n, s));
+
   const stopSpeaking = () => {
     ttsHandleRef.current?.cancel();
     ttsHandleRef.current = null;
@@ -644,6 +691,51 @@ export default function NewsPanel() {
           {loading ? "Đang tải..." : "Lọc tin"}
         </button>
       </form>
+
+      {/* docs/33: expert AI briefing — evidence-windowed persona synthesis with
+          deterministic grounding verification + council review (Step A/B). */}
+      <div className="news-toolbar">
+        <button
+          type="button"
+          className="tts-btn"
+          onClick={() => void openBriefing("generate")}
+          disabled={briefingLoading}
+          title={`Tổng hợp bản tin chuyên sâu AI cho ${activeCat.label} (persona + cửa sổ thời gian + phản biện council; cần quyền admin).`}
+        >
+          {briefingLoading ? "Đang tổng hợp AI..." : `🧠 Tổng hợp chuyên gia (${activeCat.label})`}
+        </button>
+        <button
+          type="button"
+          className="tts-btn"
+          onClick={() => void openBriefing("latest")}
+          disabled={briefingLoading}
+          title="Xem bản tin chuyên sâu mới nhất đã lưu cho mục này."
+        >
+          📄 Bản tin đã lưu
+        </button>
+      </div>
+      {briefingError && <p className="news-info" style={{ color: "#c0392b" }}>{briefingError}</p>}
+      {briefing && !briefingError && (
+        <section
+          className="briefing-block"
+          style={{
+            border: "1px solid #d0d7de",
+            borderRadius: 8,
+            padding: "12px 14px",
+            margin: "10px 0",
+            background: "#f6f8fa",
+          }}
+        >
+          <h3 style={{ marginTop: 0 }}>{briefing.title}</h3>
+          {briefing.summary && (
+            <p style={{ color: "#57606a", fontSize: 13 }}>{briefing.summary}</p>
+          )}
+          <AnswerMarkdown
+            text={briefing.content_md}
+            citationByUrl={briefingCitationMap as unknown as Map<number, Citation>}
+          />
+        </section>
+      )}
 
       <div className="news-toolbar">
         <button

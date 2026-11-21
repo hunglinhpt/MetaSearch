@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from app import __version__
 from app.api.v1 import (
     answer,
+    briefings,
     digests,
     engines,
     extdata,
@@ -83,6 +84,7 @@ router.include_router(llm.router, dependencies=_auth)
 router.include_router(tts.router, dependencies=_auth)
 router.include_router(market.router, dependencies=_auth)
 router.include_router(extdata.router, dependencies=_auth)
+router.include_router(briefings.router, dependencies=_auth)
 router.include_router(watchlist.router, dependencies=_auth)
 router.include_router(podcast.router, dependencies=_auth)
 router.include_router(prefs.router, dependencies=_auth)

@@ -8552,6 +8552,123 @@
         ]
       }
     },
+    "/v1/briefings/channels": {
+      "get": {
+        "description": "Registry introspection: every channel's window, persona and tags.",
+        "operationId": "list_channels_v1_briefings_channels_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Channels V1 Briefings Channels Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Channels",
+        "tags": [
+          "v1",
+          "briefings"
+        ]
+      }
+    },
+    "/v1/briefings/{channel_id}": {
+      "post": {
+        "description": "Generate one expert briefing NOW for the given channel (deterministic\nevidence pipeline -> persona synthesis -> grounding verifier -> council\nreview). Admin-gated like the scanner; per-channel single-flight.",
+        "operationId": "generate_briefing_v1_briefings__channel_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Channel Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogPostDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Briefing",
+        "tags": [
+          "v1",
+          "briefings"
+        ]
+      }
+    },
+    "/v1/briefings/{channel_id}/latest": {
+      "get": {
+        "description": "Newest persisted briefing for the channel (DB first, memory fallback).",
+        "operationId": "latest_briefing_v1_briefings__channel_id__latest_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Channel Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogPostDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Latest Briefing",
+        "tags": [
+          "v1",
+          "briefings"
+        ]
+      }
+    },
     "/v1/citations/validate": {
       "post": {
         "operationId": "validate_external_llm_citations_v1_citations_validate_post",

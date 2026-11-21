@@ -259,6 +259,15 @@ class Settings(BaseSettings):
     # digest citations when enough fresh items remain (never fabricated —
     # only real source dates are considered).
     scan_max_result_age_days: int = 365
+    # docs/33 expert briefing engine: AI synthesis + council review on top of
+    # the deterministic evidence pipeline. AI off -> honest extractive mode.
+    briefing_ai_enabled: bool = True
+    briefing_review_enabled: bool = True
+    briefing_max_evidence: int = 18
+    # Optional operator JSON file adding/overriding briefing channels without
+    # code changes ({"channels": [{id, name, kind, window_hours, persona_name,
+    # persona_rules, engine_categories, description, tags}]}).
+    briefing_channels_file: str = ""
     # docs/32 external data integrations (Mở Rộng group)
     twelvedata_api_key: str = ""  # Global quotes/OHLCV upgrade
     fmp_api_key: str = ""  # Financial statements (FMP)
