@@ -66,17 +66,17 @@ class _Registry:
 def _channel(**overrides):
     from app.orchestration.briefing_registry import BriefingChannel
 
-    base = dict(
-        id="macro_economy",
-        name="Tin kinh tế vĩ mô",
-        kind="news",
-        window_hours=72,
-        persona_name="Chief Macroeconomist",
-        persona_rules="Phân tích vĩ mô.",
-        engine_categories=["news", "financial"],
-        description="d",
-        tags=["vi-mo"],
-    )
+    base = {
+        "id": "macro_economy",
+        "name": "Tin kinh tế vĩ mô",
+        "kind": "news",
+        "window_hours": 72,
+        "persona_name": "Chief Macroeconomist",
+        "persona_rules": "Phân tích vĩ mô.",
+        "engine_categories": ["news", "financial"],
+        "description": "d",
+        "tags": ["vi-mo"],
+    }
     base.update(overrides)
     return BriefingChannel(**base)
 
@@ -329,7 +329,8 @@ async def test_generate_triggers_revision_on_review_fail():
         "## Các diễn biến trọng yếu\nSơ sài.\n"
         "## Góc nhìn chuyên gia & Điểm cần theo dõi\nSơ sài.",
         reviews=[
-            '{"hallucination_free": false, "depth_ok": false, "issues": ["thiếu phân tích nhân quả"]}',
+            '{"hallucination_free": false, "depth_ok": false, '
+            '"issues": ["thiếu phân tích nhân quả"]}',
             '{"hallucination_free": true, "depth_ok": true, "issues": []}',
         ],
     )
