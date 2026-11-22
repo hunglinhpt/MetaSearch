@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 from typing import Any
@@ -13,11 +14,27 @@ from app.config import get_settings
 _configured = False
 
 
+def _force_utf8_stdio() -> None:
+    """Windows Lite runtime: stdout/stderr default to the legacy cp1252 codepage,
+    so any log line with Vietnamese text raises UnicodeEncodeError ("---
+    Logging error ---" spam in .lite.err.log, seen live 2026-11-21). Reconfigure
+    both streams to UTF-8 once, never-crash (errors="replace")."""
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        with contextlib.suppress(Exception):  # exotic stream implementations
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def configure_logging() -> None:
     """Configure structlog + stdlib logging once per process."""
     global _configured
     if _configured:
         return
+
+    _force_utf8_stdio()
 
     settings = get_settings()
     level = getattr(logging, settings.log_level.upper(), logging.INFO)

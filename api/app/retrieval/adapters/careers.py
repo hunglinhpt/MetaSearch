@@ -237,32 +237,33 @@ class CareersAdapter:
                 kind=Outcome.UPSTREAM_ERROR,
             ) from exc
 
+    # A safe "company slug" — a single ASCII token. Anything else (Vietnamese
+    # prose, quotes, spaces) must never be spliced into a hostname: httpx would
+    # raise "Invalid IDNA hostname" on every fan-out (seen live: engine_failed
+    # careers with '"hqc" công bố thông tin ... .com').
+    _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
+
     def _get_careers_url(self, query: str) -> str | None:
-        """Get the careers URL for a company."""
-        query_lower = query.lower()
+        """Get the careers URL for a company.
 
-        # Check if query is already a URL
-        if query_lower.startswith("http"):
-            return query
+        Security (2026-11-22 audit): a free-form query is NEVER spliced into
+        a URL, and a query that is itself a URL is NOT fetched — careers has no
+        SSRF validator, so user URLs stay on /v1/scrape where resolve_and_check
+        + pinning apply. Only curated company names and strict ASCII slugs are
+        turned into candidate careers URLs.
+        """
+        query_lower = query.strip().lower()
 
-        # Check known companies
+        # Known companies first (curated, safe hostnames).
         for company_name, url in CAREERS_URLS.items():
             if company_name in query_lower:
                 return url
 
-        # Try common patterns
-        patterns = [
-            f"https://{query_lower}.com/careers",
-            f"https://{query_lower}.com/jobs",
-            f"https://{query_lower}.com/careers/",
-            f"https://{query_lower}.com/jobs/",
-            f"https://careers.{query_lower}.com",
-            f"https://jobs.{query_lower}.com",
-        ]
-
-        # For now, return the first pattern
-        # In production, you would try each URL
-        return patterns[0]
+        # Guess a pattern URL only for a single safe ASCII slug
+        # (e.g. "acmecorp"); multi-word or non-ASCII queries are out of scope.
+        if not self._SLUG_RE.match(query_lower):
+            return None
+        return f"https://{query_lower}.com/careers"
 
     def _extract_job_links(self, html: str, base_url: str) -> list[str]:
         """Extract job listing links from careers page HTML."""

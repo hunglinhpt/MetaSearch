@@ -6,7 +6,7 @@ import uuid
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from app.llm.providers import LLMOverride
 
@@ -678,12 +678,27 @@ class AnswerRequest(SearchRequest):
 
 
 class ScrapeRequest(BaseModel):
-    urls: list[Annotated[str, StringConstraints(max_length=2000)]] = Field(
-        min_length=1, max_length=10
+    # `urls` is the canonical shape; it is folded from the single-URL `url`
+    # alias in the model validator below, so both bodies are accepted.
+    urls: list[Annotated[str, StringConstraints(max_length=2000)]] | None = Field(
+        default=None, max_length=10
     )
+    url: Annotated[str, StringConstraints(max_length=2000)] | None = None
     timeout_s: float = Field(default=8.0, ge=1, le=30)
     max_chars: int = Field(default=200_000, ge=1, le=1_000_000)
     timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
+
+    @model_validator(mode="after")
+    def _fold_single_url(self) -> ScrapeRequest:
+        if self.urls:
+            return self
+        if self.url:
+            # Fold the alias in place; bounds re-checked by the field
+            # annotation (single URL can never exceed the list cap of 10).
+            self.urls = [self.url]
+            self.url = None
+            return self
+        raise ValueError("provide 'urls' (1..10 items) or the 'url' alias")
 
 
 class ScrapeItem(BaseModel):

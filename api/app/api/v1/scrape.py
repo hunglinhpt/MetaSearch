@@ -24,7 +24,9 @@ async def scrape(request: ScrapeRequest) -> list[ScrapeItem]:
     )
     async with admit("scrape"):
         with use_budget(budget):
-            pages = await deps.get_scraper().scrape_many(request.urls, timeout_s=effective_timeout)
+            pages = await deps.get_scraper().scrape_many(
+                request.urls or [], timeout_s=effective_timeout
+            )
     items: list[ScrapeItem] = []
     for page in pages:
         if isinstance(page, PageContent):
