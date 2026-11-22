@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.4.1] - 2026-11-22
+
+### Fixed — Bản tin tổng hợp ăn theo theme + hệ theme sáng/tối/tự động cho Web UI
+
+- **Body bản tin trắng trên nền tối [P1 UI]** (`frontend/components/NewsPanel.tsx`): khối `briefing-block` (🧠 Tổng hợp chuyên gia / 📄 Bản tin đã lưu, docs/33) hard-code `background: "#f6f8fa"` + border xám nhạt — trắng hoàn toàn trên shell tối. Nay dùng class `.briefing-block` (globals.css): `background: var(--card)`, border trái accent 3px, summary `var(--muted)` — theo bất kỳ theme nào; `.briefing-error` dùng `var(--err)`.
+- **Hệ theme đầy đủ dark / light / system (mặc định "system")**:
+  - `globals.css` refactor toàn bộ palette thành CSS variables 2 chế độ: `:root` (light, GitHub-style) + `:root[data-theme="dark"]` + `@media (prefers-color-scheme: dark)` cho `[data-theme="system"]` — OS đổi theme áp dụng live không cần listener. ~40 chỗ hardcode (rgba accent tints, nền trắng-alpha, màu bull/bear/warn, syntax-highlight token code, badge hues) chuyển hết sang biến; bảng màu light chuẩn contrast (accent #0969da, err #cf222e, syntax light-style).
+  - `app/layout.tsx`: inline script pre-paint đọc `localStorage("metasearch.theme")` → stamp `<html data-theme>` trước lần render đầu — không flash sai theme; `suppressHydrationWarning` cho dataset script-set.
+  - `lib/theme.ts` (mới): `ThemeChoice` = system/dark/light, `resolveTheme`, `readStoredTheme`/`storeTheme` (validate + fail-open private mode), `cycleTheme`, `applyThemeToDocument` — SSR-safe (guard `typeof window/document`).
+  - `components/ThemeToggle.tsx` (mới): segmented control 🖥️/🌙/☀️ trên masthead (aria-pressed, aria-label VI); sync giữa các tab qua `storage` event.
+  - `lib/theme.test.ts` (mới): 10 test — validation, resolve theo OS, chu kỳ ổn định, persist/corrupt value/quota-throw, data-theme stamp.
+- **Đuôi theme còn sót**: `ChartPanel` lightweight-charts đọc `--muted`/`--border` lúc draw (`themeVar()`) thay vì hardcode dark; 2 chỗ đỏ error trong `page.tsx` → `var(--bear)`; hộp escalation Super-Agent hardcode nền trắng-amber → class `.warn-box` (tint theo `--warn` qua `color-mix`).
+- **Added — 4 search adapter dữ liệu toàn cầu (Giai đoạn 2)** (commit trước cùng release): `alpha_vantage` (tài chính), `newsapi` + `newsapi_headlines` (tin toàn cầu), `openweather` (thời tiết), `coingecko` (crypto, keyless) — đăng ký thường trực trong `registry.build_adapters` (graceful khi thiếu key), 28 test instantiation/registry/config/search-method; ruff/bandit/mypy sạch. Lưu ý: khoá cấu hình đã tồn tại từ v4.2.0 (ext_data), đây là lớp search fan-out.
+- **Verify**: `vitest 120/120` (13 file, gồm 10 test theme mới) + `tsc --noEmit` sạch + `next build:export` xanh + live check HTML/CSS serve trên Lite :8000 (bootstrap script + `.briefing-block{background:var(--card)}` có mặt trong bundle).
+
 ## [4.4.0] - 2026-11-21
 
 ### Added — Expert Briefing Engine: Multi-AI Consensus & Audio-Enabled Intelligence (`docs/33`)

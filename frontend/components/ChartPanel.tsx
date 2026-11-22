@@ -22,6 +22,19 @@ import {
 
 const DAY_LABELS: Record<number, string> = { 30: "30 ngày", 90: "90 ngày", 180: "180 ngày", 365: "1 năm" };
 
+/** Resolve a globals.css variable at draw time so the chart follows the
+ *  active theme (dark / light / system). Falls back to the dark palette
+ *  when CSS is unavailable (SSR) or the variable is missing. */
+function themeVar(name: string, fallback: string): string {
+  if (typeof window === "undefined" || typeof document === "undefined") return fallback;
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function ChartPanel({ symbol }: { symbol: string }) {
   const [days, setDays] = useState<number>(90);
   const [data, setData] = useState<MarketOhlcvResponse | null>(null);
@@ -72,20 +85,21 @@ export default function ChartPanel({ symbol }: { symbol: string }) {
         const lwc = await import("lightweight-charts");
         if (disposed || !containerRef.current) return;
         setError("");
+        const gridColor = themeVar("--border", "#223040");
         chart = lwc.createChart(container, {
           width: container.clientWidth,
           height: 320,
           layout: {
             background: { color: "transparent" },
-            textColor: "#9aa7b4",
+            textColor: themeVar("--muted", "#9aa7b4"),
             fontFamily: "inherit",
           },
           grid: {
-            vertLines: { color: "#223040" },
-            horzLines: { color: "#223040" },
+            vertLines: { color: gridColor },
+            horzLines: { color: gridColor },
           },
-          rightPriceScale: { borderColor: "#223040" },
-          timeScale: { borderColor: "#223040", timeVisible: true, secondsVisible: false },
+          rightPriceScale: { borderColor: gridColor },
+          timeScale: { borderColor: gridColor, timeVisible: true, secondsVisible: false },
           autoSize: true,
         });
         const candle = chart.addSeries(lwc.CandlestickSeries, {

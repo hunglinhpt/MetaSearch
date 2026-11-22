@@ -714,22 +714,11 @@ export default function NewsPanel() {
           📄 Bản tin đã lưu
         </button>
       </div>
-      {briefingError && <p className="news-info" style={{ color: "#c0392b" }}>{briefingError}</p>}
+      {briefingError && <p className="news-info briefing-error">{briefingError}</p>}
       {briefing && !briefingError && (
-        <section
-          className="briefing-block"
-          style={{
-            border: "1px solid #d0d7de",
-            borderRadius: 8,
-            padding: "12px 14px",
-            margin: "10px 0",
-            background: "#f6f8fa",
-          }}
-        >
+        <section className="briefing-block">
           <h3 style={{ marginTop: 0 }}>{briefing.title}</h3>
-          {briefing.summary && (
-            <p style={{ color: "#57606a", fontSize: 13 }}>{briefing.summary}</p>
-          )}
+          {briefing.summary && <p className="briefing-summary">{briefing.summary}</p>}
           <AnswerMarkdown
             text={briefing.content_md}
             citationByUrl={briefingCitationMap as unknown as Map<number, Citation>}

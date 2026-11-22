@@ -15,6 +15,7 @@ import ResearchPanel from "../components/ResearchPanel";
 import ComparePanel from "../components/ComparePanel";
 import SentimentPanel from "../components/SentimentPanel";
 import SpacesPanel from "../components/SpacesPanel";
+import ThemeToggle from "../components/ThemeToggle";
 import { dictationIsSupported, mergeTranscripts, startDictation, type DictationHandle } from "../lib/dictation";
 import AnswerMarkdown from "../components/AnswerMarkdown";
 import {
@@ -782,10 +783,15 @@ export default function HomePage() {
   return (
     <main className="shell">
       <header>
-        <h1>MetaSearch</h1>
-        <p className="tagline">
-          Hệ thống tìm kiếm tổng hợp đa tầng, Thẩm định Pháp y BCTC & Deep Research thông minh
-        </p>
+        <div className="masthead">
+          <div>
+            <h1>MetaSearch</h1>
+            <p className="tagline">
+              Hệ thống tìm kiếm tổng hợp đa tầng, Thẩm định Pháp y BCTC & Deep Research thông minh
+            </p>
+          </div>
+          <ThemeToggle />
+        </div>
 
         {/* Tab navigation */}
         <nav className="nav-tabs">
@@ -1176,7 +1182,7 @@ export default function HomePage() {
                                 {(p.peer_score * 100).toFixed(0)}%) · {p.latency_ms} ms
                               </>
                             ) : (
-                              <span style={{ color: "#f87171" }}>Bỏ qua ({p.error})</span>
+                              <span style={{ color: "var(--bear)" }}>Bỏ qua ({p.error})</span>
                             )}
                           </div>
                         ))}
@@ -1688,7 +1694,7 @@ export default function HomePage() {
                     <code>{llmTestResult.reply}</code>
                   </div>
                 ) : (
-                  <div style={{ color: "#f87171" }}>
+                  <div style={{ color: "var(--bear)" }}>
                     ❌ <strong>Kết nối thất bại:</strong> {llmTestResult.error}
                   </div>
                 )}
@@ -2006,19 +2012,11 @@ POST ${API_BASE_URL}/v1/citations/validate
 
                     {/* Quiet Autonomy Human Escalation if waiting */}
                     {t.status === "waiting_human" && t.escalations.length > 0 && (
-                      <div
-                        style={{
-                          marginTop: "0.8rem",
-                          padding: "0.8rem",
-                          background: "#fff7ed",
-                          border: "1px solid #fdba74",
-                          borderRadius: "6px",
-                        }}
-                      >
-                        <strong style={{ color: "#c2410c", fontSize: "0.88rem" }}>
+                      <div className="warn-box">
+                        <strong>
                           ⚠️ Yêu cầu phê duyệt từ con người (Quiet Autonomy Escalation):
                         </strong>
-                        <p style={{ margin: "0.3rem 0 0.6rem", fontSize: "0.85rem" }}>
+                        <p>
                           {t.escalations[0].reason}
                         </p>
                         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
