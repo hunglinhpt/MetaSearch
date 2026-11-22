@@ -10,7 +10,9 @@ Languages: [English](#english) · [Tiếng Việt](#tiếng-việt)
 > A multi-source search & quantitative analysis system for AI: **Meta-Search (SearXNG 70+ engines + 14 Vertical Engines) → Crawl & Extract → Dedup/Consensus/Rerank → Synthesize with `[n]` citations**, packaged as REST API + SSE Streaming + MCP Server + Automated Daily Briefings Blog + Web UI.
 
 
-Status: **v3.3.0 — Omni-Channel Equity Sentiment (`docs/27`), Streaming Rich-Content Web UI (`docs/28`), Unified Extractive `run_digest` & Boundary Convergence (`docs/29`), Full-App `mypy` & UI Parity (`SentimentPanel`, `SpacesPanel`, `Watchlist Podcast`), preceded by v3.2.0 (`docs/25`, `docs/26`)**:
+Status: **v4.4.1 — Expert Briefing Engine multi-AI + audio (`docs/33`), dark/light/system UI theme, Lite-runtime bug sweep (careers SSRF/IDNA, cp1252 logging, `/v1/scrape` `url` alias), Stage-2 global data adapters, CI coverage parity (88%), preceded by v4.0.0–v4.4.0 (docs/31, docs/32, docs/33)**:
+
+- **v4.0.0 → v4.4.1 (11/2026) — summary**: Search/Retrieval upgrade + Sentiment Engine v3 + Deep Research v2 & Council Debiasing + 4 evaluation suites (`docs/31`); External Data Integrations keyless-first — 8 GET endpoints (`/v1/market/crypto*`, `/v1/market/fx`, `/v1/weather`, `/v1/news/external`, `/v1/market/global-quote|fundamentals`, `/v1/net/ipgeo`) (`v4.2.0`, `docs/32`); Lite full extraction pipeline (trafilatura → local crawl4ai → Jina keyless) + global search expansion (`bing_web` keyless + 5 Last30Days verticals) (`v4.3.0`, `docs/32 §6`); scanner freshness gate — digests stop leading with last-year stories (`v4.3.1`); **Expert Briefing Engine** (`v4.4.0`, `docs/33`) — registry kênh bản tin + persona synthesis + deterministic grounding verifier + council review, endpoints `GET /v1/briefings/channels`, `POST /v1/briefings/{id}`, `GET /v1/briefings/{id}/latest`, persisted as Blog Chuyên Sâu + audio; **v4.4.1** — Web UI theme dark/light/system (CSS variables + pre-paint bootstrap + ThemeToggle, briefing card follows the palette), Lite-runtime bug sweep from live logs (careers adapter no longer splices queries into hostnames — kills both the per-query IDNA crash and a query-as-URL SSRF bypass; UTF-8 stdio logging on Windows consoles; `/v1/scrape` accepts the single-URL `{"url": ...}` alias), 4 global data adapters (`alpha_vantage`, `newsapi`+`newsapi_headlines`, `openweather`, `coingecko` — keyless-friendly, graceful without keys) and CI parity (13 previously-untracked behaviour suites + 24 Stage-2 adapter tests committed; coverage 88% > 84% floor). See CHANGELOG `[4.4.1]`.
 
 - **v3.3.0 Convergence, Quant Grounding & Web UI Parity (docs/27, docs/28, docs/29)**:
   - **Omni-Channel Bilingual Equity Sentiment (`docs/27`)**: 5-layer VI/EN query fan-out + quantitative gateways, anti-collision entity resolution (`VNM`, `GAS`, `SSI`, `FPT`, `POW`), coordinated social seeding / unverified rumor filtering, `Tier_Weight × Time_Decay`, Loughran-McDonald TF-IDF + Tetlock pessimism + consensus polarization, CNN Fear & Greed (`0..100`), 7-pillar quantitative checklist, live `^VIX`/`^VIX3M` proxies (`Yahoo Finance v8` keyless) & keyless `Simplize` VN FA fallback (`POST /v1/market/sentiment`, MCP `equity_sentiment`), with strict `null` handling and no fabricated figures.
@@ -176,7 +178,7 @@ Web UI: open `http://localhost:3000` — pick a category (Finance & Stocks, News
 MetaSearch/
 ├── README.md                  ← this file — bilingual (English + Tiếng Việt in one file)
 ├── AGENTS.md                  ← agent onboarding guide (status, conventions, checklist)
-├── CHANGELOG.md               ← version history (Keep a Changelog — current v3.3.0)
+├── CHANGELOG.md               ← version history (Keep a Changelog — current v4.4.1)
 ├── CONTRIBUTING.md            ← setup + workflow + gates guideline
 ├── docs/                      ← detailed design (16 documents + ADRs)
 │   ├── 01-product-requirements.md
@@ -293,7 +295,9 @@ We warmly welcome community contributions (issues, feature requests, pull reques
 
 [English](#english)
 
-Trạng thái: **v3.3.0 — Tâm lý Cổ phiếu Đa kênh (`docs/27`), Streaming Rich-Content Web UI (`docs/28`), Unified Extractive `run_digest` & Hội tụ ranh giới (`docs/29`), `mypy` toàn bộ `app/` & Đồng bộ Web UI (`SentimentPanel`, `SpacesPanel`, `Podcast Watchlist`), kế tiếp v3.2.0 (`docs/25`, `docs/26`)**:
+Trạng thái: **v4.4.1 — Expert Briefing Engine đa-AI + audio (`docs/33`), theme giao diện sáng/tối/tự động, bug sweep Lite runtime (careers SSRF/IDNA, logging cp1252, alias `url` cho `/v1/scrape`), adapter dữ liệu toàn cầu Giai đoạn 2, CI coverage parity (88%), trên nền v4.0.0–v4.4.0 (docs/31, docs/32, docs/33)**:
+
+- **v4.0.0 → v4.4.1 (11/2026) — tóm tắt**: nâng cấp Search/Retrieval + Sentiment Engine v3 + Deep Research v2 & Council Debiasing + 4 bộ eval (`docs/31`); External Data Integrations keyless-first — 8 GET endpoints (`/v1/market/crypto*`, `/v1/market/fx`, `/v1/weather`, `/v1/news/external`, `/v1/market/global-quote|fundamentals`, `/v1/net/ipgeo`) (`v4.2.0`, `docs/32`); Lite extraction pipeline đầy đủ (trafilatura → crawl4ai local → Jina keyless) + mở rộng search toàn cầu (`bing_web` keyless + 5 verticals Last30Days) (`v4.3.0`, `docs/32 §6`); scanner freshness gate — bản tin chuyên sâu hết dẫn tin năm cũ (`v4.3.1`); **Expert Briefing Engine** (`v4.4.0`, `docs/33`) — registry kênh bản tin + persona synthesis + deterministic grounding verifier + council review, endpoints `GET /v1/briefings/channels`, `POST /v1/briefings/{id}`, `GET /v1/briefings/{id}/latest`, persist Blog Chuyên Sâu + audio; **v4.4.1** — theme giao diện sáng/tối/tự động (CSS variables + bootstrap pre-paint + ThemeToggle, khối bản tin ăn theo palette), bug sweep Lite runtime từ log thật (careers adapter hết nối query vào hostname — diệt cả crash IDNA mỗi lần fan-out lẫn bypass SSRF query-as-URL; logging UTF-8 trên console Windows; `/v1/scrape` chấp nhận alias `{"url": ...}`), 4 adapter dữ liệu toàn cầu (`alpha_vantage`, `newsapi`+`newsapi_headlines`, `openweather`, `coingecko` — keyless-friendly, graceful khi thiếu key) và CI parity (13 bộ test hành vi trước đó untracked + 24 test adapter Giai đoạn 2 vào repo; coverage 88% > floor 84%). Xem CHANGELOG `[4.4.1]`.
 
 - **v3.3.0 Hội tụ Chất lượng, Grounding Định lượng & Đồng bộ Web UI (docs/27, docs/28, docs/29)**:
   - **Tâm lý Cổ phiếu Đa kênh Song ngữ (`docs/27`)**: fan-out 5 lớp VI/EN + cổng định lượng, chống trùng mã đa thị trường (`VNM`, `GAS`, `SSI`, `FPT`, `POW`), lọc seeding/tin đồn chưa kiểm chứng, `Tier_Weight × Time_Decay`, Loughran-McDonald TF-IDF + Tetlock pessimism + độ phân cực đồng thuận, CNN Fear & Greed (`0..100`), bảng kiểm 7 trụ cột định lượng, proxy `^VIX`/`^VIX3M` trực tiếp (`Yahoo Finance v8` không cần key) & fallback FA Việt Nam từ `Simplize` (`POST /v1/market/sentiment`, MCP `equity_sentiment`), tuyệt đối giữ `null` khi thiếu dữ liệu.
@@ -457,7 +461,7 @@ Web UI: mở `http://localhost:3000` — chọn chuyên mục (Tài chính & C�
 MetaSearch/
 ├── README.md                  ← bạn đang ở đây
 ├── AGENTS.md                  ← hướng dẫn AI agent nhận việc (trạng thái, quy ước, checklist)
-├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — hiện tại v3.3.0)
+├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — hiện tại v4.4.1)
 ├── CONTRIBUTING.md            ← guideline setup + workflow + gate
 ├── docs/                      ← thiết kế chi tiết (16 tài liệu + ADR)
 │   ├── 01-product-requirements.md

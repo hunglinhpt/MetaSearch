@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.4.2] - 2026-11-22
+
+### Documentation & deployment-example parity (theo đúng `scripts/release.py --bump patch --push`)
+
+- **README.md (song ngữ EN/VI)** — kết thúc 4 bản stale: status line hiện **v4.4.1** (trước: v3.3.0), thêm bullet tổng hợp "v4.0.0 → v4.4.1" đầy đủ (Search upgrade + Market Intel + External Data Integrations 8 endpoints + Lite extraction pipeline + bing_web/global search + scanner freshness gate + Expert Briefing Engine `docs/33` + theme sáng/tối/tự động + bug sweep Lite runtime + Stage-2 adapters + CI coverage parity 88%); 2 dòng repo-layout "CHANGELOG — current v3.3.0" → v4.4.1.
+- **`deploy/.env.lite.example`**: bổ sung nhóm v4.2.0/v4.4.1 keys Stage-2 + ext_data (`COINGECKO_API_KEY`, `ALPHA_VANTAGE_API_KEY`, `NEWSAPI_KEY`, `OPENWEATHER_API_KEY`, `TWELVEDATA_API_KEY`, `FMP_API_KEY`, `IPINFO_TOKEN` — keyless-first, key chỉ nâng quota) và nhóm v4.4.0 Briefing Engine (`BRIEFING_AI_ENABLED/REVIEW_ENABLED/MAX_EVIDENCE=18/CHANNELS_FILE`) — Lite example trước đó thiếu hoàn toàn 2 nhóm này (full `.env.example` đã có từ v4.2.0/v4.4.0).
+- **`docs/06-api-spec.md`**: hợp đồng `POST /v1/scrape` ghi rõ alias `{"url": ...}` (v4.4.1) + hành vi 400 khi thiếu cả `urls` lẫn `url`.
+- **Release theo process**: phiên bản này được cắt bằng `python scripts/release.py --bump patch --push` (script tự bump `api/app/__init__.py` + `pyproject.toml` + `frontend/package.json` + sync `uv.lock`/`package-lock.json`, verify CHANGELOG entry, chạy toàn bộ quality gates, clean và `git_release` commit + tag + push) thay vì thao tác tay như v4.4.1.
+
 ## [4.4.1] - 2026-11-22
 
 ### Fixed — CI parity: coverage floor 84% đáp ứng lại (lỗi CI fail cuối cùng)

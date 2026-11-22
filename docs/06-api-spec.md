@@ -79,7 +79,7 @@ Response JSON (`stream: false`):
 
 ## 3. POST /v1/scrape
 
-Request: `{"urls": ["https://…"], "timeout_s": 8}`
+Request: `{"urls": ["https://…"], "timeout_s": 8}` — v4.4.1 cũng chấp nhận alias cho 1 URL: `{"url": "https://…"}` (validator fold vào `urls`; thiếu cả hai → 400 message rõ ràng).
 Response: mỗi URL 1 object `{url, status, markdown, title, extractor_used, error}`; URL lỗi → `{status: "failed", error: "…"}` (không fail cả batch).
 
 ## 4. Deep Research (`/v1/research`)
