@@ -2,6 +2,16 @@
 
 ## [4.4.1] - 2026-11-22
 
+### Fixed — CI parity: coverage floor 84% đáp ứng lại (lỗi CI fail cuối cùng)
+
+- **Root cause**: CI fail trên cả 3 OS (`Backend Full Test Suite with coverage floor`): `Coverage failure: total of 82 is less than fail-under=84` — 27.566 statements, 5.013 missed. Nguyên nhân: ~1.800 LOC adapter Giai đoạn 2 + code v4.4.0 (briefing) vào repo **chỉ kèm test instantiation** (không test hành vi) và 13 file test coverage của các phiên trước **nằm untracked ngoài git** → CI không thấy chúng. **Release workflow v4.4.0 fail tương tự** (ruff format drift — đã fix ở loạt "CI parity").
+- **13 file test coverage của các phiên trước vào repo** (`tests/`): `test_last30days_search`, `test_public_api_adapters`, `test_briefings_endpoints`, `test_events_coverage`, `test_key_validator_round2`, `test_llm_providers_round2`, `test_market_alert_candles`, `test_mcp_client_v2`, `test_persist_round2`, `test_podcast_personal`, `test_reranker_listwise`, `test_scheduler_helpers`, `test_sentiment_quant_live` — 132+ test hành vi thật (MockTransport) cho briefing registry/engine, ext_data, podcasts, scheduler, reranker… Toàn bộ đã pass trong pre-commit gate 2 lần gần nhất (implicit qua full pytest), giờ mới chính thức được track.
+- **24 test hành vi cho 4 adapter Giai đoạn 2** (`tests/test_stage2_public_api_adapters.py`, MockTransport httpx): query routing (`overview/quote/earnings/news` của Alpha Vantage; `everything/top-headlines` NewsAPI; `current/forecast` OpenWeather; `market/price/trending/info/list` CoinGecko), parse RawResult + published_at 2 format, freshness filter, rate-limit/429/401 graceful, missing-key no-op, demo-key header, `max_results` bound.
+- **Alpha Vantage đúng hợp đồng Note/Information/Error luôn no-op**: trước chỉ check `Note` khi message chứa "request" → note rate-limit khác bị parse thành RawResult rác (`Company:  ()`). Giờ mọi response mang `Note`/`Information`/`Error` đều bị loại (hợp đồng AV chuẩn).
+- **NewsAPI freshness dùng `datetime.now(timezone.utc)`** thay `datetime.utcnow()` deprecated (py3.12 DeprecationWarning dâng thành error CI).
+- **Dọn dẹp**: xoá artifact đo đạc lạc lõng `api/coverage_local.json`, `api/e2e_glob.json`, `api/e2e_tech.json` (không phải local runtime data — chỉ output test/coverage cũ).
+- **Docs**: AGENTS.md mục "Trạng thái" cập nhật v4.4.1 đầy đủ (bug sweep + theme + Giai đoạn 2 + coverage parity).
+
 ### Fixed — Bản tin tổng hợp ăn theo theme + hệ theme sáng/tối/tự động cho Web UI
 
 - **Body bản tin trắng trên nền tối [P1 UI]** (`frontend/components/NewsPanel.tsx`): khối `briefing-block` (🧠 Tổng hợp chuyên gia / 📄 Bản tin đã lưu, docs/33) hard-code `background: "#f6f8fa"` + border xám nhạt — trắng hoàn toàn trên shell tối. Nay dùng class `.briefing-block` (globals.css): `background: var(--card)`, border trái accent 3px, summary `var(--muted)` — theo bất kỳ theme nào; `.briefing-error` dùng `var(--err)`.
@@ -13,6 +23,7 @@
   - `lib/theme.test.ts` (mới): 10 test — validation, resolve theo OS, chu kỳ ổn định, persist/corrupt value/quota-throw, data-theme stamp.
 - **Đuôi theme còn sót**: `ChartPanel` lightweight-charts đọc `--muted`/`--border` lúc draw (`themeVar()`) thay vì hardcode dark; 2 chỗ đỏ error trong `page.tsx` → `var(--bear)`; hộp escalation Super-Agent hardcode nền trắng-amber → class `.warn-box` (tint theo `--warn` qua `color-mix`).
 - **Added — 4 search adapter dữ liệu toàn cầu (Giai đoạn 2)** (commit trước cùng release): `alpha_vantage` (tài chính), `newsapi` + `newsapi_headlines` (tin toàn cầu), `openweather` (thời tiết), `coingecko` (crypto, keyless) — đăng ký thường trực trong `registry.build_adapters` (graceful khi thiếu key), 28 test instantiation/registry/config/search-method; ruff/bandit/mypy sạch. Lưu ý: khoá cấu hình đã tồn tại từ v4.2.0 (ext_data), đây là lớp search fan-out.
+
 ### Fixed — Rà soát bug còn sót từ log Lite runtime (2026-11-22)
 
 - **careers adapter crash + SSRF [P1 security]** (`app/retrieval/adapters/careers.py`): log thật 21/11 cho thấy **mọi query prose tiếng Việt** đều làm careers fan-out nổ `httpx.InvalidURL: Invalid IDNA hostname '"hqc" công bố … .com'` (careers là engine mặc định từ v4.3.0). Nguyên nhân: `_get_careers_url` nối query thẳng vào hostname và **nhận cả query-is-URL rồi fetch trực tiếp — bypass SSRF hoàn toàn** (không qua `resolve_and_check`/pinning như /v1/scrape). Fix: chỉ curated companies + slug ASCII strict `^[a-z0-9][a-z0-9-]{1,30}$` được build URL; query-URL bị loại (user URL thuộc /v1/scrape có SSRF đầy đủ); mọi thứ khác → no-op graceful.

@@ -181,9 +181,21 @@ class AlphaVantageAdapter:
 
                 if resp.status_code == 200:
                     data = resp.json()
-                    # Check for error message
-                    if "Note" in data and "request" in data.get("Note", "").lower():
-                        logger.debug("Alpha Vantage rate limit or error: %s", data.get("Note"))
+                    # Alpha Vantage reports failures in-band via Note /
+                    # Information / Error keys (rate limit, demo key cap,
+                    # invalid key) — never treat those as company data.
+                    if any(k in data for k in ("Note", "Information", "Error")):
+                        logger.debug(
+                            "Alpha Vantage rate limit or error: %s",
+                            next(
+                                (
+                                    str(data[k])
+                                    for k in ("Note", "Information", "Error")
+                                    if k in data
+                                ),
+                                "unknown",
+                            ),
+                        )
                         return None
                     return data
                 else:

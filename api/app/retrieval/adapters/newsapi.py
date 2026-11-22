@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -122,9 +122,9 @@ class NewsAPIAdapter:
 
         # Add date filter if freshness_days is specified
         if freshness_days is not None:
-            from datetime import datetime, timedelta
+            from datetime import timedelta
 
-            from_date = (datetime.utcnow() - timedelta(days=freshness_days)).strftime("%Y-%m-%d")
+            from_date = (datetime.now(UTC) - timedelta(days=freshness_days)).strftime("%Y-%m-%d")
             params["from"] = from_date
 
         # Sort by published date (newest first)
