@@ -374,7 +374,7 @@ async def _request_item_count(request: Request) -> int:
         if isinstance(data, list):
             return len(data)
         if isinstance(data, dict):
-            for key in ("symbols", "items"):
+            for key in ("symbols", "items", "queries"):
                 val = data.get(key)
                 if isinstance(val, list):
                     return len(val)
@@ -404,6 +404,10 @@ _STATIC_ROUTE_COSTS: tuple[tuple[str, str | None, int], ...] = (
     ("/hybrid", "POST", 2),  # F5: embeds query via upstream API when EMBEDDING_L2 != off
     ("/crawl", "POST", 8),  # crawl fans out to dozens of guarded fetches (also Spaces crawl)
     ("/map", "POST", 3),  # sitemap/HTML discovery
+    # docs/34 (v4.5.0): search + up to 12 guarded scrapes + optional ONE LLM judge call.
+    ("/verify", "POST", 4),
+    # docs/34: one news fan-out (k<=50) + CPU clustering, no scrape, no LLM.
+    ("/timeline", "POST", 2),
 )
 
 
@@ -436,6 +440,10 @@ async def _route_cost(request: Request) -> int:
         return 8
     if path.endswith("/market/events") and method == "POST":
         return 3 + min(await _request_item_count(request), 10)
+    if path.endswith("/search/batch") and method == "POST":
+        # docs/34: N independent searches in one round trip bill N units
+        # (schema cap 5) — batching must never be cheaper than looping.
+        return max(1, min(await _request_item_count(request), 5))
     if path.endswith("/watchlist/alerts"):
         # docs/29 DEFER-A + PASS-2 P3-1: scale GET weight linearly with
         # WATCHLIST_MAX_ITEMS so raising the cap cannot bypass weighted limits.

@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import time
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter
 
 from app.api import deps
-from app.api.v1.schemas import SearchRequest, SearchResponse
+from app.api.v1.schemas import (
+    BatchSearchRequest,
+    BatchSearchResponse,
+    BatchSearchResultOut,
+    SearchRequest,
+    SearchResponse,
+)
 from app.core.admission import admit
 from app.core.budget import create_budget_for_route, use_budget
 from app.core.errors import ErrorCode, MetaSearchError
@@ -22,6 +32,31 @@ def _age_s(value: datetime | None) -> int | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return max(0, int((datetime.now(UTC) - value).total_seconds()))
+
+
+def result_dict(i: int, r: Any, *, include_snippets: bool = True) -> dict[str, Any]:
+    """API shape of one scored result (shared by /search and /search/batch)."""
+    return {
+        "rank": i,
+        "url": r.url,
+        "title": r.title,
+        "snippet": r.snippet if include_snippets else "",
+        "score": round(r.score, 4),
+        "consensus": r.consensus,
+        "found_by": r.adapters,
+        "engines": r.engines,
+        "domain": r.domain,
+        # v3.0 P2-7: domain reputation tier (official/primary/.../unknown)
+        "domain_tier": r.domain_tier,
+        "published_at": r.published_at.isoformat() if r.published_at else None,
+        # Provenance: None means unknown, never a guess (D3).
+        "source_url": r.source_url,
+        "source_name": r.source_name,
+        "data_kind": r.data_kind,
+        "as_of": r.as_of.isoformat() if r.as_of else None,
+        # as_of is the data timestamp; news items only carry published_at.
+        "age_s": _age_s(r.as_of or r.published_at),
+    }
 
 
 @router.post("/search", response_model=SearchResponse, response_model_exclude_none=True)
@@ -117,25 +152,7 @@ async def search(request: SearchRequest) -> SearchResponse:
                 interleave=interleave,
                 results=[
                     {
-                        "rank": i,
-                        "url": r.url,
-                        "title": r.title,
-                        "snippet": r.snippet if request.include_snippets else "",
-                        "score": round(r.score, 4),
-                        "consensus": r.consensus,
-                        "found_by": r.adapters,
-                        "engines": r.engines,
-                        "domain": r.domain,
-                        # v3.0 P2-7: domain reputation tier (official/primary/.../unknown)
-                        "domain_tier": r.domain_tier,
-                        "published_at": r.published_at.isoformat() if r.published_at else None,
-                        # Provenance: None means unknown, never a guess (D3).
-                        "source_url": r.source_url,
-                        "source_name": r.source_name,
-                        "data_kind": r.data_kind,
-                        "as_of": r.as_of.isoformat() if r.as_of else None,
-                        # as_of is the data timestamp; news items only carry published_at.
-                        "age_s": _age_s(r.as_of or r.published_at),
+                        **result_dict(i, r, include_snippets=request.include_snippets),
                         # v2.5 P0-7: per-result agent extras (absent unless requested).
                         **(extras.get(r.url) or {}),
                     }
@@ -158,3 +175,91 @@ async def search(request: SearchRequest) -> SearchResponse:
                 complete=outcome.complete,
                 age_s=outcome.age_s,
             )
+
+
+@contextlib.asynccontextmanager
+async def _budget_scope(budget: Any):
+    """Async wrapper so one ``async with`` can hold admission + budget."""
+    with use_budget(budget):
+        yield
+
+
+# Bounded fan-in for /search/batch: each item already fans out to many engines,
+# so items run at most 3 at a time (the schema caps the batch at 5).
+_BATCH_CONCURRENCY = 3
+
+
+@router.post("/search/batch", response_model=BatchSearchResponse, response_model_exclude_none=True)
+async def search_batch(request: BatchSearchRequest) -> BatchSearchResponse:
+    """Run up to 5 independent searches in one round trip (agent-friendly).
+
+    Partial by design: one failing item reports its own ``error`` and never
+    fails the batch. Each item goes through the normal pipeline (cache,
+    breakers, admission) — batching is never cheaper than looping (billing:
+    one rate-limit unit per item)."""
+    started = time.perf_counter()
+    settings = deps.get_settings()
+    sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
+    pipeline = deps.get_search_pipeline()
+
+    async def _one(idx: int) -> BatchSearchResultOut:
+        item = request.queries[idx]
+        async with sem:
+            # Per-item budget, started when the item actually runs: a shared
+            # deadline would starve items 4-5 queued behind the semaphore.
+            budget = create_budget_for_route(
+                "search", timeout_ms=request.timeout_ms, settings=settings
+            )
+            try:
+                async with admit("search"), _budget_scope(budget):
+                    outcome = await pipeline.run(
+                        SearchParams(
+                            query=item.query,
+                            lang=item.lang,
+                            k=item.k,
+                            categories=list(item.categories),
+                            freshness_days=item.freshness_days,
+                            news=item.news,
+                            timeout_ms=request.timeout_ms,
+                            include_domains=item.include_domains,
+                            exclude_domains=item.exclude_domains,
+                        )
+                    )
+            except MetaSearchError as exc:
+                return BatchSearchResultOut(
+                    index=idx,
+                    query=item.query,
+                    ok=False,
+                    error={"code": str(exc.code.value), "message": exc.message[:300]},
+                )
+            except Exception as exc:  # one item never fails the whole batch
+                return BatchSearchResultOut(
+                    index=idx,
+                    query=item.query,
+                    ok=False,
+                    error={"code": ErrorCode.INTERNAL.value, "message": type(exc).__name__},
+                )
+        if not outcome.results and all(s.status != "ok" for s in outcome.statuses):
+            return BatchSearchResultOut(
+                index=idx,
+                query=item.query,
+                ok=False,
+                complete=False,
+                error={
+                    "code": ErrorCode.NO_RESULTS.value,
+                    "message": "All engines failed or returned no results",
+                },
+            )
+        return BatchSearchResultOut(
+            index=idx,
+            query=item.query,
+            ok=True,
+            complete=outcome.complete,
+            cached=outcome.cached,
+            results=[result_dict(i, r) for i, r in enumerate(outcome.results[: item.k], start=1)],
+        )
+
+    items = await asyncio.gather(*(_one(i) for i in range(len(request.queries))))
+    return BatchSearchResponse(
+        items=list(items), latency_ms=int((time.perf_counter() - started) * 1000)
+    )

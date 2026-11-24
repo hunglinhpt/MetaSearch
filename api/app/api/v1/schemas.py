@@ -1478,3 +1478,189 @@ class ExtIpGeoResponse(BaseModel):
     ipinfo: ExtIpInfoOut | None = None
     sources_used: list[str] = Field(default_factory=list, max_length=4)
     cached: bool = False
+
+
+# --------------------------------------------------------------------------------------
+# v4.5.0 Trust & Insight layer (docs/34): claim verification, event timeline, batch search
+# --------------------------------------------------------------------------------------
+
+VerifyStance = Literal["supports", "refutes", "mentions"]
+VerifyVerdict = Literal["supported", "refuted", "contested", "insufficient_evidence"]
+
+
+class VerifyRequest(BaseModel):
+    """POST /v1/verify — check ONE factual claim against live web evidence."""
+
+    claim: str = Field(min_length=8, max_length=500)
+    lang: str | None = Field(default=None, pattern=r"^[a-z]{2}(-[A-Z]{2})?$")
+    # Search breadth: results scraped for evidence (each costs a guarded fetch).
+    k: int = Field(default=8, ge=3, le=12)
+    max_evidence: int = Field(default=8, ge=1, le=12)
+    freshness_days: int | None = Field(default=None, ge=1, le=3650)
+    news: bool = False
+    include_domains: list[Annotated[str, StringConstraints(max_length=253)]] | None = Field(
+        default=None, max_length=20
+    )
+    exclude_domains: list[Annotated[str, StringConstraints(max_length=253)]] | None = Field(
+        default=None, max_length=20
+    )
+    # Optional ONE cheap LLM call that re-labels stance of the retrieved
+    # evidence only (never adds evidence); failure keeps the lexical labels.
+    use_llm: bool = False
+    timeout_ms: int | None = Field(default=None, ge=2_000, le=60_000)
+
+    @field_validator("claim")
+    @classmethod
+    def _claim_has_words(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if len(v.split()) < 3:
+            raise ValueError("claim must contain at least 3 words")
+        return v
+
+
+class VerifyEvidenceOut(BaseModel):
+    n: int = Field(ge=1, le=64)
+    # Output-only fields: no max_length on upstream-provided strings (a long
+    # URL must never turn a valid verdict into a 500); bounded fields below are
+    # truncated by the engine itself.
+    url: str
+    title: str = Field(max_length=300)
+    domain: str
+    domain_tier: str = Field(max_length=32)
+    stance: VerifyStance
+    relevance: float = Field(ge=0, le=1)
+    quote: str = Field(max_length=400)
+    numeric_match: float | None = Field(default=None, ge=0, le=1)
+    refute_cue: str | None = Field(default=None, max_length=64)
+    polarity_flip: bool = False
+    # The quote REPORTS a claim/rumour rather than asserting it (never support).
+    hearsay: bool = False
+    judge: Literal["lexical", "llm"] = "lexical"
+    published_at: str | None = Field(default=None, max_length=64)
+    fetched_at: str | None = Field(default=None, max_length=64)
+    weight: float = Field(ge=0)
+
+
+class VerifyResponse(BaseModel):
+    claim: str
+    verdict: VerifyVerdict
+    confidence: float = Field(ge=0, le=1)
+    single_source: bool
+    independent_domains: int = Field(ge=0)
+    support_weight: float = Field(ge=0)
+    refute_weight: float = Field(ge=0)
+    counts: dict[str, int] = Field(default_factory=dict)
+    judge: Literal["lexical", "llm"] = "lexical"
+    evidence: list[VerifyEvidenceOut] = Field(default_factory=list, max_length=12)
+    sources_considered: int = Field(ge=0)
+    chunks_considered: int = Field(ge=0)
+    query_id: str | None = Field(default=None, max_length=64)
+    complete: bool
+    latency_ms: int | None = None
+    method: str = Field(max_length=400)
+
+
+class TimelineRequest(BaseModel):
+    """POST /v1/timeline — chronological distinct events for one topic."""
+
+    topic: str = Field(min_length=2, max_length=300)
+    lang: str | None = Field(default=None, pattern=r"^[a-z]{2}(-[A-Z]{2})?$")
+    days: int = Field(default=30, ge=1, le=365)
+    k: int = Field(default=40, ge=5, le=50)
+    max_events: int = Field(default=20, ge=1, le=40)
+    categories: list[Annotated[str, StringConstraints(max_length=64)]] | None = Field(
+        default=None, max_length=10
+    )
+    deep: bool = False
+    timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
+
+
+class TimelineSourceOut(BaseModel):
+    url: str
+    title: str
+    domain: str
+    domain_tier: str = Field(max_length=32)
+    published_at: str = Field(max_length=64)
+
+
+class TimelineEventOut(BaseModel):
+    date: str = Field(max_length=10)
+    first_reported_at: str = Field(max_length=64)
+    last_update_at: str = Field(max_length=64)
+    title: str = Field(max_length=300)
+    summary: str = Field(max_length=400)
+    sources_count: int = Field(ge=1)
+    best_domain_tier: str = Field(max_length=32)
+    sources: list[TimelineSourceOut] = Field(default_factory=list, max_length=6)
+
+
+class TimelineVolumeOut(BaseModel):
+    date: str = Field(max_length=10)
+    count: int = Field(ge=0)
+
+
+class TimelineCoverageOut(BaseModel):
+    distinct_domains: int = Field(ge=0)
+    by_domain_tier: dict[str, int] = Field(default_factory=dict)
+    by_country: dict[str, int] = Field(default_factory=dict)
+    volume_by_day: list[TimelineVolumeOut] = Field(default_factory=list, max_length=400)
+
+
+class TimelineWindowOut(BaseModel):
+    start: str = Field(max_length=64)
+    end: str = Field(max_length=64)
+    days: int = Field(ge=1, le=365)
+
+
+class TimelineResponse(BaseModel):
+    topic: str = Field(max_length=300)
+    events: list[TimelineEventOut] = Field(default_factory=list, max_length=40)
+    coverage: TimelineCoverageOut
+    window: TimelineWindowOut
+    results_considered: int = Field(ge=0)
+    dated_results: int = Field(ge=0)
+    undated_dropped: int = Field(ge=0)
+    out_of_window_dropped: int = Field(ge=0)
+    events_total: int = Field(ge=0)
+    complete: bool
+    cached: bool = False
+    query_id: str | None = Field(default=None, max_length=64)
+
+
+class BatchSearchItem(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    k: int = Field(default=10, ge=1, le=20)
+    lang: str | None = Field(default=None, pattern=r"^[a-z]{2}(-[A-Z]{2})?$")
+    categories: list[Annotated[str, StringConstraints(max_length=64)]] = Field(
+        default_factory=lambda: ["general"], max_length=10
+    )
+    freshness_days: int | None = Field(default=None, ge=1, le=3650)
+    news: bool = False
+    include_domains: list[Annotated[str, StringConstraints(max_length=253)]] | None = Field(
+        default=None, max_length=20
+    )
+    exclude_domains: list[Annotated[str, StringConstraints(max_length=253)]] | None = Field(
+        default=None, max_length=20
+    )
+
+
+class BatchSearchRequest(BaseModel):
+    """POST /v1/search/batch — up to 5 independent searches in one round trip."""
+
+    queries: list[BatchSearchItem] = Field(min_length=1, max_length=5)
+    timeout_ms: int | None = Field(default=None, ge=1_000, le=30_000)
+
+
+class BatchSearchResultOut(BaseModel):
+    index: int = Field(ge=0, le=4)
+    query: str
+    ok: bool
+    complete: bool = False
+    cached: bool = False
+    results: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    error: dict[str, Any] | None = None
+
+
+class BatchSearchResponse(BaseModel):
+    items: list[BatchSearchResultOut] = Field(default_factory=list, max_length=5)
+    latency_ms: int = Field(ge=0)

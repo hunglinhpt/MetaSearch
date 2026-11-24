@@ -669,13 +669,19 @@ class TestYahooFinanceAdapter:
     async def test_rss_enrichment_without_injected_client(self, patched_pool):
         """When no client is injected the adapter additionally fetches the
         ticker RSS feed; stale items beyond freshness_days are dropped."""
+        # Relative date: a hard-coded "recent" pubDate turned this test into a
+        # time bomb once the wall clock moved past freshness_days (v4.5.0).
+        from datetime import UTC, datetime, timedelta
+        from email.utils import format_datetime
+
+        fresh_pub = format_datetime(datetime.now(UTC) - timedelta(days=1), usegmt=True)
         rss_xml = """<?xml version="1.0" encoding="UTF-8"?>
         <rss version="2.0"><channel>
             <item>
                 <title>FPT announces new AI lab</title>
                 <link>https://finance.example/fpt-ai-lab</link>
                 <description>Built a new research hub.</description>
-                <pubDate>Mon, 16 Nov 2026 08:00:00 GMT</pubDate>
+                <pubDate>__FRESH_PUB__</pubDate>
             </item>
             <item>
                 <title>FPT old story</title>
@@ -683,7 +689,7 @@ class TestYahooFinanceAdapter:
                 <description>From 2020.</description>
                 <pubDate>Mon, 16 Nov 2020 08:00:00 GMT</pubDate>
             </item>
-        </channel></rss>"""
+        </channel></rss>""".replace("__FRESH_PUB__", fresh_pub)
 
         def handler(request: httpx.Request) -> httpx.Response:
             url = str(request.url)

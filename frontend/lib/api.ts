@@ -1989,3 +1989,123 @@ export async function fetchMarketEvents(
   if (!resp.ok) throw await parseError(resp);
   return resp.json();
 }
+
+// ---------------------------------------------------------------------------
+// v4.5.0 Trust & Insight layer (docs/34): claim verification + event timeline
+// ---------------------------------------------------------------------------
+
+export type VerifyStance = "supports" | "refutes" | "mentions";
+export type VerifyVerdict = "supported" | "refuted" | "contested" | "insufficient_evidence";
+
+export type VerifyEvidence = {
+  n: number;
+  url: string;
+  title: string;
+  domain: string;
+  domain_tier: string;
+  stance: VerifyStance;
+  relevance: number;
+  quote: string;
+  numeric_match?: number | null;
+  refute_cue?: string | null;
+  polarity_flip: boolean;
+  hearsay?: boolean;
+  judge: "lexical" | "llm";
+  published_at?: string | null;
+  fetched_at?: string | null;
+  weight: number;
+};
+
+export type VerifyResponse = {
+  claim: string;
+  verdict: VerifyVerdict;
+  confidence: number;
+  single_source: boolean;
+  independent_domains: number;
+  support_weight: number;
+  refute_weight: number;
+  counts: Record<string, number>;
+  judge: "lexical" | "llm";
+  evidence: VerifyEvidence[];
+  sources_considered: number;
+  chunks_considered: number;
+  query_id?: string | null;
+  complete: boolean;
+  latency_ms?: number | null;
+  method: string;
+};
+
+export async function verifyClaim(
+  claim: string,
+  opts: { useLlm?: boolean; freshnessDays?: number | null; lang?: string | null } = {},
+  signal?: AbortSignal
+): Promise<VerifyResponse> {
+  const body: Record<string, unknown> = { claim, use_llm: Boolean(opts.useLlm) };
+  if (opts.freshnessDays) body.freshness_days = opts.freshnessDays;
+  if (opts.lang) body.lang = opts.lang;
+  const resp = await fetch(`${API_BASE_URL}/v1/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}
+
+export type TimelineSource = {
+  url: string;
+  title: string;
+  domain: string;
+  domain_tier: string;
+  published_at: string;
+};
+
+export type TimelineEvent = {
+  date: string;
+  first_reported_at: string;
+  last_update_at: string;
+  title: string;
+  summary: string;
+  sources_count: number;
+  best_domain_tier: string;
+  sources: TimelineSource[];
+};
+
+export type TimelineResponse = {
+  topic: string;
+  events: TimelineEvent[];
+  coverage: {
+    distinct_domains: number;
+    by_domain_tier: Record<string, number>;
+    by_country: Record<string, number>;
+    volume_by_day: { date: string; count: number }[];
+  };
+  window: { start: string; end: string; days: number };
+  results_considered: number;
+  dated_results: number;
+  undated_dropped: number;
+  out_of_window_dropped: number;
+  events_total: number;
+  complete: boolean;
+  cached?: boolean;
+  query_id?: string | null;
+};
+
+export async function eventTimeline(
+  topic: string,
+  opts: { days?: number; lang?: string | null; maxEvents?: number } = {},
+  signal?: AbortSignal
+): Promise<TimelineResponse> {
+  const body: Record<string, unknown> = { topic, days: opts.days ?? 30 };
+  if (opts.lang) body.lang = opts.lang;
+  if (opts.maxEvents) body.max_events = opts.maxEvents;
+  const resp = await fetch(`${API_BASE_URL}/v1/timeline`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!resp.ok) throw await parseError(resp);
+  return resp.json();
+}

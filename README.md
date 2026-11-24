@@ -10,7 +10,7 @@ Languages: [English](#english) · [Tiếng Việt](#tiếng-việt)
 > A multi-source search & quantitative analysis system for AI: **Meta-Search (SearXNG 70+ engines + 14 Vertical Engines) → Crawl & Extract → Dedup/Consensus/Rerank → Synthesize with `[n]` citations**, packaged as REST API + SSE Streaming + MCP Server + Automated Daily Briefings Blog + Web UI.
 
 
-Status: **v4.4.1 — Expert Briefing Engine multi-AI + audio (`docs/33`), dark/light/system UI theme, Lite-runtime bug sweep (careers SSRF/IDNA, cp1252 logging, `/v1/scrape` `url` alias), Stage-2 global data adapters, CI coverage parity (88%), preceded by v4.0.0–v4.4.0 (docs/31, docs/32, docs/33)**:
+Status: **v4.5.0 — Trust & Insight layer (`docs/34`): `POST /v1/verify` claim verification with verbatim evidence + honest verdicts, `POST /v1/timeline` dated event timeline + source-coverage lens, `POST /v1/search/batch`, OWASP security headers, Stitch-format `frontend/DESIGN.md` locked to the CSS by tests; on top of v4.4.1 — Expert Briefing Engine multi-AI + audio (`docs/33`), dark/light/system UI theme, Lite-runtime bug sweep (careers SSRF/IDNA, cp1252 logging, `/v1/scrape` `url` alias), Stage-2 global data adapters, CI coverage parity (88%), preceded by v4.0.0–v4.4.0 (docs/31, docs/32, docs/33)**:
 
 - **v4.0.0 → v4.4.1 (11/2026) — summary**: Search/Retrieval upgrade + Sentiment Engine v3 + Deep Research v2 & Council Debiasing + 4 evaluation suites (`docs/31`); External Data Integrations keyless-first — 8 GET endpoints (`/v1/market/crypto*`, `/v1/market/fx`, `/v1/weather`, `/v1/news/external`, `/v1/market/global-quote|fundamentals`, `/v1/net/ipgeo`) (`v4.2.0`, `docs/32`); Lite full extraction pipeline (trafilatura → local crawl4ai → Jina keyless) + global search expansion (`bing_web` keyless + 5 Last30Days verticals) (`v4.3.0`, `docs/32 §6`); scanner freshness gate — digests stop leading with last-year stories (`v4.3.1`); **Expert Briefing Engine** (`v4.4.0`, `docs/33`) — registry kênh bản tin + persona synthesis + deterministic grounding verifier + council review, endpoints `GET /v1/briefings/channels`, `POST /v1/briefings/{id}`, `GET /v1/briefings/{id}/latest`, persisted as Blog Chuyên Sâu + audio; **v4.4.1** — Web UI theme dark/light/system (CSS variables + pre-paint bootstrap + ThemeToggle, briefing card follows the palette), Lite-runtime bug sweep from live logs (careers adapter no longer splices queries into hostnames — kills both the per-query IDNA crash and a query-as-URL SSRF bypass; UTF-8 stdio logging on Windows consoles; `/v1/scrape` accepts the single-URL `{"url": ...}` alias), 4 global data adapters (`alpha_vantage`, `newsapi`+`newsapi_headlines`, `openweather`, `coingecko` — keyless-friendly, graceful without keys) and CI parity (13 previously-untracked behaviour suites + 24 Stage-2 adapter tests committed; coverage 88% > 84% floor). See CHANGELOG `[4.4.1]`.
 
@@ -178,7 +178,7 @@ Web UI: open `http://localhost:3000` — pick a category (Finance & Stocks, News
 MetaSearch/
 ├── README.md                  ← this file — bilingual (English + Tiếng Việt in one file)
 ├── AGENTS.md                  ← agent onboarding guide (status, conventions, checklist)
-├── CHANGELOG.md               ← version history (Keep a Changelog — current v4.4.1)
+├── CHANGELOG.md               ← version history (Keep a Changelog — current v4.5.0)
 ├── CONTRIBUTING.md            ← setup + workflow + gates guideline
 ├── docs/                      ← detailed design (16 documents + ADRs)
 │   ├── 01-product-requirements.md
@@ -295,7 +295,7 @@ We warmly welcome community contributions (issues, feature requests, pull reques
 
 [English](#english)
 
-Trạng thái: **v4.4.1 — Expert Briefing Engine đa-AI + audio (`docs/33`), theme giao diện sáng/tối/tự động, bug sweep Lite runtime (careers SSRF/IDNA, logging cp1252, alias `url` cho `/v1/scrape`), adapter dữ liệu toàn cầu Giai đoạn 2, CI coverage parity (88%), trên nền v4.0.0–v4.4.0 (docs/31, docs/32, docs/33)**:
+Trạng thái: **v4.5.0 — Trust & Insight layer (`docs/34`): `POST /v1/verify` kiểm chứng tuyên bố với trích dẫn nguyên văn + verdict trung thực, `POST /v1/timeline` dòng thời gian sự kiện từ nguồn có ngày thật + lăng kính độ phủ, `POST /v1/search/batch`, security headers chuẩn OWASP, `frontend/DESIGN.md` chuẩn Stitch khoá với CSS bằng test; trên nền v4.4.1 — Expert Briefing Engine đa-AI + audio (`docs/33`), theme giao diện sáng/tối/tự động, bug sweep Lite runtime (careers SSRF/IDNA, logging cp1252, alias `url` cho `/v1/scrape`), adapter dữ liệu toàn cầu Giai đoạn 2, CI coverage parity (88%), trên nền v4.0.0–v4.4.0 (docs/31, docs/32, docs/33)**:
 
 - **v4.0.0 → v4.4.1 (11/2026) — tóm tắt**: nâng cấp Search/Retrieval + Sentiment Engine v3 + Deep Research v2 & Council Debiasing + 4 bộ eval (`docs/31`); External Data Integrations keyless-first — 8 GET endpoints (`/v1/market/crypto*`, `/v1/market/fx`, `/v1/weather`, `/v1/news/external`, `/v1/market/global-quote|fundamentals`, `/v1/net/ipgeo`) (`v4.2.0`, `docs/32`); Lite extraction pipeline đầy đủ (trafilatura → crawl4ai local → Jina keyless) + mở rộng search toàn cầu (`bing_web` keyless + 5 verticals Last30Days) (`v4.3.0`, `docs/32 §6`); scanner freshness gate — bản tin chuyên sâu hết dẫn tin năm cũ (`v4.3.1`); **Expert Briefing Engine** (`v4.4.0`, `docs/33`) — registry kênh bản tin + persona synthesis + deterministic grounding verifier + council review, endpoints `GET /v1/briefings/channels`, `POST /v1/briefings/{id}`, `GET /v1/briefings/{id}/latest`, persist Blog Chuyên Sâu + audio; **v4.4.1** — theme giao diện sáng/tối/tự động (CSS variables + bootstrap pre-paint + ThemeToggle, khối bản tin ăn theo palette), bug sweep Lite runtime từ log thật (careers adapter hết nối query vào hostname — diệt cả crash IDNA mỗi lần fan-out lẫn bypass SSRF query-as-URL; logging UTF-8 trên console Windows; `/v1/scrape` chấp nhận alias `{"url": ...}`), 4 adapter dữ liệu toàn cầu (`alpha_vantage`, `newsapi`+`newsapi_headlines`, `openweather`, `coingecko` — keyless-friendly, graceful khi thiếu key) và CI parity (13 bộ test hành vi trước đó untracked + 24 test adapter Giai đoạn 2 vào repo; coverage 88% > floor 84%). Xem CHANGELOG `[4.4.1]`.
 
@@ -461,7 +461,7 @@ Web UI: mở `http://localhost:3000` — chọn chuyên mục (Tài chính & C�
 MetaSearch/
 ├── README.md                  ← bạn đang ở đây
 ├── AGENTS.md                  ← hướng dẫn AI agent nhận việc (trạng thái, quy ước, checklist)
-├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — hiện tại v4.4.1)
+├── CHANGELOG.md               ← lịch sử version (Keep a Changelog — hiện tại v4.5.0)
 ├── CONTRIBUTING.md            ← guideline setup + workflow + gate
 ├── docs/                      ← thiết kế chi tiết (16 tài liệu + ADR)
 │   ├── 01-product-requirements.md

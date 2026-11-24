@@ -13,6 +13,7 @@ import {
 import NewsPanel from "../components/NewsPanel";
 import ResearchPanel from "../components/ResearchPanel";
 import ComparePanel from "../components/ComparePanel";
+import TrustPanel from "../components/TrustPanel";
 import SentimentPanel from "../components/SentimentPanel";
 import SpacesPanel from "../components/SpacesPanel";
 import ThemeToggle from "../components/ThemeToggle";
@@ -116,6 +117,7 @@ type AppTab =
   | "news"
   | "research"
   | "compare"
+  | "trust"
   | "sentiment"
   | "spaces"
   | "blog"
@@ -820,6 +822,12 @@ export default function HomePage() {
             ⚖️ So sánh mã
           </button>
           <button
+            className={`nav-tab ${activeTab === "trust" ? "active" : ""}`}
+            onClick={() => setActiveTab("trust")}
+          >
+            ✅ Kiểm chứng &amp; Dòng thời gian
+          </button>
+          <button
             className={`nav-tab ${activeTab === "sentiment" ? "active" : ""}`}
             onClick={() => setActiveTab("sentiment")}
           >
@@ -864,6 +872,7 @@ export default function HomePage() {
       )}
       {activeTab === "sentiment" && <SentimentPanel initialTicker={sentimentTicker} />}
       {activeTab === "spaces" && <SpacesPanel />}
+      {activeTab === "trust" && <TrustPanel />}
       {activeTab === "research" && <ResearchPanel />}
 
       {/* --- TAB 1: SEARCH & ANSWER --- */}

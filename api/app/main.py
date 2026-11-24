@@ -19,7 +19,7 @@ from app.cache import dispose_redis
 from app.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
-from app.core.middleware import RequestContextMiddleware
+from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.db.session import dispose_engine
 from app.http import dispose_http_client
 
@@ -367,6 +367,10 @@ def create_app() -> FastAPI:
     if settings.mcp_enabled:
         _mount_mcp(app)
     _mount_ui(app, settings)
+    # docs/34: added LAST = outermost, so the static UI (served by the SPA
+    # middleware above, outside the router) gets the same headers as /v1.
+    if settings.security_headers_enabled:
+        app.add_middleware(SecurityHeadersMiddleware, hsts_max_age_s=settings.hsts_max_age_s)
     return app
 
 

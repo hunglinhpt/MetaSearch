@@ -455,3 +455,57 @@ def run_tool(name: str, kwargs: dict[str, Any]) -> Any:
     if name not in tools:
         raise MCPClientError(f"unknown tool: {name}")
     return asyncio.run(tools[name](**kwargs))
+
+
+# -- v4.5.0 Trust & Insight tools (docs/34) ----------------------------------
+
+
+async def verify_claim(
+    claim: str,
+    *,
+    lang: str | None = None,
+    freshness_days: int | None = None,
+    use_llm: bool = False,
+    max_evidence: int = 8,
+) -> str:
+    """Fact-check ONE claim: verdict + verbatim evidence quotes for/against it."""
+    text = " ".join(str(claim or "").split())
+    if len(text) < 8 or len(text) > 500:
+        raise MCPClientError("claim must be 8..500 characters")
+    payload: dict[str, Any] = {
+        "claim": text,
+        "use_llm": bool(use_llm),
+        "max_evidence": max(1, min(int(max_evidence), 12)),
+    }
+    if lang:
+        payload["lang"] = lang
+    if freshness_days is not None:
+        payload["freshness_days"] = max(1, min(int(freshness_days), 3650))
+    data = await _call("POST", "/v1/verify", payload)
+    if not isinstance(data, dict):
+        return json.dumps(data, ensure_ascii=False)
+    return _bounded_json_dumps(data, ("evidence",))
+
+
+async def event_timeline(
+    topic: str,
+    *,
+    days: int = 30,
+    lang: str | None = None,
+    max_events: int = 20,
+) -> str:
+    """Chronological distinct events for a topic (dated sources only) + coverage lens."""
+    text = " ".join(str(topic or "").split())
+    if len(text) < 2 or len(text) > 300:
+        raise MCPClientError("topic must be 2..300 characters")
+    payload: dict[str, Any] = {
+        "topic": text,
+        "days": max(1, min(int(days), 365)),
+        "max_events": max(1, min(int(max_events), 40)),
+    }
+    if lang:
+        payload["lang"] = lang
+    data = await _call("POST", "/v1/timeline", payload)
+    if not isinstance(data, dict):
+        return json.dumps(data, ensure_ascii=False)
+    return _bounded_json_dumps(data, ("events",))

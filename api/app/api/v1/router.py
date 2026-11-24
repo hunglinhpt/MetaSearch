@@ -30,6 +30,7 @@ from app.api.v1 import (
     skills,
     spaces,
     superagent,
+    trust,
     tts,
     watchlist,
 )
@@ -73,6 +74,7 @@ async def meta_full() -> dict:
 
 
 router.include_router(search.router, dependencies=_auth)
+router.include_router(trust.router, dependencies=_auth)
 router.include_router(answer.router, dependencies=_auth)
 router.include_router(engines.router, dependencies=_auth)
 router.include_router(scrape.router, dependencies=_auth)

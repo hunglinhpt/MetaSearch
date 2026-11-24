@@ -470,6 +470,12 @@ class Settings(BaseSettings):
     # Audit Phase 4 P1: inbound JSON body cap — reject oversized bodies
     # BEFORE full parse (pydantic field caps apply only after buffering).
     max_body_bytes: int = Field(default=1024 * 1024, ge=1024)
+    # docs/34 (v4.5.0): OWASP baseline response headers (nosniff, frame deny,
+    # referrer, COOP, permissions; strict CSP on /v1 JSON). HSTS is OFF unless
+    # a max-age is set — Lite serves plain http on loopback and HSTS on http is
+    # ignored at best and a footgun behind a misconfigured proxy at worst.
+    security_headers_enabled: bool = True
+    hsts_max_age_s: int = Field(default=0, ge=0, le=63_072_000)
     # v3.1 Lite Web UI: serve the static export (frontend/out, built with
     # `npm run build:export`) from THIS process on the same port, so Lite is
     # one process + one port (http://127.0.0.1:8000/) with no separate :3000.

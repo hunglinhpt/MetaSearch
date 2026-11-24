@@ -226,3 +226,29 @@ New endpoints:
 tts/synthesize 5, podcast/briefing 5, fa/compare 3+symbols, market/ohlcv 2,
 market/news-wire 3, market/events 3+symbols (cap 13), market/sentiment 8,
 watchlist/alerts 1+items/4, everything else 1.
+
+## v4.5.0 — Trust & Insight layer (`docs/34`)
+
+- `POST /v1/verify` `{claim (8..500, >=3 từ), lang?, k? (3..12, mặc định 8), max_evidence? (<=12),
+  freshness_days?, news?, include_domains?/exclude_domains? (<=20), use_llm? (false), timeout_ms?}`
+  → `{verdict: supported|refuted|contested|insufficient_evidence, confidence, single_source,
+  independent_domains, support_weight, refute_weight, counts, judge: lexical|llm,
+  evidence[{n, url, title, domain, domain_tier, stance: supports|refutes|mentions, relevance,
+  quote (nguyên văn), numeric_match, refute_cue, polarity_flip, hearsay, judge, published_at, fetched_at,
+  weight}], sources_considered, chunks_considered, complete, method}`. Search có trả lời nhưng
+  không scrape được → 200 `insufficient_evidence` + `complete:false`; mọi engine lỗi → 503
+  `no_results`. Cost **4**, admission tier `verify`.
+- `POST /v1/timeline` `{topic (2..300), lang?, days? (1..365, mặc định 30), k? (5..50),
+  max_events? (<=40), categories?, deep?, timeout_ms?}` → `{events[{date, first_reported_at,
+  last_update_at, title, summary, sources_count, best_domain_tier, sources[<=6]}],
+  coverage{distinct_domains, by_domain_tier, by_country, volume_by_day[]}, window,
+  results_considered, dated_results, undated_dropped, out_of_window_dropped, events_total,
+  complete, cached}`. Chỉ kết quả có `published_at` thật; sự kiện xếp cũ → mới. Cost **2**.
+- `POST /v1/search/batch` `{queries[1..5]{query, k? (<=20), lang?, categories?, freshness_days?,
+  news?, include_domains?, exclude_domains?}, timeout_ms?}` → `{items[{index, query, ok,
+  complete, cached, results[], error?}], latency_ms}`. Partial: item lỗi không làm fail batch.
+  Cost **1 / truy vấn**.
+- Mọi response có security headers (`nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, COOP, `Permissions-Policy`); `/v1/*` thêm
+  `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`. HSTS bật bằng
+  `HSTS_MAX_AGE_S` (mặc định 0 = tắt).

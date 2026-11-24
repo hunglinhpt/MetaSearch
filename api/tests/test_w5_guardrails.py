@@ -50,6 +50,9 @@ COSTED_POST = {
     "/v1/spaces/{slug}/crawl": 8,
     "/v1/spaces/{slug}/graph/build": 10,
     "/v1/spaces/{slug}/graph/query": 2,
+    # docs/34 (v4.5.0)
+    "/v1/verify": 4,
+    "/v1/timeline": 2,
 }
 # Payload-proportional (computed in _route_cost), so not in the static table.
 DYNAMIC_COST_POST = {
@@ -59,6 +62,8 @@ DYNAMIC_COST_POST = {
     # docs/33: billed via the "/briefings/" prefix special-case in
     # _route_cost (mid-path segment — static suffix matching cannot match it).
     "/v1/briefings/{channel_id}",
+    # docs/34: one unit per batched query (cap 5) via _request_item_count("queries").
+    "/v1/search/batch",
 }
 # Reviewed on purpose: cheap (DB/CPU only, one upstream call) or admin-gated.
 UNIT_COST_POST = {

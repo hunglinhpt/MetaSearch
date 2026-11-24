@@ -155,3 +155,56 @@ class RequestContextMiddleware:
             HTTP_LATENCY.labels(method=method, path=path_label).observe(elapsed)
             structlog.contextvars.unbind_contextvars("request_id")
             request_id_var.reset(token)
+
+
+# docs/34 (v4.5.0): baseline security headers (OWASP Secure Headers Project).
+_BASE_SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    # Never leak the page URL (it may carry a query) to the cited sources the UI links to.
+    (b"referrer-policy", b"no-referrer"),
+    (b"cross-origin-opener-policy", b"same-origin"),
+    # Web UI dictation (Web Speech) needs the microphone on our own origin only.
+    (b"permissions-policy", b"camera=(), geolocation=(), payment=(), usb=(), microphone=(self)"),
+)
+# JSON/SSE/audio API responses never render as documents: lock them down fully.
+_API_CSP = (b"content-security-policy", b"default-src 'none'; frame-ancestors 'none'")
+
+
+class SecurityHeadersMiddleware:
+    """Pure-ASGI: add security headers to every HTTP response (SSE-safe —
+    headers only, the body stream is untouched). Headers the app already set
+    win, so a route can deliberately relax one."""
+
+    def __init__(self, app: ASGIApp, *, hsts_max_age_s: int = 0) -> None:
+        self.app = app
+        self._extra: list[tuple[bytes, bytes]] = []
+        if hsts_max_age_s > 0:
+            self._extra.append(
+                (
+                    b"strict-transport-security",
+                    f"max-age={int(hsts_max_age_s)}; includeSubDomains".encode(),
+                )
+            )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = str(scope.get("path") or "")
+        is_api = path.startswith("/v1/") or path in ("/healthz", "/readyz", "/metrics")
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers") or [])
+                present = {k.lower() for k, _ in headers}
+                wanted = list(_BASE_SECURITY_HEADERS) + self._extra
+                if is_api:
+                    wanted.append(_API_CSP)
+                for key, value in wanted:
+                    if key not in present:
+                        headers.append((key, value))
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)

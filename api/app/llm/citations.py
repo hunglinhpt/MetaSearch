@@ -21,6 +21,44 @@ _NUM_TOKEN_RE = re.compile(
 )
 _DIGIT_RE = re.compile(r"\d")
 
+# v4.5.0 (docs/34 audit round 4): numbers are matched as WHOLE tokens. Substring
+# matching reported "95%" as present in "6,95%" and "95" in "1995", so fabricated
+# figures passed both the answer numeric-fidelity check and claim verification.
+_DIGIT_SEP_RE = re.compile(r"(?<=\d)[.,](?=\d)")
+_TEXT_NUM_RE = re.compile(r"\d[\d.,]*(?:\s*%)?")
+_UNIT_STRIP_RE = re.compile(r"^(?:us\$|\$|€|£)|(?:%|x|bps|tỷ|triệu|nghìn|ngàn|b|m|k)$")
+
+
+def canon_number(text: str) -> str:
+    """Drop separators BETWEEN digits so locale spellings compare equal:
+    VI "7,09%" / EN "7.09%" -> "709%"; VI "1.000" / EN "1,000" -> "1000"."""
+    return _DIGIT_SEP_RE.sub("", text)
+
+
+def numbers_in(text: str) -> tuple[set[str], set[str]]:
+    """Whole numeric tokens of ``text`` as ``(percentages, bare_numbers)``."""
+    with_pct: set[str] = set()
+    bare: set[str] = set()
+    for m in _TEXT_NUM_RE.findall((text or "").lower()):
+        canon = canon_number(m.replace(" ", "")).rstrip(".,")
+        if canon.endswith("%"):
+            with_pct.add(canon)
+            bare.add(canon[:-1])
+        else:
+            bare.add(canon)
+    return with_pct, bare
+
+
+def number_present(token: str, numbers: tuple[set[str], set[str]]) -> bool:
+    """Is a normalized figure (from :func:`extract_numeric_tokens`) present as a
+    whole token? A percentage must appear AS a percentage."""
+    with_pct, bare_set = numbers
+    canon = canon_number(token.lower().replace(" ", ""))
+    if canon.endswith("%"):
+        return canon in with_pct
+    bare = _UNIT_STRIP_RE.sub("", canon).rstrip(".,")
+    return bool(bare) and bare in bare_set
+
 
 @dataclass(slots=True)
 class ValidatedCitation:
@@ -133,12 +171,10 @@ def verify_numeric_fidelity(
         nums = extract_numeric_tokens(sentence)
         if not nums:
             continue
-        combined_ctx = " ".join(c.content.lower().replace(",", "") for c in cited)
-        ctx_compact = combined_ctx.replace(" ", "")
+        ctx_numbers = numbers_in(" ".join(c.content for c in cited))
         for tok in nums:
             total += 1
-            bare = re.sub(r"(?:%|x|bps|tỷ|triệu|nghìn|ngàn|\$|us\$|€|£)", "", tok)
-            if tok in ctx_compact or (bare and bare in combined_ctx):
+            if number_present(tok, ctx_numbers):
                 matched += 1
             elif tok not in unverified:
                 unverified.append(tok)

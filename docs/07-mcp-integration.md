@@ -40,6 +40,26 @@ Cho phép AI Agent (OpenAI Codex CLI, Claude Code, Cursor, Windsurf, Claude Desk
 ```
 - MCP trả ngay job id; agent poll hoặc lắng nghe SSE `/v1/research/{id}/events`. Hỗ trợ các profile domain (`developer`, `academic`, `comparative`, `general`).
 
+### `verify_claim` (v4.5.0, docs/34)
+```json
+// input
+{"claim": "GDP Việt Nam năm 2024 tăng 7,09%", "lang": "vi", "use_llm": false, "max_evidence": 8}
+// output (rút gọn)
+{"verdict": "supported", "confidence": 0.6, "independent_domains": 3,
+ "evidence": [{"stance": "supports", "quote": "…nguyên văn…", "url": "…", "domain_tier": "official"}]}
+```
+- Không có bằng chứng → `insufficient_evidence` (không đoán). Gọi `POST /v1/verify`.
+
+### `event_timeline` (v4.5.0, docs/34)
+```json
+// input
+{"topic": "lãi suất Fed", "days": 30, "max_events": 20}
+// output (rút gọn)
+{"events": [{"date": "2026-11-05", "title": "…", "sources_count": 4}],
+ "coverage": {"by_country": {"global": 9, "VN": 3}}, "undated_dropped": 2}
+```
+- Chỉ dùng nguồn có ngày đăng thật. Gọi `POST /v1/timeline`.
+
 ## 3. Kiến trúc
 
 ```mermaid

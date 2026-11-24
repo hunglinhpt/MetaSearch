@@ -381,6 +381,209 @@
         "title": "AnswerResponse",
         "type": "object"
       },
+      "BatchSearchItem": {
+        "properties": {
+          "categories": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Categories",
+            "type": "array"
+          },
+          "exclude_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 253,
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclude Domains"
+          },
+          "freshness_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness Days"
+          },
+          "include_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 253,
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Domains"
+          },
+          "k": {
+            "default": 10,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "lang": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lang"
+          },
+          "news": {
+            "default": false,
+            "title": "News",
+            "type": "boolean"
+          },
+          "query": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "BatchSearchItem",
+        "type": "object"
+      },
+      "BatchSearchRequest": {
+        "description": "POST /v1/search/batch — up to 5 independent searches in one round trip.",
+        "properties": {
+          "queries": {
+            "items": {
+              "$ref": "#/components/schemas/BatchSearchItem"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Queries",
+            "type": "array"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 30000.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          }
+        },
+        "required": [
+          "queries"
+        ],
+        "title": "BatchSearchRequest",
+        "type": "object"
+      },
+      "BatchSearchResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BatchSearchResultOut"
+            },
+            "maxItems": 5,
+            "title": "Items",
+            "type": "array"
+          },
+          "latency_ms": {
+            "minimum": 0.0,
+            "title": "Latency Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "latency_ms"
+        ],
+        "title": "BatchSearchResponse",
+        "type": "object"
+      },
+      "BatchSearchResultOut": {
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "complete": {
+            "default": false,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "index": {
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 20,
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "index",
+          "query",
+          "ok"
+        ],
+        "title": "BatchSearchResultOut",
+        "type": "object"
+      },
       "BlogPostDetail": {
         "properties": {
           "content_md": {
@@ -8086,6 +8289,347 @@
         "title": "SpaceUpdateRequest",
         "type": "object"
       },
+      "TimelineCoverageOut": {
+        "properties": {
+          "by_country": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Country",
+            "type": "object"
+          },
+          "by_domain_tier": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Domain Tier",
+            "type": "object"
+          },
+          "distinct_domains": {
+            "minimum": 0.0,
+            "title": "Distinct Domains",
+            "type": "integer"
+          },
+          "volume_by_day": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineVolumeOut"
+            },
+            "maxItems": 400,
+            "title": "Volume By Day",
+            "type": "array"
+          }
+        },
+        "required": [
+          "distinct_domains"
+        ],
+        "title": "TimelineCoverageOut",
+        "type": "object"
+      },
+      "TimelineEventOut": {
+        "properties": {
+          "best_domain_tier": {
+            "maxLength": 32,
+            "title": "Best Domain Tier",
+            "type": "string"
+          },
+          "date": {
+            "maxLength": 10,
+            "title": "Date",
+            "type": "string"
+          },
+          "first_reported_at": {
+            "maxLength": 64,
+            "title": "First Reported At",
+            "type": "string"
+          },
+          "last_update_at": {
+            "maxLength": 64,
+            "title": "Last Update At",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineSourceOut"
+            },
+            "maxItems": 6,
+            "title": "Sources",
+            "type": "array"
+          },
+          "sources_count": {
+            "minimum": 1.0,
+            "title": "Sources Count",
+            "type": "integer"
+          },
+          "summary": {
+            "maxLength": 400,
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "first_reported_at",
+          "last_update_at",
+          "title",
+          "summary",
+          "sources_count",
+          "best_domain_tier"
+        ],
+        "title": "TimelineEventOut",
+        "type": "object"
+      },
+      "TimelineRequest": {
+        "description": "POST /v1/timeline — chronological distinct events for one topic.",
+        "properties": {
+          "categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Categories"
+          },
+          "days": {
+            "default": 30,
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Days",
+            "type": "integer"
+          },
+          "deep": {
+            "default": false,
+            "title": "Deep",
+            "type": "boolean"
+          },
+          "k": {
+            "default": 40,
+            "maximum": 50.0,
+            "minimum": 5.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "lang": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lang"
+          },
+          "max_events": {
+            "default": 20,
+            "maximum": 40.0,
+            "minimum": 1.0,
+            "title": "Max Events",
+            "type": "integer"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 60000.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          },
+          "topic": {
+            "maxLength": 300,
+            "minLength": 2,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "title": "TimelineRequest",
+        "type": "object"
+      },
+      "TimelineResponse": {
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/TimelineCoverageOut"
+          },
+          "dated_results": {
+            "minimum": 0.0,
+            "title": "Dated Results",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineEventOut"
+            },
+            "maxItems": 40,
+            "title": "Events",
+            "type": "array"
+          },
+          "events_total": {
+            "minimum": 0.0,
+            "title": "Events Total",
+            "type": "integer"
+          },
+          "out_of_window_dropped": {
+            "minimum": 0.0,
+            "title": "Out Of Window Dropped",
+            "type": "integer"
+          },
+          "query_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Id"
+          },
+          "results_considered": {
+            "minimum": 0.0,
+            "title": "Results Considered",
+            "type": "integer"
+          },
+          "topic": {
+            "maxLength": 300,
+            "title": "Topic",
+            "type": "string"
+          },
+          "undated_dropped": {
+            "minimum": 0.0,
+            "title": "Undated Dropped",
+            "type": "integer"
+          },
+          "window": {
+            "$ref": "#/components/schemas/TimelineWindowOut"
+          }
+        },
+        "required": [
+          "topic",
+          "coverage",
+          "window",
+          "results_considered",
+          "dated_results",
+          "undated_dropped",
+          "out_of_window_dropped",
+          "events_total",
+          "complete"
+        ],
+        "title": "TimelineResponse",
+        "type": "object"
+      },
+      "TimelineSourceOut": {
+        "properties": {
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "domain_tier": {
+            "maxLength": 32,
+            "title": "Domain Tier",
+            "type": "string"
+          },
+          "published_at": {
+            "maxLength": 64,
+            "title": "Published At",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "title",
+          "domain",
+          "domain_tier",
+          "published_at"
+        ],
+        "title": "TimelineSourceOut",
+        "type": "object"
+      },
+      "TimelineVolumeOut": {
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "date": {
+            "maxLength": 10,
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "count"
+        ],
+        "title": "TimelineVolumeOut",
+        "type": "object"
+      },
+      "TimelineWindowOut": {
+        "properties": {
+          "days": {
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Days",
+            "type": "integer"
+          },
+          "end": {
+            "maxLength": 64,
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "maxLength": 64,
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "days"
+        ],
+        "title": "TimelineWindowOut",
+        "type": "object"
+      },
       "TriggerScanRequest": {
         "properties": {
           "topic": {
@@ -8280,6 +8824,374 @@
           "evidence_quote"
         ],
         "title": "VerifiedDriverOut",
+        "type": "object"
+      },
+      "VerifyEvidenceOut": {
+        "properties": {
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "domain_tier": {
+            "maxLength": 32,
+            "title": "Domain Tier",
+            "type": "string"
+          },
+          "fetched_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fetched At"
+          },
+          "hearsay": {
+            "default": false,
+            "title": "Hearsay",
+            "type": "boolean"
+          },
+          "judge": {
+            "default": "lexical",
+            "enum": [
+              "lexical",
+              "llm"
+            ],
+            "title": "Judge",
+            "type": "string"
+          },
+          "n": {
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          },
+          "numeric_match": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Numeric Match"
+          },
+          "polarity_flip": {
+            "default": false,
+            "title": "Polarity Flip",
+            "type": "boolean"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "quote": {
+            "maxLength": 400,
+            "title": "Quote",
+            "type": "string"
+          },
+          "refute_cue": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refute Cue"
+          },
+          "relevance": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Relevance",
+            "type": "number"
+          },
+          "stance": {
+            "enum": [
+              "supports",
+              "refutes",
+              "mentions"
+            ],
+            "title": "Stance",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "weight": {
+            "minimum": 0.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "n",
+          "url",
+          "title",
+          "domain",
+          "domain_tier",
+          "stance",
+          "relevance",
+          "quote",
+          "weight"
+        ],
+        "title": "VerifyEvidenceOut",
+        "type": "object"
+      },
+      "VerifyRequest": {
+        "description": "POST /v1/verify — check ONE factual claim against live web evidence.",
+        "properties": {
+          "claim": {
+            "maxLength": 500,
+            "minLength": 8,
+            "title": "Claim",
+            "type": "string"
+          },
+          "exclude_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 253,
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclude Domains"
+          },
+          "freshness_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness Days"
+          },
+          "include_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 253,
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Domains"
+          },
+          "k": {
+            "default": 8,
+            "maximum": 12.0,
+            "minimum": 3.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "lang": {
+            "anyOf": [
+              {
+                "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lang"
+          },
+          "max_evidence": {
+            "default": 8,
+            "maximum": 12.0,
+            "minimum": 1.0,
+            "title": "Max Evidence",
+            "type": "integer"
+          },
+          "news": {
+            "default": false,
+            "title": "News",
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "anyOf": [
+              {
+                "maximum": 60000.0,
+                "minimum": 2000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Ms"
+          },
+          "use_llm": {
+            "default": false,
+            "title": "Use Llm",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "claim"
+        ],
+        "title": "VerifyRequest",
+        "type": "object"
+      },
+      "VerifyResponse": {
+        "properties": {
+          "chunks_considered": {
+            "minimum": 0.0,
+            "title": "Chunks Considered",
+            "type": "integer"
+          },
+          "claim": {
+            "title": "Claim",
+            "type": "string"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/VerifyEvidenceOut"
+            },
+            "maxItems": 12,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "independent_domains": {
+            "minimum": 0.0,
+            "title": "Independent Domains",
+            "type": "integer"
+          },
+          "judge": {
+            "default": "lexical",
+            "enum": [
+              "lexical",
+              "llm"
+            ],
+            "title": "Judge",
+            "type": "string"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "method": {
+            "maxLength": 400,
+            "title": "Method",
+            "type": "string"
+          },
+          "query_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Id"
+          },
+          "refute_weight": {
+            "minimum": 0.0,
+            "title": "Refute Weight",
+            "type": "number"
+          },
+          "single_source": {
+            "title": "Single Source",
+            "type": "boolean"
+          },
+          "sources_considered": {
+            "minimum": 0.0,
+            "title": "Sources Considered",
+            "type": "integer"
+          },
+          "support_weight": {
+            "minimum": 0.0,
+            "title": "Support Weight",
+            "type": "number"
+          },
+          "verdict": {
+            "enum": [
+              "supported",
+              "refuted",
+              "contested",
+              "insufficient_evidence"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim",
+          "verdict",
+          "confidence",
+          "single_source",
+          "independent_domains",
+          "support_weight",
+          "refute_weight",
+          "sources_considered",
+          "chunks_considered",
+          "complete",
+          "method"
+        ],
+        "title": "VerifyResponse",
         "type": "object"
       },
       "VnSocialTelemetryOut": {
@@ -11584,6 +12496,49 @@
         ]
       }
     },
+    "/v1/search/batch": {
+      "post": {
+        "description": "Run up to 5 independent searches in one round trip (agent-friendly).\n\nPartial by design: one failing item reports its own ``error`` and never\nfails the batch. Each item goes through the normal pipeline (cache,\nbreakers, admission) — batching is never cheaper than looping (billing:\none rate-limit unit per item).",
+        "operationId": "search_batch_v1_search_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Batch",
+        "tags": [
+          "v1",
+          "search"
+        ]
+      }
+    },
     "/v1/skills": {
       "get": {
         "operationId": "discover_skills_v1_skills_get",
@@ -12064,6 +13019,49 @@
         ]
       }
     },
+    "/v1/timeline": {
+      "post": {
+        "description": "Distinct events about a topic, oldest -> newest, from dated results only.",
+        "operationId": "timeline_v1_timeline_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimelineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Timeline",
+        "tags": [
+          "v1",
+          "trust"
+        ]
+      }
+    },
     "/v1/tts/capabilities": {
       "get": {
         "description": "Which server-side TTS engines are configured (no secrets, no URL).",
@@ -12121,6 +13119,49 @@
         "tags": [
           "v1",
           "tts"
+        ]
+      }
+    },
+    "/v1/verify": {
+      "post": {
+        "description": "Fact-check one claim against live web evidence (verbatim quotes, tiered sources).",
+        "operationId": "verify_v1_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify",
+        "tags": [
+          "v1",
+          "trust"
         ]
       }
     },

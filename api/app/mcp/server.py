@@ -206,6 +206,39 @@ def build_server():  # returns FastMCP; lazy so the SDK stays optional
         )
         return _loads(raw)
 
+    @mcp.tool()
+    async def verify_claim(
+        claim: str,
+        lang: str | None = None,
+        freshness_days: int | None = None,
+        use_llm: bool = False,
+        max_evidence: int = 8,
+    ) -> dict[str, Any]:
+        """Fact-check ONE factual claim against live web evidence. Returns a verdict
+        (supported/refuted/contested/insufficient_evidence), confidence, and verbatim
+        evidence quotes with url, domain tier and source timestamps (docs/34)."""
+        raw = await mcp_client.verify_claim(
+            claim,
+            lang=lang,
+            freshness_days=freshness_days,
+            use_llm=use_llm,
+            max_evidence=max_evidence,
+        )
+        return _loads(raw)
+
+    @mcp.tool()
+    async def event_timeline(
+        topic: str,
+        days: int = 30,
+        lang: str | None = None,
+        max_events: int = 20,
+    ) -> dict[str, Any]:
+        """Chronological timeline of distinct events about a topic, built only from
+        sources with a real publication date, plus a coverage lens (domain tiers,
+        countries, daily volume) (docs/34)."""
+        raw = await mcp_client.event_timeline(topic, days=days, lang=lang, max_events=max_events)
+        return _loads(raw)
+
     return mcp
 
 

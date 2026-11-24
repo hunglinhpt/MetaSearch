@@ -45,6 +45,9 @@ _TIER_CONFIG: dict[str, tuple[int, float]] = {
     "crawl": (8, 1.0),  # BFS crawl (also POST /v1/spaces/{slug}/crawl): dozens of fetches
     # Review F-03: council = up to 6 concurrent LLM candidates + cross-review + synthesis.
     "council": (4, 1.0),
+    # docs/34 (v4.5.0): claim verification = search + scrape + chunk/rerank
+    # (+ optional one LLM judge call) — sized like context, a bit tighter.
+    "verify": (8, 1.0),
 }
 
 _semaphores: dict[str, asyncio.Semaphore] = {}

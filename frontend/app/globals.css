@@ -1449,3 +1449,148 @@ a {
   margin: 0.3rem 0 0.6rem;
   font-size: 0.85rem;
 }
+
+/* ── Trust & Insight tab (docs/34, v4.5.0) — theme variables only ────── */
+.trust-panel .muted {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.trust-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.trust-opt {
+  display: block;
+  margin-top: 0.4rem;
+}
+
+.trust-result {
+  margin-top: 0.9rem;
+}
+
+.verdict-banner {
+  border-left: 4px solid var(--border);
+  background: var(--tint);
+  border-radius: 6px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.8rem;
+}
+
+.verdict-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.evidence-list,
+.timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.evidence-item {
+  border-top: 1px solid var(--border);
+  padding: 0.6rem 0;
+}
+
+.evidence-head {
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.stance-badge {
+  font-weight: 700;
+  margin-right: 0.45rem;
+}
+
+.evidence-quote {
+  margin: 0.35rem 0 0.2rem;
+  padding-left: 0.7rem;
+  border-left: 2px solid var(--border);
+  font-size: 0.86rem;
+}
+
+.evidence-why,
+.trust-method {
+  font-size: 0.76rem;
+}
+
+.volume-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 48px;
+  margin: 0.6rem 0;
+}
+
+.volume-bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  background: color-mix(in srgb, var(--accent) 65%, transparent);
+  border-radius: 2px 2px 0 0;
+}
+
+.coverage-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+}
+
+.timeline-item {
+  display: flex;
+  gap: 0.8rem;
+  border-left: 2px solid var(--accent);
+  padding: 0.25rem 0 0.75rem 0.8rem;
+  position: relative;
+}
+
+.timeline-item::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 0.45rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.timeline-date {
+  flex: 0 0 5.6rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.timeline-body {
+  min-width: 0;
+}
+
+.timeline-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.timeline-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  margin-top: 0.2rem;
+}
+
+@media (max-width: 600px) {
+  .timeline-item {
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+  .timeline-date {
+    flex-basis: auto;
+  }
+}

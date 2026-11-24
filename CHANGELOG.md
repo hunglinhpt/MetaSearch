@@ -1,5 +1,28 @@
 # Changelog
 
+## [4.5.0] - 2026-11-24
+
+### Added — Trust & Insight layer (`docs/34`)
+
+- **`POST /v1/verify` — kiểm chứng một tuyên bố** (`app/orchestration/claim_verify.py`, `app/api/v1/trust.py`): tái dùng `prepare_context` (search → scrape có SSRF → chunk → rerank), đánh giá lập trường **tất định** từng chunk (cửa sổ câu theo lexical entailment, tín hiệu bác bỏ song ngữ VI/EN, lật cực phủ định có loại trừ "không chỉ/not only", độ khớp số liệu), LLM judge **tuỳ chọn** (`use_llm`, 1 lời gọi rẻ trong rào SEC-07 ngẫu nhiên, chỉ gán lại stance — không thêm bằng chứng, "supports" bị hạ khi số liệu không khớp, lỗi → giữ lexical). Verdict `supported/refuted/contested/insufficient_evidence` theo 1 bằng chứng tốt nhất mỗi tên miền × `tier_score` × relevance, `single_source` khi chỉ 1 tên miền; mọi bằng chứng là **trích dẫn nguyên văn** kèm tier + `published_at`/`fetched_at`. Search có trả lời nhưng không scrape được → 200 `insufficient_evidence` + `complete:false`; mọi engine chết → 503. Rate-limit 4, admission tier `verify (8)`.
+- **`POST /v1/timeline` — dòng thời gian sự kiện + lăng kính độ phủ** (`app/orchestration/timeline.py`): news fan-out trong cửa sổ `days`, chỉ giữ kết quả có `published_at` thật (bỏ + đếm `undated_dropped`, `out_of_window_dropped`; feed lệch giờ ≤ +6h), SimHash gộp bản syndication thành 1 sự kiện, ngày sự kiện = lần đưa tin đầu tiên, xếp cũ → mới; coverage `by_domain_tier`, `by_country` (ccTLD rõ nghĩa), `volume_by_day`. Không LLM. Rate-limit 2.
+- **`POST /v1/search/batch`**: ≤5 truy vấn/1 round-trip (song song tối đa 3, budget riêng mỗi item), partial by design (item lỗi có `error` riêng), billing 1 đơn vị/truy vấn (`_request_item_count` đếm `queries`). `search.result_dict()` dùng chung shape với `/v1/search`.
+- **MCP tools** `verify_claim` + `event_timeline` (client bounded JSON + server).
+- **Security headers chuẩn OWASP** (`SecurityHeadersMiddleware`, pure ASGI, SSE-safe, ngoài cùng nên UI tĩnh cũng có): `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, COOP `same-origin`, `Permissions-Policy` (chỉ `microphone=(self)`), CSP `default-src 'none'; frame-ancestors 'none'` cho `/v1/*`/`/healthz`/`/readyz`/`/metrics`; HSTS opt-in `HSTS_MAX_AGE_S`; tắt bằng `SECURITY_HEADERS_ENABLED=false`; header route tự đặt luôn thắng.
+- **Web UI tab "✅ Kiểm chứng & Dòng thời gian"** (`components/TrustPanel.tsx`, helper thuần `lib/trust.ts`): banner verdict (icon + chữ), bằng chứng nguyên văn kèm tier/ngày/lý do, timeline rail + histogram khối lượng + chip độ phủ; chỉ biến theme, mọi href qua `safeHref()`.
+- **stitch-skills (google-labs-code) — đánh giá & tích hợp phần phù hợp** (`docs/34 §4`): không đưa vào runtime/không tự cài plugin (bắt buộc Stitch MCP + tài khoản Google, tải/chạy mã ngoài; UI không dùng Vite/shadcn). Tích hợp quy ước **`frontend/DESIGN.md`** (định dạng Stitch: theme, palette & roles, typography, components, layout, do/don't) với bảng token sinh từ `globals.css`, và **`lib/designTokens.test.ts`** khoá đặc tả với code: token đủ 2 theme, giá trị khớp từng byte, khối "system dark" phải trùng khối "dark", cấm literal hex trong `components/*.tsx`.
+
+### Fixed
+
+- **[P1 data-integrity] Độ trung thực số liệu của `/v1/answer` so khớp substring** (`app/llm/citations.py::verify_numeric_fidelity`, lỗi có sẵn): "95%" được coi là có trong "6,95%", "95" trong "1995" → số bịa được chấm 100%. Nay so khớp **nguyên token** (`numbers_in`/`number_present`/`canon_number`, dùng chung với `/v1/verify`), chuẩn hoá dấu phân cách VI/EN (`7,09%` = `7.09%`, `1.000` = `1,000`), phần trăm phải xuất hiện dưới dạng phần trăm.
+- **Test bom hẹn giờ** `test_last30days_search.py::TestYahooFinanceAdapter::test_rss_enrichment_without_injected_client`: `pubDate` hard-code 16/11/2026 + `freshness_days=7` → đỏ trên mọi máy/CI từ 24/11/2026; nay tính tương đối (`now − 1 ngày`).
+
+### Audit loop (tự kiểm — phiên vừa lập phương án vừa implement theo yêu cầu chủ dự án)
+
+- Vòng 2 fresh-eyes bắt và sửa 3 lỗi trước khi phát hành: (1) batch dùng chung 1 budget 5s cho mọi item → item xếp hàng sau semaphore bị cắt engine (nay budget riêng, tính từ lúc item chạy); (2) response model đặt `max_length` cho url/title/domain đầu ra → URL dài từ adapter có thể biến verdict hợp lệ thành 500 (bỏ cận trên ở field đầu ra không tự cắt; Rule 2 vẫn áp đủ cho request); (3) chunk không dấu câu (bảng/list) thành 1 "câu" khổng lồ làm relevance phồng → cửa sổ trượt 40 từ. Mỗi lỗi có test hồi quy.
+- Vòng 3–4 (đối chiếu nghiệp vụ VN + **thăm dò đối kháng live** với engine thật): số thập phân VN `7,09%` không khớp EN `7.09%`; bài Google News gộp thành 1 tên miền `news.google.com` (nay resolve publisher qua `source_url`); "GDP tăng 9,5%" bị ủng hộ vì khớp substring trong `6,95%`; "uống thuốc tẩy chữa COVID" bị ủng hộ vì đoạn văn *thuật lại* tin đồn → thêm `hearsay` (field mới trên evidence; cue "claimed", "tin đồn", "được cho là"… không bao giờ là support, kể cả qua LLM judge) + cue bác bỏ "myth/misinformation/thông tin sai lệch". Sau sửa: tuyên bố đúng → supported (7 tên miền), sai số liệu → insufficient_evidence, tin giả → refuted. Giới hạn đã biết ghi ở docs/34 §7.
+- Gates: pytest toàn bộ, ruff check/format, bandit, mypy (196 file), vitest (16 file), tsc; OpenAPI snapshot regen có chủ đích (chỉ thêm 3 path + 14 schema, 0 thay đổi hợp đồng cũ).
+
 ## [4.4.2] - 2026-11-22
 
 ### Documentation & deployment-example parity (theo đúng `scripts/release.py --bump patch --push`)
