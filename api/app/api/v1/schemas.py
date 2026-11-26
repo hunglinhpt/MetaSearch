@@ -687,6 +687,10 @@ class ScrapeRequest(BaseModel):
     timeout_s: float = Field(default=8.0, ge=1, le=30)
     max_chars: int = Field(default=200_000, ge=1, le=1_000_000)
     timeout_ms: int | None = Field(default=None, ge=1_000, le=60_000)
+    # docs/35 M4: by default an origin whose TLS certificate does not verify is
+    # REFUSED (no crawl4ai/Jina fallback). Opting in escalates and the item is
+    # flagged tls_verified=false.
+    allow_insecure_escalation: bool = False
 
     @model_validator(mode="after")
     def _fold_single_url(self) -> ScrapeRequest:
@@ -709,6 +713,10 @@ class ScrapeItem(BaseModel):
     extractor_used: str = ""
     error: str | None = None
     truncated: bool = False
+    # docs/35 M4: true = fetched over HTTPS whose certificate verified for us;
+    # false = plain http, or content escalated past a bad certificate (opt-in).
+    # Absent on failed items.
+    tls_verified: bool | None = None
 
 
 class SearchResponse(BaseModel):
@@ -1082,7 +1090,7 @@ class MarketNewsRawInput(BaseModel):
         ]
         | None
     ) = None
-    scope: Literal["ticker", "market", "policy", "sector", "general"] | None = None
+    scope: Literal["ticker", "market", "policy", "sector", "general", "global"] | None = None
 
 
 class MarketNewsWireRequest(BaseModel):
@@ -1126,7 +1134,7 @@ class MarketNewsWireItemOut(BaseModel):
     published_at: str | None = None
     event_date: str | None = None
     symbols: list[str] = Field(default_factory=list)
-    scope: Literal["ticker", "market", "policy", "sector", "general"] = "general"
+    scope: Literal["ticker", "market", "policy", "sector", "general", "global"] = "general"
     category: Literal[
         "corporate_action",
         "listing_status",
@@ -1143,6 +1151,16 @@ class MarketNewsWireItemOut(BaseModel):
     duplicate_count: int = 1
     also_reported_by: list[str] = Field(default_factory=list)
     is_new: bool = True
+    # docs/35 M1: how each symbol was found (method in prefix|exchange|cashtag|phrase|
+    # bare|alias|caller; alias carries alias_confidence) + index mentions (VNINDEX, VN30…)
+    # which never appear in `symbols`.
+    symbol_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    indices: list[str] = Field(default_factory=list)
+    # docs/35 M2: matched rule/term + per-rule confidence (0..1).
+    category_reason: str = ""
+    category_confidence: float = 0.0
+    # docs/35 M3: feed | caller | article_meta | json_ld | url (null when undated).
+    published_at_source: str | None = None
 
     @field_validator("url", mode="before")
     @classmethod

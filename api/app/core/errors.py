@@ -27,6 +27,8 @@ class ErrorCode(StrEnum):
     DEADLINE_EXCEEDED = "deadline_exceeded"
     TTS_DISABLED = "tts_disabled"
     TTS_UPSTREAM_ERROR = "tts_upstream_error"
+    # docs/35 M4: the origin's TLS certificate did not verify; nothing was escalated.
+    TLS_VERIFY_FAILED = "tls_verify_failed"
     INTERNAL = "internal"
 
 
@@ -40,6 +42,7 @@ HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.OVERLOADED: 503,
     ErrorCode.TTS_DISABLED: 503,
     ErrorCode.TTS_UPSTREAM_ERROR: 502,
+    ErrorCode.TLS_VERIFY_FAILED: 502,
     ErrorCode.DEADLINE_EXCEEDED: 504,
     ErrorCode.INTERNAL: 500,
 }

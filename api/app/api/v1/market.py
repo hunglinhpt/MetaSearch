@@ -1175,6 +1175,11 @@ async def market_news_wire(request: MarketNewsWireRequest) -> MarketNewsWireResp
                     duplicate_count=it.duplicate_count,
                     also_reported_by=list(it.also_reported_by),
                     is_new=it.is_new,
+                    symbol_evidence=[e.to_dict() for e in it.symbol_evidence],
+                    indices=list(it.indices),
+                    category_reason=it.category_reason,
+                    category_confidence=it.category_confidence,
+                    published_at_source=it.published_at_source,
                 )
                 for it in res["items"]
             ]

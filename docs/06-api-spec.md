@@ -252,3 +252,15 @@ watchlist/alerts 1+items/4, everything else 1.
   `Referrer-Policy: no-referrer`, COOP, `Permissions-Policy`); `/v1/*` thêm
   `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`. HSTS bật bằng
   `HSTS_MAX_AGE_S` (mặc định 0 = tắt).
+
+## v4.6.0 — News-wire precision + TLS policy (`docs/35`)
+
+- `POST /v1/scrape` thêm `allow_insecure_escalation: bool = false`; mỗi item `status=ok` có
+  `tls_verified: bool`. Origin có chứng chỉ không xác thực được → item `error: "tls_verify_failed"`
+  (không leo thang crawl4ai/Jina); mọi URL đều như vậy → HTTP 502 `tls_verify_failed`.
+- `POST /v1/market/news-wire` — mỗi item thêm `symbol_evidence[{symbol, method: prefix|exchange|cashtag|
+  phrase|bare|alias|caller, span, start, field: title|snippet|caller, alias_confidence?}]`, `indices[]`
+  (VNINDEX, VN30, VN100, HNXINDEX, HNX30, UPCOMINDEX — không bao giờ nằm trong `symbols`),
+  `category_reason`, `category_confidence` (0–1), `published_at_source` (feed|caller|article_meta|json_ld|
+  url|null); enum `scope` thêm `global`. `published_at` luôn có offset; `date_status="undated"` là giá
+  trị duy nhất cho tin không ngày.

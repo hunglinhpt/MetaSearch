@@ -1855,7 +1855,7 @@ export interface MarketNewsWireItem {
   published_at?: string | null;
   event_date?: string | null;
   symbols: string[];
-  scope: "ticker" | "market" | "policy" | "sector" | "general";
+  scope: "ticker" | "market" | "policy" | "sector" | "general" | "global";
   category: MarketNewsCategory;
   severity: "critical" | "high" | "medium" | "info";
   stable_id: string;
@@ -1864,6 +1864,19 @@ export interface MarketNewsWireItem {
   duplicate_count: number;
   also_reported_by: string[];
   is_new: boolean;
+  // v4.6.0 (docs/35): tagging evidence, index mentions, category reason, date provenance.
+  symbol_evidence?: {
+    symbol: string;
+    method: "prefix" | "exchange" | "cashtag" | "phrase" | "bare" | "alias" | "caller";
+    span: string;
+    start: number;
+    field: "title" | "snippet" | "caller" | "text";
+    alias_confidence?: number;
+  }[];
+  indices?: string[];
+  category_reason?: string;
+  category_confidence?: number;
+  published_at_source?: string | null;
 }
 
 export interface MarketNewsWireRequest {

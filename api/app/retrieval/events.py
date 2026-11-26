@@ -25,7 +25,9 @@ import logging
 import math
 import re
 import time
+import unicodedata
 import zlib
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -48,7 +50,7 @@ from app.core.offload import run_cpu
 from app.extraction import pinning, ssrf
 from app.http import get_http_client
 from app.retrieval.adapters.google_news import GoogleNewsAdapter
-from app.retrieval.aliases import resolve_alias_tickers
+from app.retrieval.aliases import resolve_alias_matches
 from app.retrieval.fa_sources.base import (
     BROWSER_HEADERS,
     MAX_RESPONSE_BYTES,
@@ -56,6 +58,14 @@ from app.retrieval.fa_sources.base import (
     ensure_symbol,
 )
 from app.retrieval.health import EngineBreakerRegistry, Outcome
+from app.retrieval.symbols.evidence import (
+    ALL_METHODS,
+    EvidenceMethod,
+    SymbolEvidence,
+    split_by_field,
+)
+from app.retrieval.symbols.geo_guard import mask_geo
+from app.retrieval.symbols.index_codes import extract_indices, is_index_code
 from app.retrieval.vn_tickers import (
     _VIET_STOCK_STOP_WORDS,
     get_vn_ticker_symbols,
@@ -71,7 +81,8 @@ _VN_TZ = timezone(timedelta(hours=7))
 _NEWS_WIRE_CACHE_TTL_S = 900  # 15 min
 _EVENTS_CACHE_TTL_S = 6 * 3600  # 6 hours
 
-EventScope = Literal["ticker", "market", "policy", "sector", "general"]
+# docs/35 M2: "global" = foreign-market news (e.g. a US listing), never VN listing_status.
+EventScope = Literal["ticker", "market", "policy", "sector", "general", "global"]
 NewsCategory = Literal[
     "corporate_action",
     "listing_status",
@@ -704,6 +715,13 @@ class ParsedNewsItem:
     duplicate_count: int = 1
     also_reported_by: list[str] = field(default_factory=list)
     is_new: bool = True
+    # docs/35 M1-M3 (additive): how each symbol was found, index mentions,
+    # why the category was chosen, and where published_at came from.
+    symbol_evidence: list[SymbolEvidence] = field(default_factory=list)
+    indices: list[str] = field(default_factory=list)
+    category_reason: str = ""
+    category_confidence: float = 0.0
+    published_at_source: str | None = None
 
 
 @dataclass(slots=True)
@@ -958,7 +976,30 @@ def extract_tickers_from_text(
     extra_known: set[str] | frozenset[str] | None = None,
 ) -> list[str]:
     """Extract equity tickers from bilingual text with unit/acronym disambiguation."""
-    src = text or ""
+    out: list[str] = []
+    for ev in extract_ticker_evidence(
+        text, allowed_symbols=allowed_symbols, extra_known=extra_known
+    ):
+        if ev.symbol not in out:
+            out.append(ev.symbol)
+    return out
+
+
+def extract_ticker_evidence(
+    text: str,
+    *,
+    allowed_symbols: set[str] | frozenset[str] | None = None,
+    extra_known: set[str] | frozenset[str] | None = None,
+    field: str = "text",
+) -> list[SymbolEvidence]:
+    """Tickers with HOW each was found (docs/35 M1): one record per symbol (its
+    strongest/first evidence), offsets into the NFC text.
+
+    Precision gates on top of the docs/30 passes: place names ("TP.HCM") are
+    masked before the bare/phrase passes; index codes (VNI, VN30, HNX…) never
+    tag through bare tokens or aliases; a bare token INSIDE a validated alias
+    span belongs to that alias ("Tập đoàn Công nghệ CMC" -> CMG, not CMC)."""
+    src = unicodedata.normalize("NFC", text or "")
     if not src.strip():
         return []
     vn_catalog = get_vn_ticker_symbols()
@@ -966,6 +1007,7 @@ def extract_tickers_from_text(
     upper_allowed = {s.upper() for s in allowed_symbols} if allowed_symbols else set()
     all_caps = _is_all_caps_headline(src)
     low_src = src.lower()
+    masked = mask_geo(src)
 
     def _is_known(sym: str) -> bool:
         if upper_allowed and sym in upper_allowed:
@@ -1084,14 +1126,16 @@ def extract_tickers_from_text(
             return has_crypto_ctx and not has_equity_ctx
         return False
 
-    found: list[str] = []
+    found: dict[str, SymbolEvidence] = {}
 
-    def _add(sym: str) -> None:
+    def _add(
+        sym: str, method: EvidenceMethod, start: int, span: str, conf: float | None = None
+    ) -> None:
         if sym and sym not in found:
-            found.append(sym)
+            found[sym] = SymbolEvidence(sym, method, span, start, field, conf)
 
     # 1. Explicit headline tag prefix: "TMS: ..."
-    m_pref = _PREFIX_TICKER_RE.match(src)
+    m_pref = _PREFIX_TICKER_RE.match(masked)
     if m_pref:
         cand = m_pref.group(1).upper()
         rest_low = src[m_pref.end() :].lower()
@@ -1099,7 +1143,7 @@ def extract_tickers_from_text(
             ctx in rest_low for ctx in _PREFIX_CORP_CONTEXT
         )
         if ambiguous_ok and (is_vn_ticker(cand) or cand in vn_catalog or cand in upper_allowed):
-            _add(cand)
+            _add(cand, "prefix", m_pref.start(1), m_pref.group(1))
 
     # 1b. Exchange-qualified tickers: "HOSE: BID", "(HSX: GAS)", "NASDAQ: NVDA"
     for m_exch in _EXCHANGE_TICKER_RE.finditer(src):
@@ -1109,31 +1153,42 @@ def extract_tickers_from_text(
             continue
         if full_ex in ("HOSE", "HSX", "HNX", "UPCOM"):
             if is_vn_ticker(cand) or cand in vn_catalog or cand in upper_allowed:
-                _add(cand)
+                _add(cand, "exchange", m_exch.start(1), m_exch.group(1))
         elif not upper_allowed or cand in upper_allowed:
-            _add(cand)
+            _add(cand, "exchange", m_exch.start(1), m_exch.group(1))
 
     # 2. Explicit cashtags ($NVDA, $BRK.B, $F)
     for m_cash in _CASHTAG_RE.finditer(src):
         cand = m_cash.group(1).upper()
         if not upper_allowed or cand in upper_allowed or cand in vn_catalog:
-            _add(cand)
+            _add(cand, "cashtag", m_cash.start(1), m_cash.group(1))
 
     # 3. Explicit "co phieu XYZ" / "ma XYZ" phrases (ticker token MUST be uppercase)
-    for m_exp in _EXPLICIT_PHRASE_RE.finditer(src):
+    for m_exp in _EXPLICIT_PHRASE_RE.finditer(masked):
         cand = m_exp.group(1).upper()
         if cand == "IPO":
             continue
         if len(cand) < 3 and cand not in upper_allowed:
             continue
         if _is_known(cand):
-            _add(cand)
+            _add(cand, "phrase", m_exp.start(1), m_exp.group(1))
 
-    # 4. Bare listed tokens (guarded against units, FX slashes, and acronyms)
+    # Stage B (docs/30 + docs/35 M1): validated alias hits (accent-exact,
+    # proper-noun cased, generic phrases never indexed) with confidence.
+    alias_hits = [h for h in resolve_alias_matches(src) if not is_index_code(h.symbol)]
+    alias_spans = [(h.start, h.end) for h in alias_hits]
+
+    def _inside_alias(i: int, j: int) -> bool:
+        return any(a <= i and j <= b for a, b in alias_spans)
+
+    # 4. Bare listed tokens (guarded against units, FX slashes, acronyms,
+    #    place names, index codes and tokens owned by an alias span)
     has_corp_ctx = any(ctx in low_src for ctx in _PREFIX_CORP_CONTEXT)
-    for m_bare in _BARE_TICKER_RE.finditer(src):
+    for m_bare in _BARE_TICKER_RE.finditer(masked):
         cand = m_bare.group(1).upper()
-        if not _is_known(cand):
+        if is_index_code(cand) or not _is_known(cand):
+            continue
+        if _inside_alias(m_bare.start(), m_bare.end()):
             continue
         if _has_unit_or_slash(m_bare.start(), m_bare.end()):
             continue
@@ -1143,35 +1198,30 @@ def extract_tickers_from_text(
             continue
         if all_caps and not has_corp_ctx and len(cand) <= 3 and not any(c.isdigit() for c in cand):
             continue
-        _add(cand)
+        _add(cand, "bare", m_bare.start(), m_bare.group(1))
 
     # 5. Non-3-char global symbols requested explicitly in allowed_symbols (NVDA, TSLA, BRK.B, F)
-    gl_hits: list[tuple[int, str]] = []
+    gl_hits: list[tuple[int, str, str]] = []
     for sym in sorted(upper_allowed):
         if sym in found or _BARE_TICKER_RE.fullmatch(sym) or sym in _AMBIGUOUS_ACRONYMS:
             continue
         pat = _symbol_boundary_regex(sym)
         for m_gl in pat.finditer(src):
             if not _has_unit_or_slash(m_gl.start(), m_gl.end()):
-                gl_hits.append((m_gl.start(), sym))
+                gl_hits.append((m_gl.start(), sym, m_gl.group(0)))
                 break
-    for _pos, sym in sorted(gl_hits):
-        _add(sym)
+    for pos, sym, span in sorted(gl_hits):
+        _add(sym, "bare", pos, span)
 
-    # Stage B (docs/30): canonical bilingual company/brand alias resolver —
-    # "Vinamilk"→VNM, "Địa ốc Hoàng Quân"→HQC, "Thép Hòa Phát"→HPG, … High-
-    # precision by construction (unambiguous registry remainders + curated
-    # brands); merged after the structural passes, filtered by the same
-    # allowed-symbols contract.
-    alias_hits = resolve_alias_tickers(src)
-    for alias_sym in alias_hits:
-        if upper_allowed and alias_sym not in upper_allowed:
+    for hit in alias_hits:
+        if upper_allowed and hit.symbol not in upper_allowed:
             continue
-        _add(alias_sym)
+        _add(hit.symbol, "alias", hit.start, hit.span, hit.confidence)
 
+    ordered = sorted(found.values(), key=lambda e: e.start)
     if upper_allowed:
-        return [s for s in found if s in upper_allowed]
-    return found
+        return [e for e in ordered if e.symbol in upper_allowed]
+    return ordered
 
 
 def is_market_macro_text(text: str) -> bool:
@@ -1337,6 +1387,118 @@ def classify_insider_trade(title: str, detail: str = "") -> InsiderClassificatio
     return InsiderClassification(direction=direction, execution_status=status, shares_count=shares)
 
 
+@dataclass(frozen=True, slots=True)
+class CategoryDecision:
+    """Category with its evidence (docs/35 M2): ``reason`` names the rule and
+    the matched term; ``confidence`` is a fixed per-rule prior (0..1), so
+    consumers can threshold (e.g. >= 0.8) instead of hard-coding classes."""
+
+    scope: EventScope
+    category: NewsCategory
+    severity: SeverityLevel
+    reason: str
+    confidence: float
+
+
+def decide_news_category(
+    title: str,
+    snippet: str,
+    *,
+    symbols: Sequence[str],
+    category_hint: NewsCategory = "general_finance",
+    scope_hint: EventScope = "general",
+) -> CategoryDecision:
+    """Rule-ordered news category with reason + confidence (docs/35 M2)."""
+    from app.retrieval.news_category import rules as R
+
+    low = f"{title} {snippet}".lower()
+    has_syms = bool(symbols)
+    foreign = R.is_foreign(low) and not has_syms
+    subject = R.first_term(low, R.REGULATOR_SUBJECTS)
+    subject_desc = f"symbol {symbols[0]}" if has_syms else (f"'{subject}'" if subject else "")
+
+    def _scope(cat: NewsCategory) -> EventScope:
+        if has_syms:
+            return "ticker"
+        if foreign:
+            return "global"
+        if cat == "macro_policy" or scope_hint == "policy":
+            return "policy"
+        if is_market_macro_text(low) or scope_hint == "market":
+            return "market"
+        return "global" if scope_hint == "global" else scope_hint
+
+    def _out(cat: NewsCategory, sev: SeverityLevel, reason: str, conf: float) -> CategoryDecision:
+        return CategoryDecision(_scope(cat), cat, sev, reason, round(conf, 2))
+
+    # 1. regulatory: enforcement term AND a sanctioned/supervised subject.
+    enforce = R.first_term(low, R.ENFORCEMENT_TERMS)
+    if enforce and (has_syms or subject) and not foreign:
+        reg = classify_regulatory_action(title, snippet)
+        sev: SeverityLevel = reg.severity if reg.risk_level >= 2 else "high"
+        conf = 0.95 if has_syms else 0.85
+        return _out("regulatory", sev, f"regulatory: '{enforce}' + {subject_desc}", conf)
+    warn = R.first_term(low, R.WARNING_TERMS)
+    exch = R.first_term(low, R.EXCHANGE_CONTEXT)
+    if warn and exch and (has_syms or subject) and not _has_positive_reinstatement(low):
+        return _out("regulatory", "high", f"regulatory: '{warn}' + exchange '{exch}'", 0.85)
+
+    # 2. listing_status: Vietnamese exchange subject only.
+    listing_term = R.first_term(low, R.VN_LISTING_TERMS)
+    listing_phrase = R.is_listing_phrase(low)
+    if (listing_phrase or category_hint == "listing_status") and listing_term and not foreign:
+        listing = classify_listing_event(title, snippet)
+        conf = 0.9 if has_syms else 0.75
+        return _out(
+            "listing_status", listing.severity, f"listing: '{listing_phrase or listing_term}'", conf
+        )
+    if listing_phrase and foreign:
+        return _out("general_finance", "info", "foreign listing -> general_finance", 0.7)
+
+    title_low = (title or "").lower()
+    # 3a. Legal instruments outrank issuer vocabulary when no ticker is tagged.
+    strong_policy = R.first_term(title_low, R.STRONG_POLICY_TERMS)
+    if strong_policy and not has_syms:
+        return _out("macro_policy", "info", f"macro_policy: '{strong_policy.strip()}'", 0.8)
+
+    # 3b. corporate_action (incl. subsidiary deals, which are not insider trades).
+    sub_deal = R.subsidiary_deal(low)
+    corp_kw = R.first_term(low, R.CORP_ACTION_TERMS) or R.issuer_action(
+        f"{title} {snippet}", has_syms=has_syms
+    )
+    if corp_kw or sub_deal:
+        return _out(
+            "corporate_action",
+            "medium",
+            f"corporate_action: '{corp_kw or sub_deal}'",
+            0.9 if has_syms else 0.7,
+        )
+
+    # 4. insider_trade: an insider/major-holder actor trading the issuer's shares.
+    # Actor must be named in the headline; fund *products* are not actors.
+    actor_text = re.sub(r"chứng\s+chỉ\s+quỹ|cổ\s+phiếu\s+quỹ|quỹ\s+etf", " ", title_low)
+    actor = R.first_term(f"{actor_text} ", R.INSIDER_ACTORS)
+    if actor and classify_insider_trade(title, snippet).direction != "unknown":
+        return _out(
+            "insider_trade",
+            "medium",
+            f"insider_trade: actor '{actor.strip()}'",
+            0.9 if has_syms else 0.65,
+        )
+
+    # 5. macro / market flow (topic terms read from the TITLE).
+    policy = R.first_term(title_low, R.POLICY_TERMS)
+    if policy and not has_syms:
+        return _out("macro_policy", "info", f"macro_policy: '{policy.strip()}'", 0.7)
+    flow = R.first_term(title_low, R.MARKET_FLOW_TERMS)
+    if flow:
+        return _out("market_flow", "info", f"market_flow: '{flow}'", 0.7)
+
+    if category_hint != "general_finance":
+        return _out(category_hint, "info", f"source_hint: {category_hint}", 0.55)
+    return _out("general_finance", "info", "default", 0.5)
+
+
 def classify_news_scope_and_category(
     title: str,
     snippet: str,
@@ -1345,90 +1507,11 @@ def classify_news_scope_and_category(
     category_hint: NewsCategory = "general_finance",
     scope_hint: EventScope = "general",
 ) -> tuple[EventScope, NewsCategory, SeverityLevel]:
-    """Refine news scope, category, and severity from title/snippet semantics."""
-    low = f"{title} {snippet}".lower()
-    category = category_hint
-    severity: SeverityLevel = "info"
-
-    is_listing_phrase = any(
-        k in low
-        for k in (
-            "hủy niêm yết",
-            "huỷ niêm yết",
-            "hủy bỏ niêm yết",
-            "chấm dứt niêm yết",
-            "ra khỏi diện",
-            "diện cảnh báo",
-            "diện kiểm soát",
-            "hạn chế giao dịch",
-            "tạm ngừng giao dịch",
-            "giao dịch trở lại",
-            "niêm yết bổ sung",
-            "chào sàn",
-            "delisting",
-            "trading halt",
-        )
+    """Backward-compatible triple over :func:`decide_news_category`."""
+    d = decide_news_category(
+        title, snippet, symbols=symbols, category_hint=category_hint, scope_hint=scope_hint
     )
-    has_regulator_enforcement = any(
-        k in low
-        for k in (
-            "ubcknn",
-            "xử phạt",
-            "phạt tiền",
-            "vi phạm hành chính",
-            "thu hồi",
-            "sec enforcement",
-            "fined",
-        )
-    )
-    reg = classify_regulatory_action(title, snippet)
-    if reg.risk_level >= 3 or (
-        reg.risk_level >= 2
-        and (
-            has_regulator_enforcement
-            or (not is_listing_phrase and category_hint != "listing_status")
-        )
-    ):
-        category = "regulatory"
-        severity = reg.severity
-    elif category_hint == "listing_status" or is_listing_phrase:
-        listing = classify_listing_event(title, snippet)
-        category = "listing_status"
-        severity = listing.severity
-    elif any(
-        k in low
-        for k in (
-            "cổ tức",
-            "thưởng cổ phiếu",
-            "cổ phiếu thưởng",
-            "chốt quyền",
-            "gdkhq",
-            "phát hành",
-            "đhđcđ",
-        )
-    ):
-        category = "corporate_action"
-        severity = "medium"
-    elif any(k in low for k in ("nội bộ", "cổ đông lớn", "thoái", "hđqt", "tổng giám đốc")):
-        if classify_insider_trade(title, snippet).direction != "unknown":
-            category = "insider_trade"
-            severity = "medium"
-    elif category_hint == "general_finance" and is_market_macro_text(low):
-        category = (
-            "macro_policy"
-            if any(k in low for k in ("lãi suất", "chính sách", "sbv", "fed"))
-            else "market_flow"
-        )
-
-    if symbols:
-        scope: EventScope = "ticker"
-    elif category == "macro_policy" or scope_hint == "policy":
-        scope = "policy"
-    elif is_market_macro_text(low) or scope_hint == "market":
-        scope = "market"
-    else:
-        scope = scope_hint
-    return scope, category, severity
+    return d.scope, d.category, d.severity
 
 
 # --------------------------------------------------------------------------------------
@@ -1750,6 +1833,14 @@ def deduplicate_news_items(items: Sequence[ParsedNewsItem]) -> list[ParsedNewsIt
             for sym in item.symbols:
                 if sym not in prev.symbols:
                     prev.symbols.append(sym)
+            known_ev = {e.symbol for e in prev.symbol_evidence}
+            for ev in item.symbol_evidence:
+                if ev.symbol not in known_ev:
+                    prev.symbol_evidence.append(ev)
+                    known_ev.add(ev.symbol)
+            for idx_name in item.indices:
+                if idx_name not in prev.indices:
+                    prev.indices.append(idx_name)
             if len(item.title) >= 25 and len(prev.symbols) == 1:
                 only_sym = prev.symbols[0]
                 sym_fp_to_key.setdefault((only_sym, raw_fp), existing_key)
@@ -1769,12 +1860,15 @@ def deduplicate_news_items(items: Sequence[ParsedNewsItem]) -> list[ParsedNewsIt
                 prev.scope = item.scope
             if prev.category == "general_finance" and item.category != "general_finance":
                 prev.category = item.category
+                prev.category_reason = item.category_reason
+                prev.category_confidence = item.category_confidence
             if _SEV_PRIORITY.get(item.severity, 3) < _SEV_PRIORITY.get(prev.severity, 3):
                 prev.severity = item.severity
             if len(item.snippet) > len(prev.snippet):
                 prev.snippet = item.snippet
             if prev.published_at is None and item.published_at is not None:
                 prev.published_at = item.published_at
+                prev.published_at_source = item.published_at_source
                 if prev.event_date is None:
                     prev.date_status = "published_at"
             if prev.event_date is None and item.event_date is not None:
@@ -2081,6 +2175,37 @@ def _atom_child_text(node: Any, *local_names: str) -> str:
     return ""
 
 
+def _tag_and_decide(
+    title: str,
+    tag_snippet: str,
+    cls_snippet: str,
+    *,
+    allowed_symbols: set[str] | frozenset[str] | None,
+    category_hint: NewsCategory = "general_finance",
+    scope_hint: EventScope = "general",
+    explicit_symbols: Sequence[str] | None = None,
+) -> tuple[list[str], list[SymbolEvidence], list[str], CategoryDecision]:
+    """docs/35: symbols + per-field evidence + indices + category decision."""
+    nfc_title = unicodedata.normalize("NFC", title or "")
+    tag_text = f"{nfc_title} {tag_snippet}" if tag_snippet else nfc_title
+    if explicit_symbols:
+        syms = [s for s in explicit_symbols if s]
+        evidence = [SymbolEvidence(s, "caller", s, 0, "caller") for s in syms]
+    else:
+        evidence = split_by_field(
+            extract_ticker_evidence(tag_text, allowed_symbols=allowed_symbols),
+            title_len=len(nfc_title),
+        )
+        syms = []
+        for ev in evidence:
+            if ev.symbol not in syms:
+                syms.append(ev.symbol)
+    decision = decide_news_category(
+        title, cls_snippet, symbols=syms, category_hint=category_hint, scope_hint=scope_hint
+    )
+    return syms, evidence, extract_indices(tag_text), decision
+
+
 def parse_rss_feed_xml(
     xml_text: str,
     *,
@@ -2162,14 +2287,15 @@ def parse_rss_feed_xml(
 
         if not title:
             continue
-        syms = extract_tickers_from_text(f"{title} {desc[:200]}", allowed_symbols=allowed_symbols)
-        scope, category, severity = classify_news_scope_and_category(
+        syms, evidence, indices, decision = _tag_and_decide(
             title,
+            desc[:200],
             desc,
-            symbols=syms,
+            allowed_symbols=allowed_symbols,
             category_hint=category_hint,
             scope_hint=scope_hint,
         )
+        scope, category, severity = decision.scope, decision.category, decision.severity
         # Only bind future/current event_date so past dates cited in fresh articles don't drop them.
         parsed_title_d = (
             _parse_text_date(title) if category in ("listing_status", "corporate_action") else None
@@ -2189,6 +2315,11 @@ def parse_rss_feed_xml(
                 severity=severity,
                 stable_id=stable_document_id(link, source_id=source_id, fallback_text=title),
                 fingerprint=content_fingerprint(title),
+                symbol_evidence=evidence,
+                indices=indices,
+                category_reason=decision.reason,
+                category_confidence=decision.confidence,
+                published_at_source="feed" if pub_dt is not None else None,
             )
         )
     return items
@@ -2233,14 +2364,15 @@ def parse_html_article_links(
         if c_url in seen_urls:
             continue
         seen_urls.add(c_url)
-        syms = extract_tickers_from_text(title, allowed_symbols=allowed_symbols)
-        scope, category, severity = classify_news_scope_and_category(
+        syms, evidence, indices, decision = _tag_and_decide(
             title,
             "",
-            symbols=syms,
+            "",
+            allowed_symbols=allowed_symbols,
             category_hint=category_hint,
             scope_hint=scope_hint,
         )
+        scope, category, severity = decision.scope, decision.category, decision.severity
         items.append(
             ParsedNewsItem(
                 title=title,
@@ -2255,6 +2387,10 @@ def parse_html_article_links(
                 severity=severity,
                 stable_id=stable_document_id(safe_url, source_id=source_id, fallback_text=title),
                 fingerprint=content_fingerprint(title),
+                symbol_evidence=evidence,
+                indices=indices,
+                category_reason=decision.reason,
+                category_confidence=decision.confidence,
             )
         )
         if len(items) >= _MAX_FEED_ITEMS:
@@ -2766,7 +2902,7 @@ def _build_raw_article_items(
     sym_set: set[str],
 ) -> list[ParsedNewsItem]:
     items: list[ParsedNewsItem] = []
-    valid_scopes = {"ticker", "market", "policy", "sector", "general"}
+    valid_scopes = {"ticker", "market", "policy", "sector", "general", "global"}
     valid_cats = {
         "corporate_action",
         "listing_status",
@@ -2792,12 +2928,14 @@ def _build_raw_article_items(
         explicit_syms = [
             str(s).strip().upper() for s in (doc.get("symbols") or []) if str(s).strip()
         ]
-        parsed_syms = explicit_syms or extract_tickers_from_text(
-            f"{title} {snippet}", allowed_symbols=sym_set or None
+        parsed_syms, evidence, indices, decision = _tag_and_decide(
+            title,
+            snippet,
+            snippet,
+            allowed_symbols=sym_set or None,
+            explicit_symbols=explicit_syms or None,
         )
-        scope, category, severity = classify_news_scope_and_category(
-            title, snippet, symbols=parsed_syms
-        )
+        scope, category, severity = decision.scope, decision.category, decision.severity
         if doc.get("scope") in valid_scopes:
             scope = doc["scope"]
         if doc.get("category") in valid_cats:
@@ -2816,6 +2954,11 @@ def _build_raw_article_items(
                 severity=severity,
                 stable_id=stable_document_id(url, source_id=src_id, fallback_text=f"{idx}:{title}"),
                 fingerprint=content_fingerprint(title),
+                symbol_evidence=evidence,
+                indices=indices,
+                category_reason=decision.reason,
+                category_confidence=decision.confidence,
+                published_at_source="caller" if pub_dt is not None else None,
             )
         )
     return items
@@ -2838,20 +2981,32 @@ def _tag_google_news_hits(
     out_items: list[ParsedNewsItem] = []
     boundary_pat = _symbol_boundary_regex(tgt) if tgt != "__broad__" else None
     for h in raw_hits:
-        syms = extract_tickers_from_text(
-            f"{h.title} {h.snippet}",
+        syms, evidence, indices, decision = _tag_and_decide(
+            h.title,
+            h.snippet,
+            h.snippet,
             allowed_symbols=({tgt} | sym_set) if tgt != "__broad__" else (sym_set or None),
         )
-        if (
-            tgt in global_syms
-            and tgt not in syms
-            and boundary_pat is not None
-            and boundary_pat.search(h.title if len(tgt) <= 2 else f"{h.title} {h.snippet}")
-        ):
-            syms.insert(0, tgt)
-        scope, category, severity = classify_news_scope_and_category(
-            h.title, h.snippet, symbols=syms
+        m_tgt = (
+            boundary_pat.search(h.title if len(tgt) <= 2 else f"{h.title} {h.snippet}")
+            if (tgt in global_syms and tgt not in syms and boundary_pat is not None)
+            else None
         )
+        if m_tgt is not None:
+            syms.insert(0, tgt)
+            in_title = m_tgt.start() < len(h.title)
+            evidence.insert(
+                0,
+                SymbolEvidence(
+                    tgt,
+                    "bare",
+                    m_tgt.group(0),
+                    m_tgt.start() if in_title else m_tgt.start() - len(h.title) - 1,
+                    "title" if in_title else "snippet",
+                ),
+            )
+            decision = decide_news_category(h.title, h.snippet, symbols=syms)
+        scope, category, severity = decision.scope, decision.category, decision.severity
         out_items.append(
             ParsedNewsItem(
                 title=h.title,
@@ -2865,9 +3020,114 @@ def _tag_google_news_hits(
                 severity=severity,
                 stable_id=stable_document_id(h.url, source_id="google_news", fallback_text=h.title),
                 fingerprint=content_fingerprint(h.title),
+                symbol_evidence=evidence,
+                indices=indices,
+                category_reason=decision.reason,
+                category_confidence=decision.confidence,
+                published_at_source="feed" if h.published_at is not None else None,
             )
         )
     return out_items
+
+
+# docs/35 M3: article-page date recovery for undated listing items. Dates are
+# immutable, so results (incl. "no date found") are memoised per URL.
+_DATE_MEMO: OrderedDict[str, tuple[float, str | None, str | None]] = OrderedDict()
+_DATE_MEMO_MAX = 4096
+_DATE_MISS_TTL_S = 3600.0
+_DATE_FETCH_MAX = 12
+_DATE_FETCH_CONCURRENCY = 4
+
+
+def _date_memo_get(url: str) -> tuple[str | None, str | None] | None:
+    hit = _DATE_MEMO.get(url)
+    if hit is None:
+        return None
+    ts, iso, src = hit
+    if iso is None and time.monotonic() - ts > _DATE_MISS_TTL_S:
+        _DATE_MEMO.pop(url, None)
+        return None
+    _DATE_MEMO.move_to_end(url)
+    return iso, src
+
+
+def _date_memo_put(url: str, iso: str | None, src: str | None) -> None:
+    _DATE_MEMO[url] = (time.monotonic(), iso, src)
+    _DATE_MEMO.move_to_end(url)
+    while len(_DATE_MEMO) > _DATE_MEMO_MAX:
+        _DATE_MEMO.popitem(last=False)
+
+
+async def _enrich_missing_dates(
+    items: Sequence[ParsedNewsItem],
+    *,
+    deadline: float,
+    breakers: EngineBreakerRegistry,
+    client: httpx.AsyncClient | None,
+) -> int:
+    """Fill ``published_at`` from the article page (meta / JSON-LD) or URL for
+    items without any date. Bounded (<= 12 fetches, 4 concurrent, remaining
+    budget) and fail-open. Returns how many items gained a date."""
+    from app.retrieval.news_dates import published_from_html, published_from_url
+
+    todo = [it for it in items if it.published_at is None and not it.event_date and it.url]
+    gained = 0
+    to_fetch: list[ParsedNewsItem] = []
+    for it in todo:
+        url = it.url or ""
+        memo = _date_memo_get(url)
+        if memo is not None:
+            iso, src = memo
+            if iso:
+                it.published_at = datetime.fromisoformat(iso)
+                it.published_at_source = src
+                gained += 1
+            continue
+        to_fetch.append(it)
+    sem = asyncio.Semaphore(_DATE_FETCH_CONCURRENCY)
+
+    async def _one(it: ParsedNewsItem) -> int:
+        url = it.url or ""
+        async with sem:
+            remaining = _remaining_timeout(deadline, 3.0)
+            dt_val: datetime | None = None
+            src: str | None = None
+            if remaining > 0.3:
+                html, _err = await _fetch_source_text(
+                    it.source_id,
+                    url,
+                    timeout_s=remaining,
+                    breakers=breakers,
+                    client=client,
+                    breaker_name=f"article_date:{it.source_id}",
+                    accept="text/html,application/xhtml+xml",
+                )
+                if html:
+                    dt_val, src = await run_cpu(published_from_html, html)
+            if dt_val is None:
+                dt_val = published_from_url(url)
+                src = "url" if dt_val is not None else None
+            if dt_val is None and remaining <= 0.3:
+                return 0  # skipped for budget: do not memoise a miss
+            _date_memo_put(url, dt_val.isoformat() if dt_val else None, src)
+            if dt_val is None:
+                return 0
+            it.published_at = dt_val
+            it.published_at_source = src
+            return 1
+
+    if to_fetch:
+        results = await asyncio.gather(
+            *(_one(it) for it in to_fetch[:_DATE_FETCH_MAX]), return_exceptions=True
+        )
+        gained += sum(r for r in results if isinstance(r, int))
+        # Items beyond the fetch cap still get the free URL-date check.
+        for it in to_fetch[_DATE_FETCH_MAX:]:
+            dt_val = published_from_url(it.url)
+            if dt_val is not None:
+                it.published_at, it.published_at_source = dt_val, "url"
+                gained += 1
+    return gained
 
 
 async def fetch_market_news_wire(
@@ -2923,7 +3183,8 @@ async def fetch_market_news_wire(
         all_items = await run_cpu(_build_raw_article_items, raw_articles, sym_set)
     else:
         run_vn_wire = (lang != "en") and (bool(vn_syms) or not normalized_syms)
-        cache_key = f"news_wire:v2:{lang}:{'vn' if run_vn_wire else 'global'}"
+        # v3 (docs/35): symbols/categories changed + evidence/reason fields cached.
+        cache_key = f"news_wire:v3:{lang}:{'vn' if run_vn_wire else 'global'}"
         cached_bundle: dict[str, Any] | None = None
         hydrated_cache_items: list[ParsedNewsItem] = []
         hydrated_cache_sources: list[str] = []
@@ -2945,6 +3206,7 @@ async def fetch_market_news_wire(
                         "policy": "policy",
                         "sector": "sector",
                         "general": "general",
+                        "global": "global",
                     }
                     cat_map: dict[str, NewsCategory] = {
                         "corporate_action": "corporate_action",
@@ -3002,6 +3264,20 @@ async def fetch_market_news_wire(
                                 else "info",
                                 stable_id=_opt_str(raw_it.get("stable_id"), 64) or "",
                                 fingerprint=_opt_str(raw_it.get("fingerprint"), 64) or "",
+                                symbol_evidence=_hydrate_evidence(raw_it.get("symbol_evidence")),
+                                indices=[
+                                    str(x)[:16]
+                                    for x in (raw_it.get("indices") or [])[:10]
+                                    if isinstance(x, str)
+                                ]
+                                if isinstance(raw_it.get("indices"), list)
+                                else [],
+                                category_reason=_opt_str(raw_it.get("category_reason"), 200) or "",
+                                category_confidence=_opt_finite_float(
+                                    raw_it.get("category_confidence")
+                                )
+                                or 0.0,
+                                published_at_source=_opt_str(raw_it.get("published_at_source"), 16),
                             )
                         )
                     use_cached_bundle = True
@@ -3186,6 +3462,17 @@ async def fetch_market_news_wire(
                         sources_used.append(sid)
                     all_items.extend(parsed_items)
 
+            # docs/35 M3: recover dates for undated listing items BEFORE caching, so
+            # cached bundles carry them too.
+            try:
+                n_dated = await _enrich_missing_dates(
+                    wire_only_items, deadline=deadline, breakers=reg, client=client
+                )
+                if n_dated:
+                    logger.info("news_wire_dates_recovered count=%s", n_dated)
+            except Exception as exc:  # fail-open: undated items stay undated
+                logger.warning("news_wire_date_enrichment_failed err=%s", type(exc).__name__)
+
             # Never poison full-TTL cache with degraded partial failures.
             if (
                 cache is not None
@@ -3208,6 +3495,11 @@ async def fetch_market_news_wire(
                         "severity": it.severity,
                         "stable_id": it.stable_id,
                         "fingerprint": it.fingerprint,
+                        "symbol_evidence": [e.to_dict() for e in it.symbol_evidence],
+                        "indices": it.indices,
+                        "category_reason": it.category_reason,
+                        "category_confidence": it.category_confidence,
+                        "published_at_source": it.published_at_source,
                     }
                     for it in wire_only_items[:500]
                 ]
@@ -3366,6 +3658,34 @@ def _classify_rss_event_record(item: ParsedNewsItem) -> CorporateEventRecord | N
 
 def _classify_rss_events_batch(parsed_news: Sequence[ParsedNewsItem]) -> list[CorporateEventRecord]:
     return [ev for n in parsed_news if (ev := _classify_rss_event_record(n)) is not None]
+
+
+def _hydrate_evidence(raw: Any) -> list[SymbolEvidence]:
+    """Rebuild cached evidence defensively (cache content is untrusted shape)."""
+    out: list[SymbolEvidence] = []
+    if not isinstance(raw, list):
+        return out
+    for e in raw[:30]:
+        if not isinstance(e, dict):
+            continue
+        sym, method = e.get("symbol"), e.get("method")
+        if not isinstance(sym, str) or method not in ALL_METHODS:
+            continue
+        start = e.get("start")
+        conf = e.get("alias_confidence")
+        out.append(
+            SymbolEvidence(
+                sym[:16],
+                method,
+                str(e.get("span") or "")[:120],
+                start if isinstance(start, int) and not isinstance(start, bool) else 0,
+                str(e.get("field") or "text")[:16],
+                float(conf)
+                if isinstance(conf, int | float) and not isinstance(conf, bool)
+                else None,
+            )
+        )
+    return out
 
 
 def _opt_str(v: Any, max_len: int = 1000) -> str | None:

@@ -32,6 +32,11 @@ from app.core.singleflight import SingleFlight
 from app.extraction import ssrf
 from app.extraction.pinning import build_pinned_request
 from app.extraction.robots import RobotsCache
+from app.extraction.tls_policy import (
+    TLS_VERIFY_FAILED,
+    TLSVerificationFailed,
+    is_tls_verification_error,
+)
 from app.http import get_http_client
 
 if TYPE_CHECKING:
@@ -51,6 +56,10 @@ class PageContent:
     markdown: str
     extractor_used: str  # trafilatura | crawl4ai | jina
     fetched_at: datetime
+    # docs/35 M4: True when the origin's certificate did NOT verify and the caller
+    # explicitly opted into escalation (content came via crawl4ai/Jina). Such pages
+    # are never cached and are reported to API clients as tls_verified=false.
+    insecure_escalation: bool = False
 
 
 @dataclass(slots=True)
@@ -169,6 +178,7 @@ class Scraper:
         timeout_s: float | None = None,
         concurrency: int | None = None,
         progress: Any = None,
+        allow_insecure_escalation: bool = False,
     ) -> list[PageContent | PageFailure]:
         limit = max_pages if max_pages is not None else self._settings.scrape_max_urls
         capped_urls = urls[:limit]
@@ -194,7 +204,10 @@ class Scraper:
 
         async def one(url: str) -> PageContent | PageFailure:
             async with sem:
-                return await self.scrape(url, timeout_s=self._settings.scrape_url_budget_s)
+                # Opt-in kwarg only when set: keeps overridden/faked scrape()
+                # implementations with the pre-4.6 signature working.
+                extra = {"allow_insecure_escalation": True} if allow_insecure_escalation else {}
+                return await self.scrape(url, timeout_s=self._settings.scrape_url_budget_s, **extra)
 
         task_map = {asyncio.create_task(one(u)): u for u in capped_urls}
         pending = set(task_map.keys())
@@ -242,10 +255,22 @@ class Scraper:
         return results
 
     async def scrape(
-        self, url: str, *, timeout_s: float | None = None
+        self,
+        url: str,
+        *,
+        timeout_s: float | None = None,
+        allow_insecure_escalation: bool = False,
     ) -> PageContent | PageFailure:
+        # The opt-in changes the outcome for bad-certificate origins, so the two
+        # modes must never share one in-flight result.
+        flight_key = f"{url}\0insecure" if allow_insecure_escalation else url
         result = await self._single_flight.run(
-            url, lambda: self._scrape_guarded(url, timeout_s=timeout_s)
+            flight_key,
+            lambda: (
+                self._scrape_guarded(url, timeout_s=timeout_s, allow_insecure_escalation=True)
+                if allow_insecure_escalation
+                else self._scrape_guarded(url, timeout_s=timeout_s)
+            ),
         )
         if isinstance(result, PageContent):
             SCRAPE_TOTAL.labels(tier=result.extractor_used or "unknown", outcome="ok").inc()
@@ -254,7 +279,11 @@ class Scraper:
         return result
 
     async def _scrape_guarded(
-        self, url: str, *, timeout_s: float | None = None
+        self,
+        url: str,
+        *,
+        timeout_s: float | None = None,
+        allow_insecure_escalation: bool = False,
     ) -> PageContent | PageFailure:
         timeout = self._settings.scrape_timeout_s if timeout_s is None else timeout_s
         domain = (urlsplit(url).hostname or "").lower()
@@ -265,7 +294,16 @@ class Scraper:
                     url=url, status="failed", error="recently failed (negative cache)"
                 )
             try:
-                page = await self._scrape_uncached(url, timeout)
+                page = (
+                    await self._scrape_uncached(url, timeout, allow_insecure_escalation=True)
+                    if allow_insecure_escalation
+                    else await self._scrape_uncached(url, timeout)
+                )
+            except TLSVerificationFailed:
+                # docs/35 M4: refused, not "failed upstream" — never negative-cached
+                # (cheap to re-check; an opt-in retry must not hit a stale entry).
+                logger.info("scrape_tls_verify_failed_not_escalated", url=url)
+                return PageFailure(url=url, status="failed", error=TLS_VERIFY_FAILED)
             except ssrf.SSRFViolation as exc:
                 logger.info("scrape_blocked_ssrf", url=url, reason=str(exc))
                 await self._mark_failed(url, ttl_s=3600.0)
@@ -307,13 +345,17 @@ class Scraper:
                     markdown=page.markdown[: self._settings.max_page_markdown_chars],
                     extractor_used=page.extractor_used,
                     fetched_at=page.fetched_at,
+                    insecure_escalation=page.insecure_escalation,
                 )
-            await self._cache_page(page)
+            if not page.insecure_escalation:
+                await self._cache_page(page)
             return page
 
     # -- internals ---------------------------------------------------------
 
-    async def _scrape_uncached(self, url: str, timeout_s: float) -> PageContent:
+    async def _scrape_uncached(
+        self, url: str, timeout_s: float, *, allow_insecure_escalation: bool = False
+    ) -> PageContent:
         cached = await self._load_page_cache(url)
         if cached is not None:
             return cached
@@ -329,6 +371,7 @@ class Scraper:
         async with asyncio.timeout(url_budget):
             body: bytes | None = None
             final_url = url
+            insecure = False
             try:
                 body, final_url = await self._guarded_fetch(url, url_budget)
             except httpx.HTTPStatusError as exc:
@@ -342,10 +385,19 @@ class Scraper:
                 else:
                     raise
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
-                # Network-level bot drop or TLS reset: escalate to proxy tier
-                logger.info(
-                    "direct_fetch_network_drop_escalating", url=url, error=type(exc).__name__
-                )
+                if is_tls_verification_error(exc):
+                    # docs/35 M4: a certificate that does not verify is a refusal,
+                    # not a network drop — never fetch it through a proxy tier
+                    # unless the caller explicitly opted in.
+                    if not allow_insecure_escalation:
+                        raise TLSVerificationFailed(url) from exc
+                    insecure = True
+                    logger.warning("direct_fetch_tls_invalid_insecure_escalation", url=url)
+                else:
+                    # Network-level bot drop or TLS reset: escalate to proxy tier
+                    logger.info(
+                        "direct_fetch_network_drop_escalating", url=url, error=type(exc).__name__
+                    )
 
             if body:
                 if is_challenge_page(body):
@@ -414,6 +466,7 @@ class Scraper:
         if page is not None and not is_challenge_page(page.markdown):
             try:
                 await ssrf.resolve_and_check(page.final_url)
+                page.insecure_escalation = insecure
                 return page
             except ssrf.SSRFViolation as exc:
                 logger.warning(
@@ -431,6 +484,7 @@ class Scraper:
         if page is not None and not is_challenge_page(page.markdown):
             try:
                 await ssrf.resolve_and_check(page.final_url)
+                page.insecure_escalation = insecure
                 return page
             except ssrf.SSRFViolation as exc:
                 logger.warning(
@@ -465,6 +519,7 @@ class Scraper:
                 "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
             }
             last_conn_exc: Exception | None = None
+            tls_exc: Exception | None = None
             redirect_target: str | None = None
             body_result: bytes | None = None
 
@@ -502,6 +557,8 @@ class Scraper:
                         break
                 except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                     last_conn_exc = exc
+                    if is_tls_verification_error(exc):
+                        tls_exc = exc
                     logger.info("guarded_fetch_ip_failed_next", ip=ip, url=current, error=str(exc))
                     continue
 
@@ -513,6 +570,8 @@ class Scraper:
                 continue
 
             if last_conn_exc is not None:
+                if tls_exc is not None:
+                    raise tls_exc
                 raise last_conn_exc
             raise RuntimeError(f"could not fetch {current} from any resolved IP")
 

@@ -4413,7 +4413,8 @@
                   "market",
                   "policy",
                   "sector",
-                  "general"
+                  "general",
+                  "global"
                 ],
                 "type": "string"
               },
@@ -4493,6 +4494,16 @@
             "title": "Category",
             "type": "string"
           },
+          "category_confidence": {
+            "default": 0.0,
+            "title": "Category Confidence",
+            "type": "number"
+          },
+          "category_reason": {
+            "default": "",
+            "title": "Category Reason",
+            "type": "string"
+          },
           "date_status": {
             "default": "undated",
             "enum": [
@@ -4523,6 +4534,13 @@
             "title": "Fingerprint",
             "type": "string"
           },
+          "indices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Indices",
+            "type": "array"
+          },
           "is_new": {
             "default": true,
             "title": "Is New",
@@ -4539,6 +4557,17 @@
             ],
             "title": "Published At"
           },
+          "published_at_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At Source"
+          },
           "scope": {
             "default": "general",
             "enum": [
@@ -4546,7 +4575,8 @@
               "market",
               "policy",
               "sector",
-              "general"
+              "general",
+              "global"
             ],
             "title": "Scope",
             "type": "string"
@@ -4574,6 +4604,14 @@
           "stable_id": {
             "title": "Stable Id",
             "type": "string"
+          },
+          "symbol_evidence": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Symbol Evidence",
+            "type": "array"
           },
           "symbols": {
             "items": {
@@ -7201,6 +7239,17 @@
             "title": "Title",
             "type": "string"
           },
+          "tls_verified": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls Verified"
+          },
           "truncated": {
             "default": false,
             "title": "Truncated",
@@ -7220,6 +7269,11 @@
       },
       "ScrapeRequest": {
         "properties": {
+          "allow_insecure_escalation": {
+            "default": false,
+            "title": "Allow Insecure Escalation",
+            "type": "boolean"
+          },
           "max_chars": {
             "default": 200000,
             "maximum": 1000000.0,
