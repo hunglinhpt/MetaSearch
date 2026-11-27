@@ -11,6 +11,7 @@ import asyncio
 import random
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -163,7 +164,10 @@ class SearXNGAdapter:
         results: list[RawResult] = []
         for i, item in enumerate(payload.get("results") or []):
             url = item.get("url")
-            if not url:
+            if not url or not _is_web_url(str(url)):
+                # docs/36 §21: upstream engine parsers break (brave answered
+                # "http:///go/v1/..." for 60/60 results) — never pass a hostless
+                # or non-http(s) URL on to merge/scrape.
                 continue
             results.append(
                 RawResult(
@@ -180,6 +184,11 @@ class SearXNGAdapter:
             if len(results) >= max_results:
                 break
         return results
+
+
+def _is_web_url(url: str) -> bool:
+    parts = urlsplit(url)
+    return parts.scheme in ("http", "https") and bool(parts.hostname)
 
 
 def _as_float(value: Any) -> float | None:

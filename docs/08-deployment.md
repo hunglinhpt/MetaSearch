@@ -36,11 +36,38 @@ cd frontend && npm ci && npm run build:export   # sinh ra frontend/out (đã git
   npm), log ở `api\.lite.ui-build.log`.
 - `metasearch-lite.ps1 open -Port 8000` mở UI trong trình duyệt.
 
+### SearXNG native cho Lite (tuỳ chọn, từ v4.7.2 — docs/36 §21)
+
+Web tổng hợp keyless của Lite (ddg/mwmbl/bing_web) yếu: ddg bị chặn bot, mwmbl khớp câu khuôn
+mẫu. SearXNG chạy **native bằng Python** (không Docker/WSL), ~100 MB RAM, CPU ~0 khi rảnh,
+0,4–1,2 s/truy vấn, chỉ nghe `127.0.0.1`:
+
+```powershell
+.\scripts\windows\searxng-local.ps1 setup          # tải source ghim commit + venv + settings (thư mục ..\searxng-local)
+.\scripts\windows\searxng-local.ps1 start          # 127.0.0.1:8888
+.\scripts\windows\searxng-local.ps1 install-task   # tự chạy khi đăng nhập + kiểm /healthz mỗi 5 phút
+```
+
+Rồi trong env của Lite: `SEARXNG_ENABLED=true`, `SEARXNG_URL=http://127.0.0.1:8888`. SearXNG
+chết → adapter lỗi, các engine khác vẫn trả (graceful degradation).
+
+**DB Lite đã có từ trước**: cấu hình engine trong DB là nguồn chuẩn (hot-config, FR-11) nên dòng
+`searxng` vẫn `enabled=false` như lúc tạo DB — bật một lần bằng
+`PATCH /v1/engines/searxng {"enabled": true}` (admin) rồi kiểm `engines_used` của `/v1/search`.
+
+- Settings sinh từ `deploy/searxng/settings.yml` (`scripts/windows/searxng_local_settings.py`)
+  + override cục bộ: tắt `google`/`qwant` (bị chặn từ egress đã đo), `brave` (trả URL không có host),
+  `inactive` cho `wikipedia`/`wikidata`/`openstreetmap` (cần `contact_url` — không gửi thông tin chủ máy;
+  MetaSearch có adapter Wikipedia riêng) và engine Tor.
+- Source tải từ archive GitHub của commit ghim (không `git checkout`: upstream có tên file chứa `:`,
+  Git for Windows từ chối) — chỉ `searx/` + requirements, `tarfile` filter `data`.
+- Module `pwd` (Unix-only, chỉ dùng trong thông báo lỗi valkey) được thay bằng stub trong venv.
+
 ### Chất lượng đảm bảo thế nào
 
 | Năng lực | Lite profile | Ghi chú |
 |---|---|---|
-| General search | DuckDuckGo keyless + Tavily/Serper/Brave khi có key | Dedup/consensus/diversity/citation giữ nguyên |
+| General search | DuckDuckGo/mwmbl/Bing RSS keyless + SearXNG native (tuỳ chọn) + Tavily/Serper/Brave khi có key | Dedup/consensus/diversity/citation giữ nguyên |
 | Academic/reference | arXiv + Wikipedia (theo lang) | Category filter như thường |
 | Extraction | trafilatura in-process -> Jina Reader keyless | SSRF guard + pinning + robots + 5MB cap giữ nguyên |
 | Persistence | SQLite (WAL) — queries/answers/keys/engine config | Lúc boot chạy `alembic upgrade head` như Postgres; DB cũ tạo bằng `create_all` được bổ sung rồi `stamp head` |

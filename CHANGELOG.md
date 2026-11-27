@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.7.2] - 2026-11-27 — SearXNG native cho Lite trên Windows (docs/36 §21)
+
+### Added
+- **`scripts/windows/searxng-local.ps1`** (`setup|start|stop|restart|status|check|install-task|remove-task`): SearXNG chạy native bằng Python, không Docker/WSL — ~130 MB RAM, CPU ~0 khi rảnh, chỉ nghe `127.0.0.1:8888`, task `MetaSearchSearXNG` (khi đăng nhập) + `MetaSearchSearXNGWatchdog` (kiểm `/healthz` mỗi 5 phút). Source tải từ archive GitHub của commit ghim (`git checkout` hỏng trên Windows vì upstream có tên file chứa `:`; chỉ giải nén `searx/` + requirements, `tarfile` filter `data`). `scripts/windows/searxng_local_settings.py` sinh settings từ `deploy/searxng/settings.yml` + override cục bộ (tắt google/qwant/brave bị chặn hoặc hỏng từ egress đã đo; `inactive` cho wikipedia/wikidata/openstreetmap — cần `contact_url`, không gửi thông tin chủ máy — và engine Tor), giữ secret ổn định, đặt stub `pwd` (module Unix-only chỉ dùng trong thông báo lỗi valkey).
+
+### Fixed
+- Adapter SearXNG bỏ URL không có host hoặc không phải http(s): engine brave của SearXNG trả `http:///go/v1/...` cho 60/60 kết quả.
+
+### Đo (đối đầu cùng code, cùng điều kiện, tắt cache, `--repeat 2`; cả 2 lượt nhất quán)
+- golden VI: strict@5 **0,12 → 0,38**, hit@5 0,12 → 0,42, MRR 0,087 → 0,266.
+- golden_v2: strict@5 0,534 → **0,586**, recall@10 0,306 → 0,389, nDCG@10 0,286 → 0,340.
+- Độ trễ search p50 4,49 s → 4,56 s (SearXNG chạy song song các engine khác); SearXNG ~0,4–1,2 s/truy vấn.
+
 ## [4.7.1] - 2026-11-27 — chất lượng câu trả lời `/v1/answer` (docs/36 §20)
 
 Chẩn đoán từ 29 câu trả lời thật (golden_v2, provider keyless): 18/27 câu trả lời tự nói "nguồn không đủ thông tin", chỉ 55 % marker `[n]` được chunk hỗ trợ, 9/27 câu hỏi tiếng Anh bị trả lời bằng tiếng Việt. Metric `claim_support` 0,47 của eval so câu trả lời với *snippet* tìm kiếm chứ không phải chunk LLM đọc — chủ yếu là lệch phép đo; vấn đề thật là ngữ cảnh mỏng.

@@ -409,3 +409,18 @@ Retrieval: gate chỉ hạ hạng trên `/v1/search`; phát lại tất định 
 ### 20.5 Còn mở
 - 10/20 câu trả lời vẫn nói nguồn không đủ: Lite chỉ có mwmbl + bing_web cho web tổng hợp (ddg bị cách ly) — S1b (Brave key / SearXNG) là đòn bẩy lớn nhất còn lại.
 - Ngân sách `/v1/answer` 12 s chật cho provider keyless chậm; cân nhắc ngân sách theo provider (`max_inflight=1` → nới tổng) khi có số đo.
+
+## 21. SearXNG native cho Lite (2026-11-27, v4.7.2) — đóng S1b
+
+Máy chạy Lite không có Docker/WSL; Brave cần key. SearXNG là Python thuần → chạy native.
+
+| Kiểm | Kết quả |
+|---|---|
+| Chạy native Windows | được, chỉ vướng `import pwd` (stub trong venv) |
+| Tài nguyên | ~130 MB RAM, 6 s CPU cho ~110 truy vấn đo, idle ~0 |
+| Engine từ egress này (8 truy vấn) | google/qwant bị chặn 8/8, brave 60/60 URL không host + rate limit, ddg CAPTCHA 5/8; `google cse` + `bing` tốt |
+| Retrieval đối đầu (cùng code) | VI strict@5 0,12 → 0,38; golden_v2 0,534 → 0,586; latency p50 không đổi |
+
+Bẫy nâng cấp: `SEARXNG_ENABLED=true` không bật engine trên DB Lite có sẵn (DB là nguồn chuẩn cấu hình engine) — cần `PATCH /v1/engines/searxng`. Đã ghi vào docs/08.
+
+Còn mở: kết quả cache cũ (TTL) vẫn có thể chứa rác từ trước khi bật; SearXNG upstream đổi parser → nâng `-Ref` có kiểm (probe ≥ 4 truy vấn như quy tắc engine mới).

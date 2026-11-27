@@ -184,3 +184,26 @@ async def test_top_rank_wait_is_capped_by_grace(monkeypatch):
     results = await scraper.scrape_many(urls)
     assert time.monotonic() - start < 0.8
     assert isinstance({r.url: r for r in results}["https://top1.example"], PageFailure)
+
+
+# --- docs/36 §21: local SearXNG — hostless engine URLs never reach merge/scrape ----------
+
+
+async def test_searxng_adapter_drops_hostless_urls():
+    import httpx
+
+    from app.retrieval.adapters.searxng import SearXNGAdapter
+
+    payload = {
+        "results": [
+            {"url": "http:///go/v1/AeN2uGy1nfSy", "title": "broken", "engines": ["brave"]},
+            {"url": "javascript:alert(1)", "title": "bad scheme", "engines": ["x"]},
+            {"url": "https://www.postgresql.org/docs/", "title": "PostgreSQL", "engines": ["bing"]},
+        ]
+    }
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload))
+    )
+    ad = SearXNGAdapter("http://127.0.0.1:8888", client=client)
+    out = await ad.search("postgresql", max_results=10, timeout_s=2.0)
+    assert [r.url for r in out] == ["https://www.postgresql.org/docs/"]
