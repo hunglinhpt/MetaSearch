@@ -45,6 +45,7 @@ from app.core.metrics import (
     CACHE_EVENTS,
     ENGINE_CALLS,
     ENGINE_LATENCY,
+    OFF_TOPIC_DROPPED,
     SAFE_SEARCH_DROPPED,
     STAGE_DURATION,
 )
@@ -68,6 +69,7 @@ from app.llm.gateway import (
 )
 from app.llm.prompts import (
     SYSTEM_PROMPT,
+    answer_language,
     build_context,
     build_domain_system_prompt,
     build_messages,
@@ -89,6 +91,7 @@ from app.retrieval.memory import (
 from app.retrieval.merger import diversity_cap, merge
 from app.retrieval.models import EngineConfig, EngineStatus, RawResult, ScoredResult
 from app.retrieval.query_expansion import expand_query, expansion_signature, parse_variants
+from app.retrieval.relevance_gate import drop_off_topic
 from app.retrieval.reranker import Reranker, RerankerUnavailable, heuristic_order
 from app.retrieval.router import classify_complexity, extract_implicit_freshness_days
 from app.retrieval.safety import is_adult
@@ -1707,6 +1710,7 @@ class AnswerPipeline:
         outcome = await self.search.run(params, on_event=on_event)
         if not outcome.results:
             raise _no_results(outcome.statuses)
+        outcome = _on_topic(outcome, params.query)
 
         sources = [
             {"url": r.url, "title": r.title, "domain": r.domain, "score": round(r.score, 4)}
@@ -1938,6 +1942,7 @@ class AnswerPipeline:
                 system_prompt=domain_sys,
                 skill_prompt=skill_sel.prompt_instruction if skill_sel else "",
                 memory_context=memory_context,
+                language=answer_language(params.query, params.lang),
             )
 
         # docs/36 A0: never send a prompt the provider is known to reject (413).
@@ -2201,6 +2206,7 @@ class AnswerPipeline:
         outcome = await self.search.run(params)
         if not outcome.results:
             raise _no_results(outcome.statuses)
+        outcome = _on_topic(outcome, params.query)
 
         sources = [
             {
@@ -2272,6 +2278,7 @@ class AnswerPipeline:
             normalized,
             included,
             skill_prompt=skill_sel.prompt_instruction if skill_sel else "",
+            language=answer_language(params.query, params.lang),
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
 
@@ -2716,6 +2723,18 @@ def _no_results(statuses: list[EngineStatus]) -> MetaSearchError:
 
 def _status_map(statuses: list[EngineStatus]) -> dict[str, str]:
     return {s.engine: s.status for s in statuses}
+
+
+def _on_topic(outcome: SearchOutcome, query: str) -> SearchOutcome:
+    """docs/36 §20 Q1: off-topic results are neither scraped nor put in the prompt.
+
+    A copy: the cached search outcome is shared and must stay untouched."""
+    kept, dropped = drop_off_topic(query, list(outcome.results))
+    if not dropped:
+        return outcome
+    OFF_TOPIC_DROPPED.inc(dropped)
+    logger.info("context_off_topic_dropped", dropped=dropped, kept=len(kept))
+    return dataclasses.replace(outcome, results=kept)
 
 
 def _llm_scarce(gateway: Any) -> bool:

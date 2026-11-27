@@ -63,12 +63,16 @@ async def test_record_memory_skips_recent_duplicates(mem_db):
 # --- X1: grounding status ------------------------------------------------------------
 
 
-def _claims(flagged: int = 0, fid: float = 1.0, unverified: list[str] | None = None):
+_S1 = "PostgreSQL dùng MVCC để cô lập giao dịch [1]."
+_S2 = "Mỗi hàng có xmin và xmax [2]."
+
+
+def _claims(flagged: int = 0, fid: float = 1.0, unverified: list[str] | None = None, rows=()):
     from app.llm.citations import ClaimCheck
 
     return ClaimCheck(
-        unsupported_markers=[1] if flagged else [],
-        flagged_sentences=["x"] * flagged,
+        unsupported_markers=[1] if flagged or rows else [],
+        flagged_sentences=[_S1, _S2][:flagged] + list(rows),
         numeric_fidelity=fid,
         unverified_numbers=unverified or [],
     )
@@ -95,6 +99,10 @@ def test_grounding_status_ladder():
         text + " Câu này không có nguồn. Câu kia cũng vậy thôi. Thêm một câu nữa. Và câu cuối cùng."
     )
     assert grounding_summary(mostly_uncited, _claims())["status"] == "partial"
+    # docs/36 §20 Q3: a flagged table row is not one of the cited prose sentences.
+    table = text + "\n| Loại | Mô tả |\n|---|---|\n| Logical | Nguồn chỉ nêu tên [1] |"
+    g = grounding_summary(table, _claims(rows=["| Logical | Nguồn chỉ nêu tên [1] |"]))
+    assert g["unsupported_sentences"] == 0 and g["status"] == "grounded"
 
 
 # --- X2: passage offsets --------------------------------------------------------------

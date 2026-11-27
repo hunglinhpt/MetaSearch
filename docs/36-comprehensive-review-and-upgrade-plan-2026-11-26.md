@@ -372,3 +372,40 @@ thêm `strict_hit_at_5`; nightly chạy `--repeat 2` với `CACHE_ENABLED=false`
 | — | info | `/v1/engines` hiển thị `disabled_reason="released:…"` cho engine đang bật | có chủ đích (mốc kiểm toán), ghi ở đây |
 
 Còn mở: R1b chạy đủ (cần LLM có key) · S1b nguồn web VI (cần key Brave/SearXNG cục bộ) · claim_support câu trả lời 0,47.
+
+## 20. Đợt 4 (2026-11-27, v4.7.1) — chất lượng câu trả lời
+
+### 20.1 Chẩn đoán (29 câu golden_v2 thật, lưu nguyên văn câu trả lời)
+
+| Hiện tượng | Số đo | Gốc rễ |
+|---|---|---|
+| `claim_support` 0,47 (eval) | so với snippet tìm kiếm, không phải chunk LLM đọc | lệch phép đo — dùng `unsupported_markers` (server, chunk thật) |
+| Câu trả lời tự nói "nguồn không đủ" | 18/27 | ngữ cảnh mỏng: kết quả lạc đề (mwmbl khớp câu khuôn mẫu "how does it differ") + scrape huỷ trang hạng cao |
+| Marker `[n]` được chunk hỗ trợ | 0,55 | như trên |
+| Câu hỏi EN trả lời bằng VI | 9/27 | `lang` không bao giờ tới prompt |
+| `grounding.unsupported_sentences` > `cited_sentences` | câu 1 | đếm trên hai tập câu khác nhau |
+
+### 20.2 Đã sửa — Q1 gate lạc đề, Q2 scrape chờ hạng đầu (trần 1 s), Q3 đếm grounding, Q4 ngôn ngữ trả lời (chi tiết: CHANGELOG 4.7.1)
+
+### 20.3 Số đo (so theo cặp 20 câu trả lời được ở mọi lượt)
+
+| Chỉ số | v4.7.0 | v4.7.1 |
+|---|---|---|
+| Marker được hỗ trợ | 0,50 | **0,84** |
+| Câu trả lời "nguồn không đủ" | 13/20 | **10/20** |
+| Nguồn được trích dẫn / câu trả lời | 2,40 | 2,75 |
+| EN → VI sai ngôn ngữ (29 câu) | 9 | **0** |
+| 504 hết giờ (29 câu) | 2 | **0** |
+
+Lượt trung gian (chờ hạng đầu không trần) cho 504 = 4: mỗi giây scrape là một giây lấy của LLM trong ngân sách 12 s — lý do có `SCRAPE_TOP_GRACE_S`.
+
+Retrieval: gate chỉ hạ hạng trên `/v1/search`; phát lại tất định 49 câu strict@5 0,224 → 0,224 (0 tăng/0 giảm). Đối đầu live `--repeat 2` lệch 1 câu mỗi bộ, lượt 2 của bản mới ≥ bản cũ → nhiễu engine.
+
+### 20.4 Bài học / quy tắc
+- **Quota keyless dùng chung IP với Lite :8000**: pollinations 100 câu/ngày/IP. 3 lượt đo answer 29 câu (+ lượt dở) đốt hết quota ngày 27/11 — Lite local trả 503 tới 00:00 UTC. Quy tắc: tối đa **1 lượt đo answer keyless/ngày**; đo nhiều lượt cần LLM có key.
+- Đo câu trả lời bằng chỉ số có định nghĩa không đổi giữa hai phiên bản (`unsupported_markers`, số nguồn trích, ngôn ngữ) khi chính metric `grounding` cũng được sửa.
+- Một thay đổi thời gian ở pha scrape phải đo cả tỉ lệ 504 của `/v1/answer`.
+
+### 20.5 Còn mở
+- 10/20 câu trả lời vẫn nói nguồn không đủ: Lite chỉ có mwmbl + bing_web cho web tổng hợp (ddg bị cách ly) — S1b (Brave key / SearXNG) là đòn bẩy lớn nhất còn lại.
+- Ngân sách `/v1/answer` 12 s chật cho provider keyless chậm; cân nhắc ngân sách theo provider (`max_inflight=1` → nới tổng) khi có số đo.

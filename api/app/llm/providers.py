@@ -178,12 +178,14 @@ LLM_PROVIDER_PRESETS: dict[str, LLMProviderPreset] = {
         description=(
             "Zero-config community OpenAI-compatible endpoint requiring NO API key and no signup. "
             "The free Classic API serves one model (openai-fast), answers one request at a "
-            "time per IP and caps prompts at 16,000 characters."
+            "time per IP, caps prompts at 16,000 characters and allows 100 replies a day per "
+            "IP (resets 00:00 UTC). Fine for a personal instance, not for evals or shared use."
         ),
         recommended_models=["openai-fast", "openai"],
         free_tier_type="keyless_free",
         # Measured 2026-11-26: HTTP 413 PAYLOAD_TOO_LARGE "16,000 characters max";
-        # HTTP 429 "answers 1 request at a time per IP".
+        # HTTP 429 "answers 1 request at a time per IP". 2026-11-27: HTTP 402 FREE_LIMIT
+        # "100 replies a day per IP" -> overloaded 503 + Retry-After until 00:00 UTC.
         max_prompt_chars=16_000,
         max_inflight=1,
     ),

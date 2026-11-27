@@ -1,5 +1,20 @@
 # Changelog
 
+## [4.7.1] - 2026-11-27 — chất lượng câu trả lời `/v1/answer` (docs/36 §20)
+
+Chẩn đoán từ 29 câu trả lời thật (golden_v2, provider keyless): 18/27 câu trả lời tự nói "nguồn không đủ thông tin", chỉ 55 % marker `[n]` được chunk hỗ trợ, 9/27 câu hỏi tiếng Anh bị trả lời bằng tiếng Việt. Metric `claim_support` 0,47 của eval so câu trả lời với *snippet* tìm kiếm chứ không phải chunk LLM đọc — chủ yếu là lệch phép đo; vấn đề thật là ngữ cảnh mỏng.
+
+### Fixed
+- **Q1 kết quả lạc đề vào ngữ cảnh** (`app/retrieval/relevance_gate.py` mới): nguồn web Lite khớp theo câu khuôn mẫu — "PostgreSQL logical replication … how does it differ" nhận về "What is a VNC and how does it differ from a VPN?", "What is ray tracing…" (9/10 kết quả). Kết quả bị coi là lạc đề khi độ liên quan từ khoá < 0,3 **và** < 0,4 × kết quả tốt nhất cùng lô **và** không chứa *từ neo* của câu hỏi (tên riêng/viết tắt/mã có số: PostgreSQL, BERT, 10-K, TNCN). Phát lại trên 540 kết quả gắn nhãn của 2 bộ vàng: loại 167, **0/52 kết quả vàng bị mất** (không có từ neo thì mất 9). `/v1/answer`, `/v1/context`: kết quả lạc đề không được scrape, không vào prompt (counter `metasearch_context_off_topic_dropped_total`); `/v1/search`: chỉ hạ hạng (× 0,45), không xoá — phát lại tất định: strict@5 không đổi trên 49 câu (0 tăng, 0 giảm).
+- **Q2 scrape huỷ trang hạng cao**: early exit mềm cũ dừng khi *bất kỳ* 3 trang nào xong, nên 3 trang lạc đề về nhanh huỷ trang pgDash hạng 1 (trang liên quan duy nhất). Nay chờ thêm cho 3 URL hạng đầu, tối đa `SCRAPE_TOP_GRACE_S` (mặc định 1 s) sau mốc mềm — đo: chờ không trần làm 504 tăng 2 → 4 vì LLM keyless cần 6–8 s trong ngân sách 12 s; có trần: 0 lượt 504. Vòng chờ sau mốc mềm không còn thức dậy mỗi 10 ms.
+- **Q3 `grounding` đếm lệch tập**: câu bị gắn cờ được đếm cả dòng bảng còn câu có trích dẫn thì không (`unsupported_sentences` > `cited_sentences` → "weak" sai). Nay đếm trên cùng tập câu văn xuôi.
+- **Q4 sai ngôn ngữ trả lời**: `lang` của request không bao giờ tới prompt. Nay `answer_language()` (lang của request → chữ có dấu tiếng Việt → ASCII có từ chức năng tiếng Anh; tiếng Việt không dấu không bị nhầm) thêm dòng "Answer language: …" sau câu hỏi trong lượt user; system prefix giữ nguyên byte (prompt cache). `/v1/context` trả kèm trong `messages`.
+
+### Đo (instance tách riêng, tắt cache, cùng 29 câu; so theo cặp 20 câu trả lời được ở mọi lượt)
+- Marker được hỗ trợ **0,50 → 0,84**; câu trả lời "nguồn không đủ" 13/20 → **10/20**; nguồn được trích dẫn 2,40 → 2,75; câu hỏi tiếng Anh trả lời bằng tiếng Việt **9 → 0**; 504 do hết giờ 2 → **0**.
+- Retrieval đối đầu v4.7.0 cùng điều kiện (`--repeat 2`): golden_v2 strict@5 0,552 vs 0,517 (lượt 2 của bản mới 0,586), VI 0,16 vs 0,12 (lượt 2: 0,16 = 0,16) — dao động engine live, khớp phát lại tất định ở trên.
+- Pollinations keyless còn giới hạn **100 câu trả lời/ngày/IP** (HTTP 402 FREE_LIMIT, reset 00:00 UTC) — hệ thống trả 503 + Retry-After đúng; ghi vào preset.
+
 ## [4.7.0] - 2026-11-27 — W1 "đo được & chạy lại được" + W2 "khôi phục answer & retrieval" (docs/36 §16–§19)
 
 ### Fixed

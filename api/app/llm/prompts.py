@@ -127,6 +127,49 @@ def render_context(included: list[tuple[int, Chunk]]) -> str:
     return "\n\n".join(blocks)
 
 
+_LANG_NAMES = {
+    "vi": "Vietnamese",
+    "en": "English",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "ru": "Russian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh": "Chinese",
+    "th": "Thai",
+    "id": "Indonesian",
+}
+_VI_LETTERS = re.compile("[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]")
+# English function words that never occur in unaccented Vietnamese ("the"/"to"/"an"/
+# "in"/"do" do: thể/tô/ăn/in/do), so "cach nau pho" is never taken for English.
+_EN_HINT = re.compile(
+    r"\b(what|how|why|when|which|is|are|of|for|and|with|does|latest|best|from|vs)\b",
+    re.IGNORECASE,
+)
+
+
+def answer_language(question: str, lang: str | None = None) -> str | None:
+    """docs/36 §20 Q4: the language the answer must be written in, when known.
+
+    The request's ``lang`` wins; otherwise Vietnamese letters, otherwise ASCII text
+    with English function words. ``None`` = unknown (the system rule still asks for
+    the question's language). Measured: golden queries sent with lang="en" came
+    back in Vietnamese ~1 in 4 times because ``lang`` never reached the prompt.
+    """
+    code = (lang or "").split("-")[0].lower().strip()
+    if code and code not in ("auto", "all"):
+        return _LANG_NAMES.get(code)
+    q = question or ""
+    if _VI_LETTERS.search(q.lower()):
+        return "Vietnamese"
+    if q.isascii() and _EN_HINT.search(q):
+        return "English"
+    return None
+
+
 def build_messages(
     question: str,
     included: list[tuple[int, Chunk]],
@@ -134,6 +177,7 @@ def build_messages(
     system_prompt: str = SYSTEM_PROMPT,
     skill_prompt: str = "",
     memory_context: str = "",
+    language: str | None = None,
 ) -> list[dict[str, str]]:
     from app.llm.compressor import CacheAligner
 
@@ -142,6 +186,7 @@ def build_messages(
         system_prompt=system_prompt,
         sources_md=render_context(included),
         question=question,
+        answer_language=language,
         skill_prompt=skill_prompt,
         memory_context=memory_context,
     )

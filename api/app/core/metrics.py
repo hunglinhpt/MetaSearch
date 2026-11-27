@@ -166,6 +166,11 @@ SAFE_SEARCH_DROPPED = Counter(
     "Results dropped by the adult-content filter (docs/36 W2)",
     registry=REGISTRY,
 )
+OFF_TOPIC_DROPPED = Counter(
+    "metasearch_context_off_topic_dropped_total",
+    "Search results kept out of answer/context scraping as off-topic (docs/36 §20 Q1)",
+    registry=REGISTRY,
+)
 PROCESS_RSS = Gauge(
     "metasearch_process_rss_bytes",
     "Process resident set size in bytes",

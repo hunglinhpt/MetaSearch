@@ -298,6 +298,7 @@ class CacheAligner:
         question: str,
         skill_prompt: str = "",
         memory_context: str = "",
+        answer_language: str | None = None,
     ) -> list[dict[str, str]]:
         sys_parts = [system_prompt.strip()]
         if skill_prompt.strip():
@@ -316,6 +317,13 @@ class CacheAligner:
             )
         user_parts.append(f"Sources:\n\n{sources_md}")
         user_parts.append(f"Question: {question}")
+        if answer_language:
+            # docs/36 §20 Q4: in the user turn, after the question — the system prefix
+            # stays byte-identical (prompt-cache friendly).
+            user_parts.append(
+                f"Answer language: {answer_language}. Write the whole answer in "
+                f"{answer_language}, even where the sources use another language."
+            )
         return [
             {"role": "system", "content": static_system},
             {"role": "user", "content": "\n\n".join(user_parts)},

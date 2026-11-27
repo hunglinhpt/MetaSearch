@@ -12,6 +12,7 @@ from app.core.logging import get_logger
 from app.retrieval.boosts import BoostRule, apply_boosts
 from app.retrieval.canonical import canonicalize
 from app.retrieval.models import EngineConfig, RawResult, ScoredResult
+from app.retrieval.relevance_gate import off_topic_flags
 from app.retrieval.scoring import apply_signals, compute_batch_idf, tokenize, tokenize_dual
 from app.retrieval.simhash import is_near_duplicate, simhash64
 
@@ -150,6 +151,13 @@ def merge(
         item.score = min(raw_score, 1.0)
         if boosts:
             apply_boosts(item, query, boosts)
+
+    # docs/36 §20 Q1: boilerplate matches ("…how does it differ from…") rank below
+    # every on-topic result instead of filling the page. Same factor as the
+    # zero-relevance penalty above; never applied twice.
+    for item, off in zip(merged, off_topic_flags(query, merged), strict=True):
+        if off and item.keyword_relevance > 0.0 and item.data_kind != "computed":
+            item.score *= 0.45
 
     merged.sort(key=lambda r: (-r.score, r.best_rank, r.canonical_url))
     return _drop_near_duplicates(merged)

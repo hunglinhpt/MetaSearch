@@ -436,6 +436,8 @@ class Settings(BaseSettings):
     scrape_min_pages: int = 3
     scrape_soft_budget_s: float = 2.5
     scrape_url_budget_s: float = 4.0
+    # docs/36 §20 Q2: extra wait for the top-ranked pages after the soft budget.
+    scrape_top_grace_s: float = Field(default=1.0, ge=0.0, le=5.0)
     scrape_max_urls: int = 8
     scrape_timeout_s: float = 8.0
     scrape_concurrency: int = 6

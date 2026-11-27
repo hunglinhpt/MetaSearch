@@ -211,6 +211,14 @@ class Scraper:
 
         task_map = {asyncio.create_task(one(u)): u for u in capped_urls}
         pending = set(task_map.keys())
+        # docs/36 §20 Q2: URLs arrive in rank order. The soft early exit used to fire
+        # on ANY min_pages successes, so three fast low-ranked pages cancelled the
+        # top-ranked one (the only relevant page for the PostgreSQL golden query).
+        # The early exit now also waits for the top min_pages URLs — for at most
+        # scrape_top_grace_s past the soft mark: on /v1/answer every second spent here
+        # is taken from the LLM (12 s route budget; keyless providers need 6-8 s).
+        top_tasks = set(list(task_map.keys())[:min_pages])
+        top_deadline = soft_budget + max(0.0, float(self._settings.scrape_top_grace_s))
         results: list[PageContent | PageFailure] = []
         ok_pages = 0
         start_mono = time.monotonic()
@@ -220,13 +228,19 @@ class Scraper:
             remaining_stage = stage_budget - elapsed
             if remaining_stage <= 0.0:
                 break
-            if elapsed >= soft_budget and ok_pages >= min_pages:
+            top_pending = elapsed < top_deadline and bool(pending & top_tasks)
+            if elapsed >= soft_budget and ok_pages >= min_pages and not top_pending:
                 break
 
-            step_timeout = min(
-                remaining_stage,
-                max(0.01, soft_budget - elapsed) if ok_pages < min_pages else 0.05,
-            )
+            if ok_pages < min_pages:
+                # Before the soft mark: wake at it. After it: wake on the next
+                # completion (FIRST_COMPLETED) — no 10 ms polling loop.
+                step_timeout = soft_budget - elapsed if elapsed < soft_budget else remaining_stage
+            elif top_pending:
+                step_timeout = (soft_budget if elapsed < soft_budget else top_deadline) - elapsed
+            else:
+                step_timeout = 0.05
+            step_timeout = max(0.01, min(remaining_stage, step_timeout))
             done_batch, pending = await asyncio.wait(
                 pending, timeout=step_timeout, return_when=asyncio.FIRST_COMPLETED
             )

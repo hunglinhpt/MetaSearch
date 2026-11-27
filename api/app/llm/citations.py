@@ -134,7 +134,11 @@ def grounding_summary(text: str, claims: ClaimCheck) -> dict[str, object]:
         if not s.startswith(("#", "|")) and len(_CITATION_RE.sub("", s).split()) >= 3
     ]
     cited = [s for s in prose if _CITATION_RE.search(s)]
-    unsupported = len(claims.flagged_sentences)
+    # docs/36 §20 Q3: count flags over the SAME population as ``cited`` — check_claims
+    # also flags table rows / short lines, which made unsupported > cited ("weak"
+    # for an answer whose only prose sentence was supported).
+    flagged = set(claims.flagged_sentences)
+    unsupported = sum(1 for s in cited if s[:300] in flagged)
     coverage = round(len(cited) / len(prose), 3) if prose else 0.0
     if not cited:
         status = "ungrounded"
