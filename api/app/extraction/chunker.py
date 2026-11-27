@@ -31,6 +31,12 @@ class Chunk:
     # ("published 2026-11-02 · 3d ago") so the LLM can prefer recent sources
     # and state as-of dates instead of treating a 2019 post like today's wire.
     date_hint: str = ""
+    # docs/36 X2 (XERJ ``_passage``): character span of this chunk inside the
+    # extracted document text, and the PDF page when the text came from one.
+    # None when the span could not be located (never guessed).
+    start_offset: int | None = None
+    end_offset: int | None = None
+    page: int | None = None
 
 
 def _new_chunk(
@@ -58,6 +64,42 @@ def _new_chunk(
     )
 
 
+_PAGE_RE = re.compile(r"(?:^|>\s*)p\.(\d{1,5})\b")
+_ANCHOR_WORDS = 8
+
+
+def _anchor(words: list[str]) -> re.Pattern[str]:
+    return re.compile(r"\s+".join(re.escape(w) for w in words))
+
+
+def assign_offsets(markdown: str, chunks: list[Chunk]) -> None:
+    """docs/36 X2: locate each chunk in ``markdown`` (whitespace-insensitive).
+
+    Chunks are in document order and may overlap, so the search for chunk i
+    starts at chunk i-1's start. A chunk whose anchors are not found keeps None.
+    """
+    cursor = 0
+    for chunk in chunks:
+        page_m = _PAGE_RE.search(chunk.heading_path or "")
+        if page_m:
+            chunk.page = int(page_m.group(1))
+        words = chunk.content.split()
+        if not words:
+            continue
+        # Bounded windows: an anchor that is not found must not rescan the rest
+        # of a multi-MB document for every chunk (that would be quadratic).
+        span = 3 * len(chunk.content) + 2000
+        head = _anchor(words[:_ANCHOR_WORDS]).search(markdown, cursor, cursor + 2 * span)
+        if head is None:
+            continue
+        tail = _anchor(words[-_ANCHOR_WORDS:]).search(markdown, head.start(), head.start() + span)
+        if tail is None:
+            continue
+        chunk.start_offset = head.start()
+        chunk.end_offset = tail.end()
+        cursor = head.start()
+
+
 def chunk_markdown(markdown: str, *, document_url: str, source_title: str) -> list[Chunk]:
     """Split ``markdown`` into overlapping chunks, tracking heading paths."""
     chunks: list[Chunk] = []
@@ -80,6 +122,8 @@ def chunk_markdown(markdown: str, *, document_url: str, source_title: str) -> li
                 source_title=source_title.strip(),
             )
         )
+        return chunks  # title fallback: not a span of the document
+    assign_offsets(markdown, chunks)
     return chunks
 
 

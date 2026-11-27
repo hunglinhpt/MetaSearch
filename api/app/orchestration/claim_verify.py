@@ -35,7 +35,6 @@ from typing import Any
 from app.core.logging import get_logger
 from app.llm.citations import (
     canon_number,
-    extract_numeric_tokens,
     lexical_entailment,
     number_present,
     numbers_in,
@@ -118,6 +117,18 @@ _REFUTE_CUES: tuple[str, ...] = (
 # Such a window can never count as support; it stays "mentions" unless the
 # claim itself is phrased as hearsay.
 _HEARSAY_CUES: tuple[str, ...] = (
+    # docs/36 T1: myths are usually restated next to the word "myth".
+    "myth",
+    "misconception",
+    "popular belief",
+    "commonly believed",
+    "widely believed",
+    "it is often said",
+    "contrary to popular",
+    "lầm tưởng",
+    "quan niệm sai",
+    "ngộ nhận",
+    "người ta thường cho rằng",
     "claimed",
     "claims that",
     "claim that",
@@ -162,6 +173,8 @@ class ChunkAssessment:
     refute_cue: str | None
     polarity_flip: bool
     hearsay: bool = False
+    missing_terms: tuple[str, ...] = ()
+    ordered: float = 0.0
 
 
 @dataclass(slots=True)
@@ -182,6 +195,7 @@ class EvidenceOut:
     fetched_at: str | None
     weight: float = 0.0
     hearsay: bool = False
+    missing_terms: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -197,6 +211,7 @@ class EvidenceOut:
             "refute_cue": self.refute_cue,
             "polarity_flip": self.polarity_flip,
             "hearsay": self.hearsay,
+            "missing_terms": list(self.missing_terms),
             "judge": self.judge,
             "published_at": self.published_at,
             "fetched_at": self.fetched_at,
@@ -247,9 +262,11 @@ def _find_cue(low: str) -> str | None:
     return None
 
 
-def _windows(content: str) -> list[str]:
-    """Sentence windows (sentence + its successor) so a claim split over two
-    sentences in the source is still matched; bounded to the first 60."""
+def _sentences(content: str) -> list[str]:
+    """Single sentences (long unpunctuated runs cut into 40-word windows),
+    bounded to the first 60. docs/36 T1: 2-sentence windows let a claim's
+    entities be satisfied by two DIFFERENT sentences ("Hà Nội … / … Thái Lan"),
+    which made contradictions look supported."""
     sentences: list[str] = []
     for sent in split_sentences(content or ""):
         words = sent.split()
@@ -264,13 +281,73 @@ def _windows(content: str) -> list[str]:
             sentences.append(" ".join(words[i : i + _WINDOW_WORDS]))
             if i + _WINDOW_WORDS >= len(words):
                 break
-    sentences = sentences[:60]
-    if not sentences:
-        return []
-    out = []
-    for i, s in enumerate(sentences):
-        out.append(s if i + 1 >= len(sentences) else f"{s} {sentences[i + 1]}")
-    return out
+    return sentences[:60]
+
+
+_windows = _sentences  # backward-compatible name
+
+
+_CLAIM_NUM_RE = re.compile(r"\d[\d.,]*(?:\s*%)?")
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+# Legal-form suffixes are not entities ("Apple Inc." is cited as "Apple").
+_LEGAL_SUFFIXES = frozenset(
+    {"inc", "corp", "corporation", "ltd", "llc", "plc", "co", "jsc", "ctcp", "sa", "ag", "gmbh"}
+)
+
+
+def key_terms(claim: str) -> tuple[list[str], list[str]]:
+    """``(numbers, entity_words)`` the evidence MUST contain to support the claim.
+
+    numbers: every figure INCLUDING years (a wrong year is a wrong claim);
+    entity_words: capitalised / all-caps words that are not stopwords, folded
+    ("Canada" in "central bank of Canada", "Thái Lan", "FPT")."""
+    from app.retrieval.scoring import tokenize
+
+    nums: list[str] = []
+    for m in _CLAIM_NUM_RE.findall(claim or ""):
+        tok = canon_number(m.replace(" ", "")).rstrip(".,")
+        if tok and tok not in nums:
+            nums.append(tok)
+    words: list[str] = []
+    for w in _WORD_RE.findall(claim or ""):
+        if not w[0].isupper() or w.lower() in _LEGAL_SUFFIXES:
+            continue
+        folded = tokenize(w)
+        for t in folded:
+            if t not in words:
+                words.append(t)
+    return nums, words
+
+
+def _missing_terms(nums: list[str], words: list[str], sentence: str) -> list[str]:
+    from app.retrieval.scoring import tokenize
+
+    present_nums = numbers_in(sentence)
+    sent_tokens = set(tokenize(sentence))
+    missing = [n for n in nums if not number_present(n, present_nums)]
+    missing += [w for w in words if w not in sent_tokens]
+    return missing
+
+
+def ordered_coverage(claim: str, sentence: str) -> float:
+    """Share of the claim's content tokens appearing IN ORDER in the sentence
+    (LCS / claim length). Bag-of-words entailment cannot tell "A is the capital
+    of B" from a sentence that mentions A, capital and B in another relation."""
+    from app.retrieval.scoring import tokenize
+
+    a = tokenize(claim)[:40]
+    b = tokenize(sentence)[:200]
+    if not a:
+        return 1.0
+    prev = [0] * (len(b) + 1)
+    for x in a:
+        cur = [0] * (len(b) + 1)
+        for j, y in enumerate(b, start=1):
+            cur[j] = prev[j - 1] + 1 if x == y else max(prev[j], cur[j - 1])
+        prev = cur
+    return prev[-1] / len(a)
 
 
 # Kept as module aliases: tests and callers address them via this module.
@@ -285,42 +362,153 @@ def _numeric_share(claim_nums: list[str], text: str) -> float:
     return sum(1 for tok in claim_nums if number_present(tok, nums)) / len(claim_nums)
 
 
+ORDERED_MIN = 0.6  # LCS share of claim tokens, in order, for support
+NONKEY_MIN = 0.67  # share of the claim's relation words (non-entity) present
+
+# Hedged / contrasting phrasing never counts as support unless the claim itself
+# is hedged ("may have a longer memory than just three seconds", "có thể hỗ trợ").
+_HEDGE_RE = re.compile(
+    r"(?i)(?<![\w])(?:may|might|could|possibly|than just|more than|not just|có thể|"
+    r"chưa chắc|không hẳn"
+    # Intention / process, not a completed event: "đơn xin gia nhập" (an
+    # application to join) is not "gia nhập" (joined) — live gold f07.
+    r"|đơn xin|xin gia nhập|nộp đơn|dự kiến|kế hoạch|đề xuất|đàm phán|"
+    r"plans? to|planned|proposed|applied|application|expected to|aims? to)(?![\w])"
+)
+
+
+# Generic time/unit words are not relation anchors ("năm 1995", "in 2001").
+_TIME_WORDS = frozenset(
+    {"nam", "year", "years", "thang", "month", "ngay", "day", "quy", "quarter", "since", "tu"}
+)
+_ANCHOR_SPAN = 60  # characters either side of a figure in the evidence sentence
+
+
+def figures_anchored(claim: str, sentence: str, key_words: list[str]) -> bool:
+    """Each claim figure must sit next to the SAME relation in the evidence.
+
+    "Việt Nam gia nhập WTO năm 1995" vs "… gia nhập WTO năm 2007 (WTO thành lập
+    năm 1995)": every word and the number 1995 are present, but 1995 belongs to
+    another event. The claim word nearest each figure that is neither an entity
+    nor a time word must mostly (>= 60 %) appear within ±60 chars of that
+    figure — the relation has to be stated AT the number, not elsewhere."""
+    from app.retrieval.scoring import tokenize
+
+    keys = set(key_words) | _LEGAL_SUFFIXES
+    relation = [
+        t
+        for t in tokenize(claim or "")
+        if t not in keys and t not in _TIME_WORDS and not t[:1].isdigit()
+    ]
+    if not relation:
+        return True
+    for m in _CLAIM_NUM_RE.finditer(claim or ""):
+        num = canon_number(m.group(0).replace(" ", "")).rstrip(".,")
+        if not num:
+            continue
+        ok = False
+        for sm in _CLAIM_NUM_RE.finditer(sentence or ""):
+            if canon_number(sm.group(0).replace(" ", "")).rstrip(".,") != num:
+                continue
+            lo, hi = max(0, sm.start() - _ANCHOR_SPAN), sm.end() + _ANCHOR_SPAN
+            near = set(tokenize(sentence[lo:hi]))
+            if sum(1 for t in relation if t in near) / len(relation) >= 0.6:
+                ok = True
+                break
+        if not ok:
+            return False
+    return True
+
+
+def nonkey_coverage(claim: str, sentence: str, key_words: list[str]) -> float:
+    """Share of the claim's NON-entity content words in the sentence: the
+    relation ("founded", "capital of", "garlic prevents") must be there too."""
+    from app.retrieval.scoring import tokenize
+
+    keys = set(key_words)
+    rel = [
+        t
+        for t in tokenize(claim)
+        if t not in keys and t not in _LEGAL_SUFFIXES and not t[:1].isdigit()
+    ]
+    if not rel:
+        return 1.0
+    sent = set(tokenize(sentence))
+    return sum(1 for t in rel if t in sent) / len(rel)
+
+
 def assess_chunk(claim: str, content: str) -> ChunkAssessment:
-    """Deterministic stance of one chunk toward ``claim`` (pure, CPU-light)."""
-    windows = _windows(content)
-    if not windows:
+    """Deterministic stance of one chunk toward ``claim`` (pure, CPU-light).
+
+    docs/36 T1 safety gates for ``supports`` (all must hold, on ONE sentence):
+    entailment >= SUPPORT_MIN, every key term present (figures incl. years,
+    capitalised entities), claim tokens in order (LCS >= ORDERED_MIN), and no
+    hearsay/myth/refutation cue in that sentence or its neighbours."""
+    sentences = _sentences(content)
+    if not sentences:
         return ChunkAssessment("mentions", 0.0, "", None, None, False, False)
-    best_rel = -1.0
-    best = windows[0]
-    for w in windows:
-        rel = lexical_entailment(claim, w)
-        if rel > best_rel:
-            best_rel, best = rel, w
-    best_rel = max(0.0, min(1.0, best_rel))
+    nums, words = key_terms(claim)
+    scored = []
+    for i, sent in enumerate(sentences):
+        rel = max(0.0, min(1.0, lexical_entailment(claim, sent)))
+        missing = _missing_terms(nums, words, sent)
+        scored.append((not missing, rel, i, missing))
+    # Prefer a sentence that covers every key term, then the most entailed one.
+    complete, best_rel, idx, missing = max(scored, key=lambda t: (t[0], t[1]))
+    best = sentences[idx]
     quote = best.strip()
     if len(quote) > QUOTE_MAX_CHARS:
         quote = quote[: QUOTE_MAX_CHARS - 1].rstrip() + "…"
 
-    claim_nums = extract_numeric_tokens(claim)
-    numeric = _numeric_share(claim_nums, best) if claim_nums else None
-
+    numeric = (len(nums) - sum(1 for n in nums if n in missing)) / len(nums) if nums else None
     low_claim = claim.lower()
     low_best = best.lower()
+    context = " ".join(sentences[max(0, idx - 1) : idx + 2]).lower()
+    # Only the quoted sentence may REFUTE; a cue in a neighbouring sentence is
+    # too far to conclude anything, it only blocks support (as hearsay below).
     cue = _find_cue(low_best)
     if cue is not None and cue in low_claim:
         cue = None  # the claim itself is about a denial — not a refutation of it
+    near_cue = _find_cue(context)
+    if near_cue is not None and near_cue in low_claim:
+        near_cue = None
+    # A question restates a claim without asserting it ("Do we only use 10% …?").
+    question = best.rstrip().endswith("?") and not claim.rstrip().endswith("?")
     flip = (_negations(low_claim) % 2) != (_negations(low_best) % 2)
-    hearsay = any(h in low_best and h not in low_claim for h in _HEARSAY_CUES)
+    hearsay = any(h in context and h not in low_claim for h in _HEARSAY_CUES)
+    ordered = ordered_coverage(claim, best)
+    relation = nonkey_coverage(claim, best, words)
+    anchored = figures_anchored(claim, best, words)
+    hedged = bool(_HEDGE_RE.search(best)) and not _HEDGE_RE.search(claim)
 
     stance: Stance = "mentions"
-    if best_rel >= REFUTE_MIN and cue is not None:
+    # A refutation must be about the SAME entities (every key term in the sentence).
+    if best_rel >= REFUTE_MIN and cue is not None and complete:
         stance = "refutes"
-    elif best_rel >= FLIP_MIN and flip:
-        # On-topic window that negates what the claim asserts (or vice versa).
+    elif (
+        best_rel >= FLIP_MIN
+        and flip
+        and complete
+        and ordered >= ORDERED_MIN
+        and relation >= NONKEY_MIN
+    ):
+        # Near-verbatim sentence about the same entities that negates the claim.
         stance = "refutes"
-    elif best_rel >= SUPPORT_MIN and not hearsay and (numeric is None or numeric >= 0.999):
+    elif (
+        best_rel >= SUPPORT_MIN
+        and complete
+        and ordered >= ORDERED_MIN
+        and relation >= NONKEY_MIN
+        and anchored
+        and not hearsay
+        and not hedged
+        and not question
+        and near_cue is None
+    ):
         stance = "supports"
-    return ChunkAssessment(stance, best_rel, quote, numeric, cue, flip, hearsay)
+    return ChunkAssessment(
+        stance, best_rel, quote, numeric, cue, flip, hearsay, tuple(missing), round(ordered, 3)
+    )
 
 
 def aggregate_verdict(evidence: list[EvidenceOut]) -> Verdict:
@@ -398,6 +586,7 @@ def build_evidence(
                 fetched_at=_str_or_none(ch.get("fetched_at")),
                 weight=tier_score(domain) * a.relevance,
                 hearsay=a.hearsay,
+                missing_terms=list(a.missing_terms),
             )
         )
     # One evidence row per URL (the strongest chunk), then strongest first.

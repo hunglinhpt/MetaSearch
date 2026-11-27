@@ -1,0 +1,50 @@
+{
+  "summary": {
+    "citation_coverage": 1.0,
+    "citation_precision": 1.0,
+    "claim_support": 1.0,
+    "numeric_fidelity": 1.0,
+    "outline_coverage": 1.0,
+    "conflict_surfaced": 1.0,
+    "fact_score": 1.0,
+    "n_cases": 2
+  },
+  "thresholds": {
+    "citation_coverage": 0.85,
+    "citation_precision": 0.95,
+    "claim_support": 0.85,
+    "numeric_fidelity": 0.9,
+    "outline_coverage": 0.85,
+    "conflict_surfaced": 0.8,
+    "fact_score": 0.85
+  },
+  "passed": true,
+  "records": [
+    {
+      "id": "res_vn_equity_01",
+      "citation_coverage": 1.0,
+      "citation_precision": 1.0,
+      "claim_support": 1.0,
+      "numeric_fidelity": 1.0,
+      "outline_coverage": 1.0,
+      "conflict_surfaced": 1.0,
+      "fact_score": 1.0
+    },
+    {
+      "id": "res_tech_compare_02",
+      "citation_coverage": 1.0,
+      "citation_precision": 1.0,
+      "claim_support": 1.0,
+      "numeric_fidelity": 1.0,
+      "outline_coverage": 1.0,
+      "conflict_surfaced": 1.0,
+      "fact_score": 1.0
+    }
+  ],
+  "baseline_meta": {
+    "measured_on": "2026-11-26",
+    "version": "4.6.0",
+    "profile": "offline FACT benchmark (no network)",
+    "golden": "evals/research_golden.json"
+  }
+}

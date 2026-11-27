@@ -6,6 +6,7 @@ import {
   fetchMarketEvents,
   fetchMarketNewsWire,
   getLLMHealth,
+  groundingLabel,
   hybridSearch,
   listSkills,
   listSpaces,
@@ -158,5 +159,16 @@ describe("AI infra client helpers", () => {
       })
     );
     await expect(fetchMarketEvents({ symbols: ["BAD!!"] })).rejects.toThrow(/invalid symbol/);
+  });
+});
+
+describe("groundingLabel (docs/36 X1)", () => {
+  it("labels every server status and ignores unknown ones", () => {
+    expect(groundingLabel("grounded")).toContain("bám nguồn tốt");
+    expect(groundingLabel("partial")).toContain("một phần");
+    expect(groundingLabel("weak")).toContain("yếu");
+    expect(groundingLabel("ungrounded")).toContain("không có nguồn");
+    expect(groundingLabel(undefined)).toBe("");
+    expect(groundingLabel("something-new")).toBe("");
   });
 });

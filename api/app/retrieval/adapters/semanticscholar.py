@@ -89,10 +89,17 @@ class SemanticScholarAdapter:
             ) from exc
 
         if resp.status_code == 429:
+            # docs/36 S4: back off for real — the keyless tier 429s every call, so a
+            # 30 s breaker cooldown only re-spends the budget on the next query.
+            try:
+                wait_s = float(resp.headers.get("retry-after") or 300.0)
+            except (TypeError, ValueError):
+                wait_s = 300.0
             raise AdapterError(
                 "semanticscholar rate limited (HTTP 429)",
                 kind=Outcome.RATE_LIMITED,
                 retryable=False,
+                retry_after_s=max(1.0, min(wait_s, 900.0)),
             )
         if resp.status_code == 403:
             raise AdapterError("semanticscholar forbidden", kind=Outcome.BLOCKED, retryable=False)

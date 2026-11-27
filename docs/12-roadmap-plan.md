@@ -245,6 +245,19 @@
 - [x] **v4.6.0 News-wire precision + TLS policy (docs/35)**: M1 gắn mã có bằng chứng (geo guard, mã chỉ số, alias 4 chốt, xoá VinFast→VFS) · M2 phân loại có lý do/độ tin + scope global · M3 bổ sung ngày từ trang bài · M4 `/v1/scrape` từ chối chứng chỉ hỏng (502 `tls_verify_failed`, opt-in có cờ) · 2 bộ vàng 97 dòng.
 - [ ] Backlog unique (docs/34 §6): U4 verify-in-answer · U1 Claim Watch · U2 Blindspot lens · U3 answer diff · U5 disclosure tracker · U6 source reliability learning · U7 batch verify.
 
+### Plan nâng cấp sau v4.6.0 (docs/36 — 2026-11-26, chưa triển khai)
+
+Nhận việc theo docs/36 §14: thêm dòng `- [ ] <ID> — <người nhận> — <ngày>` bên dưới.
+
+- [x] W1 Đo được & chạy lại được (2026-11-26, docs/36 §16): S3 ✅ · S2 ✅ · T1 ✅ (false_support 0,53 → 0,00) · S8 ✅ · R1 ⚠️ (offline 2 ca) · A1 ❌ chặn bởi A0
+- [x] **A0 (P0)** `/v1/answer` keyless: A1 12/12 thành công (trước 0/29) · **A0b** slot theo provider (docs/36 §17)
+- [x] W2 (2026-11-27, docs/36 §17): S1 ✅ một phần (mwmbl; golden_v2 hit@5 0,379 → 0,483) · S4 ✅ · S5 ✅ · S6 ✅ · safe search ✅ · rerank minh bạch ✅ (XERJ §18)
+- [x] Đợt 3 (2026-11-27, docs/36 §19): E1 ✅ (đối đầu v4.6.0: VI strict@5 hoà 0,26; golden_v2 strict@5 0,293 → 0,552) · E2 ✅ `--repeat` · X1 ✅ grounding · X2 ✅ offset · X3 ✅ dedup memory · A1b ✅ (xem §19.3)
+- [ ] R1b chạy đủ 20 câu research live (harness sẵn, cần LLM có key) · S1b nguồn web VI (cần key Brave hoặc SearXNG cục bộ)
+- [ ] W3 Dữ liệu tài chính đa nguồn thật: M-F1 (hiện 1 nguồn, 6/16 trường), M-F2 (peer theo ngành), M-F4
+- [ ] W4 Bảo trì & UI: M-F3, R3, U1, U2, K1, I1
+- [ ] W5+ Tính năng mới theo domain (docs/36 §2–§12)
+
 ## 4. Rủi ro thực thi
 
 | Rủi ro | Giảm thiểu |

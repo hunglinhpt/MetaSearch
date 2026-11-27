@@ -319,6 +319,18 @@
             "title": "Follow Ups",
             "type": "array"
           },
+          "grounding": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grounding"
+          },
           "latency_ms": {
             "default": 0,
             "title": "Latency Ms",
@@ -328,6 +340,18 @@
             "default": "",
             "title": "Model",
             "type": "string"
+          },
+          "rerank": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank"
           },
           "rewritten_query": {
             "anyOf": [
@@ -7541,6 +7565,14 @@
             "title": "Complete",
             "type": "boolean"
           },
+          "degraded_engines": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Degraded Engines",
+            "type": "array"
+          },
           "engines_failed": {
             "items": {
               "type": "string"
@@ -8916,6 +8948,14 @@
             ],
             "title": "Judge",
             "type": "string"
+          },
+          "missing_terms": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Missing Terms",
+            "type": "array"
           },
           "n": {
             "maximum": 64.0,

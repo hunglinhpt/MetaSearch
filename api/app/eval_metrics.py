@@ -28,6 +28,37 @@ def hit_at_k(urls: list[str], relevant: list[str], k: int = 5) -> float:
     return 1.0 if any(_matches(u, relevant) for u in urls[:k]) else 0.0
 
 
+def topical_match(query: str, text: str) -> bool:
+    """docs/36 E1: does a result's title/snippet speak to the query at all?
+
+    Domain-only labels ("vnexpress.net") credit ANY page of that site — the 26/11
+    VI eval counted "chanh ngón tay giá 2 triệu" as a hit for "cách nấu phở bò".
+    Content words (stopwords removed) must overlap: 1 for short queries, 2 from 4
+    terms. Accents are kept when the query has them ("nội" != "nơi").
+    """
+    from app.retrieval.scoring import fold_diacritics, tokenize
+
+    fold = query == fold_diacritics(query)
+    q_terms = {t for t in tokenize(query, fold=fold) if len(t) >= 2}
+    if not q_terms or not text:
+        return False
+    need = 1 if len(q_terms) <= 3 else 2
+    return len(q_terms & set(tokenize(text, fold=fold))) >= need
+
+
+def strict_hit_at_k(
+    items: list[tuple[str, str]], relevant: list[str], query: str, k: int = 5
+) -> float:
+    """hit@k where the hit must match a relevant domain AND be on topic."""
+    if not relevant:
+        return 0.0
+    return (
+        1.0
+        if any(_matches(u, relevant) and topical_match(query, text) for u, text in items[:k])
+        else 0.0
+    )
+
+
 def recall_at_k(urls: list[str], relevant: list[str], k: int = 10) -> float:
     if not relevant:
         return 0.0
@@ -172,6 +203,9 @@ def aggregate(records: list[dict]) -> dict:
         "claim_support",
         "numeric_fidelity",
         "citation_precision",
+        "strict_hit_at_5",
+        "strict_hit_at_10",
+        "answer_ok",
     )
     out: dict = {}
     for k in keys:

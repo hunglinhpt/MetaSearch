@@ -149,6 +149,23 @@ BREAKER_STATE = Gauge(
     labelnames=("engine",),
     registry=REGISTRY,
 )
+ENGINE_SUCCESS_RATE_24H = Gauge(
+    "metasearch_engine_success_rate_24h",
+    "Engine success rate over the last 24h from persisted health windows (docs/36 S3)",
+    labelnames=("engine",),
+    registry=REGISTRY,
+)
+ENGINE_QUARANTINED = Gauge(
+    "metasearch_engine_quarantined",
+    "1 when the engine is quarantined for a low 24h success rate (docs/36 S3)",
+    labelnames=("engine",),
+    registry=REGISTRY,
+)
+SAFE_SEARCH_DROPPED = Counter(
+    "metasearch_safe_search_dropped_total",
+    "Results dropped by the adult-content filter (docs/36 W2)",
+    registry=REGISTRY,
+)
 PROCESS_RSS = Gauge(
     "metasearch_process_rss_bytes",
     "Process resident set size in bytes",

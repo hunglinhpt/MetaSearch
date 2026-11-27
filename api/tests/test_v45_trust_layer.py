@@ -46,7 +46,8 @@ def test_on_topic_chunk_with_different_figure_is_not_support() -> None:
         "The statistics office said Vietnam GDP grew 6.5% in 2024 according to estimates.",
     )
     assert a.stance == "mentions"
-    assert a.numeric_match == 0.0
+    # docs/36 T1: years count as figures — 2024 matches, 7.09% does not.
+    assert a.numeric_match == 0.5 and "709%" in a.missing_terms
 
 
 def test_explicit_refutation_cue_refutes() -> None:
@@ -696,7 +697,7 @@ def test_percentage_matching_is_token_exact() -> None:
         "GDP Việt Nam năm 2024 tăng 9,5%",
         "GDP Việt Nam năm 2024 tăng 7,09%, quý IV tăng 6,95% so với cùng kỳ.",
     )
-    assert a.numeric_match == 0.0
+    assert a.numeric_match == 0.5 and "95%" in a.missing_terms  # year 2024 matches
     assert a.stance != "supports"
     assert cv._numeric_share(["95"], "in 1995 it rose") == 0.0
     assert cv._numeric_share(["95%"], "it rose 95 % last year") == 1.0

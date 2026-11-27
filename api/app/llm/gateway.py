@@ -28,7 +28,9 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 import time
+import weakref
 from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -68,7 +70,26 @@ _PRICE_TABLE: dict[str, tuple[float, float]] = {
 # Cap for reading error/JSON bodies so a hostile upstream cannot balloon memory.
 _MAX_BODY_BYTES = 1_000_000
 
-_NON_RETRYABLE_STATUSES = {400, 401, 403, 404}
+_NON_RETRYABLE_STATUSES = {400, 401, 403, 404, 413}
+
+# docs/36 A0: statuses that describe THIS request, not the provider's health. They
+# never move the breaker, so one oversized prompt cannot cool a provider down.
+_REQUEST_SCOPED_STATUSES = {413}
+
+# docs/36 A0: quota statuses. Keyless tiers answer 402 FREE_LIMIT / 503 "at its limit"
+# with the wait in the body ("Retry after 40s") and no Retry-After header.
+_QUOTA_STATUSES = {402, 429}
+_RETRY_AFTER_BODY_RE = re.compile(r"retry\s+after\s+(\d{1,4})\s*s", re.IGNORECASE)
+_CHARS_MAX_BODY_RE = re.compile(r"(\d[\d,.]{2,9})\s*characters\s+max", re.IGNORECASE)
+
+# Learned prompt caps (provider -> chars) from 413 bodies; process-local.
+_learned_prompt_limits: dict[str, int] = {}
+# docs/36 A0b: per-provider concurrency slots per event loop. Keyed by the loop
+# object itself (weakly): id(loop) can be reused by a new loop at the same address,
+# which would hand it a stale semaphore.
+_inflight_slots: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop, dict[str, asyncio.Semaphore]
+] = weakref.WeakKeyDictionary()
 
 # Breakers keyed "llm:{provider}" — shared per process, council included.
 llm_breakers = EngineBreakerRegistry(threshold=3, timeout_threshold=5)
@@ -78,12 +99,20 @@ class LLMError(Exception):
     """Raised when the upstream LLM fails or is not configured."""
 
 
+class LLMUpstreamError(LLMError):
+    """Every upstream LLM failed this request (e.g. the whole council panel)."""
+
+    code = "upstream_error"
+
+
 class LLMTimeoutError(LLMError, TimeoutError):
     """Raised when an LLM upstream call times out.
 
     ``provider_fault`` is False when the request budget cut the call shorter than the
     provider deserves: that timeout is our deadline, not a sign the provider is unhealthy.
     """
+
+    code = "upstream_timeout"
 
     def __init__(self, message: str, *, provider_fault: bool = True) -> None:
         super().__init__(message)
@@ -101,7 +130,12 @@ class LLMUnavailableError(LLMError):
 
 
 class LLMStatusError(LLMError):
-    """Upstream returned an HTTP status; carries retry classification."""
+    """Upstream returned an HTTP status; carries retry classification.
+
+    ``code`` maps the failure onto the public error model: a provider that refused
+    or broke is ``upstream_error`` (502), a provider out of quota is ``overloaded``
+    (503 + Retry-After) — never ``internal`` (500), which means *our* bug.
+    """
 
     def __init__(
         self,
@@ -109,12 +143,75 @@ class LLMStatusError(LLMError):
         status_code: int,
         *,
         retry_after_s: float | None = None,
+        limit_chars: int | None = None,
     ) -> None:
         self.provider = provider
         self.status_code = status_code
         self.retry_after_s = retry_after_s
+        self.limit_chars = limit_chars
         self.retryable = status_code not in _NON_RETRYABLE_STATUSES
+        self.quota = status_code in _QUOTA_STATUSES or (
+            status_code == 503 and retry_after_s is not None
+        )
+        self.code = "overloaded" if self.quota else "upstream_error"
         super().__init__(f"LLM provider '{provider}' returned HTTP {status_code}")
+
+    @property
+    def payload_too_large(self) -> bool:
+        return self.status_code == 413
+
+
+def prompt_chars(messages: list[dict[str, str]]) -> int:
+    """Characters a provider counts against its prompt cap (all message contents)."""
+    return sum(len(str(m.get("content") or "")) for m in messages)
+
+
+def _parse_retry_after(header: str | None, body: str) -> float | None:
+    if header:
+        try:
+            return max(0.0, float(header))
+        except (ValueError, TypeError):
+            pass
+    m = _RETRY_AFTER_BODY_RE.search(body or "")
+    return float(m.group(1)) if m else None
+
+
+def _parse_limit_chars(body: str) -> int | None:
+    m = _CHARS_MAX_BODY_RE.search(body or "")
+    if not m:
+        return None
+    digits = re.sub(r"\D", "", m.group(1))
+    value = int(digits) if digits else 0
+    return value if 500 <= value <= 10_000_000 else None
+
+
+def _preset(provider: str) -> Any:
+    from app.llm.providers import LLM_PROVIDER_PRESETS
+
+    return LLM_PROVIDER_PRESETS.get(provider)
+
+
+def provider_prompt_limit(provider: str) -> int | None:
+    """Known prompt cap (chars) for ``provider``: documented preset ∧ learned from 413."""
+    documented = getattr(_preset(provider), "max_prompt_chars", None)
+    caps = [c for c in (documented, _learned_prompt_limits.get(provider)) if c]
+    return min(caps) if caps else None
+
+
+def provider_max_inflight(provider: str) -> int | None:
+    n = getattr(_preset(provider), "max_inflight", None)
+    return int(n) if n else None
+
+
+def _slot(provider: str) -> asyncio.Semaphore | None:
+    n = provider_max_inflight(provider)
+    if n is None:
+        return None
+    per_loop = _inflight_slots.setdefault(asyncio.get_running_loop(), {})
+    sem = per_loop.get(provider)
+    if sem is None:
+        sem = per_loop[provider] = asyncio.Semaphore(n)
+    return sem
 
 
 @dataclass(slots=True)
@@ -217,6 +314,18 @@ class LLMGateway:
     @property
     def provider(self) -> str:
         return self.resolve_target().provider
+
+    def prompt_char_limit(self) -> int | None:
+        """docs/36 A0: prompt cap of the primary provider, if one is known."""
+        return provider_prompt_limit(self.resolve_target().provider)
+
+    def is_scarce(self) -> bool:
+        """docs/36 A0b: the primary provider serves one request at a time.
+
+        Callers skip optional LLM calls (query expansion, follow-ups) so the
+        single slot goes to the answer itself.
+        """
+        return provider_max_inflight(self.resolve_target().provider) == 1
 
     @property
     def default_quick_model(self) -> str:
@@ -430,6 +539,25 @@ class LLMGateway:
             from app.llm.key_validator import get_provider_health_tracker
 
             tracker = get_provider_health_tracker()
+            slot = _slot(provider)
+            if slot is not None:
+                # docs/36 A0b: queue for the provider's slot instead of earning a 429.
+                # Always bounded: a slot held by an abandoned stream must not hang us.
+                wait_s = (
+                    req_budget.remaining()
+                    if req_budget is not None
+                    else float(self._settings.request_timeout_s)
+                )
+                try:
+                    await asyncio.wait_for(slot.acquire(), timeout=wait_s)
+                except TimeoutError:
+                    breaker.record(Outcome.LOCAL_OVERLOAD)
+                    LLM_REQUESTS.labels(provider=provider, outcome="slot_wait_timeout").inc()
+                    last_error = LLMTimeoutError(
+                        f"{provider}: no free request slot before the deadline",
+                        provider_fault=False,
+                    )
+                    continue
             try:
                 async for delta in self._stream_once(
                     cand_target, messages, cand_model, max_tokens=max_tok, temperature=temp
@@ -452,9 +580,31 @@ class LLMGateway:
                 return
             except LLMStatusError as exc:
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
-                status_outcome = (
-                    Outcome.RATE_LIMITED if exc.status_code == 429 else Outcome.UPSTREAM_ERROR
-                )
+                if exc.status_code in _REQUEST_SCOPED_STATUSES:
+                    # docs/36 A0: the provider is fine; this prompt is too big for it.
+                    breaker.record(Outcome.LOCAL_OVERLOAD)
+                    LLM_REQUESTS.labels(provider=provider, outcome="payload_too_large").inc()
+                    sent = prompt_chars(messages)
+                    learned = exc.limit_chars or max(1000, int(sent * 0.6))
+                    if learned < sent:
+                        _learned_prompt_limits[provider] = min(
+                            learned, _learned_prompt_limits.get(provider, learned)
+                        )
+                    last_error = exc
+                    logger.warning(
+                        "llm_payload_too_large",
+                        provider=provider,
+                        prompt_chars=sent,
+                        limit_chars=provider_prompt_limit(provider),
+                    )
+                    if emitted_any:
+                        raise
+                    other = deque((t, m) for t, m in candidates if t.provider != provider)
+                    if other:
+                        candidates = other
+                        continue
+                    raise exc from None
+                status_outcome = Outcome.RATE_LIMITED if exc.quota else Outcome.UPSTREAM_ERROR
                 breaker.record(status_outcome, retry_after_s=exc.retry_after_s)
                 tracker.record_call_outcome(
                     provider,
@@ -509,10 +659,20 @@ class LLMGateway:
                     raise
                 # 429: the same candidate may recover after Retry-After —
                 # re-queue it (still bounded by the global attempt budget).
-                if exc.retry_after_s is not None:
+                # docs/36 A0: unless the wait outlasts this request's deadline —
+                # sleeping until the deadline only turns a quick 503 into a 504.
+                wait_fits = (
+                    exc.retry_after_s is None
+                    or req_budget is None
+                    or exc.retry_after_s <= req_budget.remaining()
+                )
+                if exc.retry_after_s is not None and wait_fits:
                     seen_pairs.discard(pair)  # allow the same pair again
                     candidates.appendleft((cand_target, cand_model))
-                if candidates and attempts < max_attempts:
+                if slot is not None:
+                    slot.release()  # never hold the provider's slot while backing off
+                    slot = None
+                if candidates and attempts < max_attempts and wait_fits:
                     # docs/29 P3-1 (audit B#13): exponential growth with
                     # uniform jitter so a fleet of 429s does not wake in
                     # lockstep; Retry-After stays the floor.
@@ -547,6 +707,9 @@ class LLMGateway:
                 if emitted_any:
                     raise
                 continue
+            finally:
+                if slot is not None:
+                    slot.release()
 
         if attempts == 0 and last_error is None and cooling_s > 0:
             raise LLMUnavailableError(
@@ -607,15 +770,14 @@ class LLMGateway:
                         status_code=resp.status_code,
                         detail=detail[:500],
                     )
-                    retry_after = resp.headers.get("retry-after")
-                    retry_after_s: float | None = None
-                    if retry_after:
-                        try:
-                            retry_after_s = float(retry_after)
-                        except (ValueError, TypeError):
-                            retry_after_s = None
+                    retry_after_s = _parse_retry_after(resp.headers.get("retry-after"), detail)
                     raise LLMStatusError(
-                        target.provider, resp.status_code, retry_after_s=retry_after_s
+                        target.provider,
+                        resp.status_code,
+                        retry_after_s=retry_after_s,
+                        limit_chars=(
+                            _parse_limit_chars(detail) if resp.status_code == 413 else None
+                        ),
                     )
                 content_type = resp.headers.get("content-type", "").lower()
                 # Support non-streaming JSON responses from lightweight OpenAI-compatible proxies

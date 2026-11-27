@@ -11,9 +11,6 @@ import pytest
 
 from app.retrieval.adapters.base import AdapterError
 from app.retrieval.adapters.careers import CareersAdapter
-from app.retrieval.adapters.dogceo import DogCEOAdapter
-from app.retrieval.adapters.ipapi import IPAPIGeolocationAdapter
-from app.retrieval.adapters.opentdb import OpenTriviaAdapter
 from app.retrieval.adapters.polymarket import PolymarketAdapter, PolymarketTrendingAdapter
 from app.retrieval.adapters.stocktwits import StockTwitsAdapter, StockTwitsTrendingAdapter
 from app.retrieval.adapters.uspto import USPTOAdapter, USPTOCompanyAdapter
@@ -125,8 +122,24 @@ class TestCareersAdapter:
 # --- Polymarket ------------------------------------------------------------------
 
 
-_SEARCH_BODY = {"markets": [{"id": "mkt-1"}, {"id": "mkt-2"}]}
-
+_EVENT = {
+    "title": "What price will Bitcoin hit in November?",
+    "slug": "what-price-will-bitcoin-hit-in-november-2026",
+    "description": "Bitcoin price markets",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "endDate": "2026-12-01T05:00:00Z",
+    "volume": 20000.0,
+    "closed": False,
+    "markets": [
+        {
+            "question": "Will Bitcoin reach $100,000 in November?",
+            "outcomes": '["Yes", "No"]',
+            "outcomePrices": '["0.65", "0.35"]',
+            "closed": False,
+        }
+    ],
+}
+# _MARKET_DETAIL still feeds the trending adapter tests below.
 _MARKET_DETAIL = {
     "id": "mkt-1",
     "question": "Will Bitcoin close above 100k in 2026?",
@@ -140,30 +153,43 @@ _MARKET_DETAIL = {
 
 
 class TestPolymarketAdapter:
-    async def test_happy_path_with_details(self):
+    async def test_happy_path_public_search(self):
+        # docs/36 S4: /markets/search answers 422; /public-search is current.
         def handler(request: httpx.Request) -> httpx.Response:
-            path = request.url.path
             assert request.headers["Authorization"] == "Bearer PK"
-            if path.endswith("/markets/search"):
-                assert request.url.params["query"] == "bitcoin"
-                return httpx.Response(200, json=_SEARCH_BODY)
-            assert "/markets/mkt-" in path
-            return httpx.Response(200, json=dict(_MARKET_DETAIL, id=path.rsplit("-", 1)[-1]))
+            assert request.url.path.endswith("/public-search")
+            assert request.url.params["q"] == "bitcoin"
+            closed = dict(_EVENT, slug="old-btc", closed=True)
+            fuzzy = dict(_EVENT, slug="nothing", title="Nothing Ever Happens", description="")
+            return httpx.Response(200, json={"events": [_EVENT, closed, fuzzy]})
 
         adapter = PolymarketAdapter(api_key="PK", client=_mock(handler))
-        results = await adapter.search("bitcoin", max_results=2)
-        assert len(results) == 2
+        results = await adapter.search("bitcoin", max_results=5)
+        assert len(results) == 1  # closed and off-topic fuzzy events dropped
         first = results[0]
-        assert first.title == "Polymarket: Will Bitcoin close above 100k in 2026?"
-        assert "Yes: 65% (12,000 USD)" in first.snippet
-        assert "$20,000" in first.snippet
+        assert (
+            first.url == "https://polymarket.com/event/what-price-will-bitcoin-hit-in-november-2026"
+        )
+        assert first.title == "Polymarket: What price will Bitcoin hit in November?"
+        assert "Yes: 65%" in first.snippet and "$20,000" in first.snippet
+        assert "Resolves: 2026-12-01" in first.snippet
         assert first.published_at is not None
 
     async def test_no_markets_returns_empty(self):
         adapter = PolymarketAdapter(
-            client=_mock(lambda r: httpx.Response(200, json={"markets": []}))
+            client=_mock(lambda r: httpx.Response(200, json={"events": []}))
         )
         assert await adapter.search("bitcoin") == []
+
+    async def test_unparsable_odds_are_omitted_not_invented(self):
+        event = dict(
+            _EVENT, markets=[{"question": "q", "outcomes": '["Yes"]', "outcomePrices": "oops"}]
+        )
+        adapter = PolymarketAdapter(
+            client=_mock(lambda r: httpx.Response(200, json={"events": [event]}))
+        )
+        (res,) = await adapter.search("bitcoin")
+        assert "%" not in res.snippet
 
     async def test_rate_limited_raises_retryable(self):
         adapter = PolymarketAdapter(client=_mock(lambda r: httpx.Response(429, text="slow down")))
@@ -374,185 +400,6 @@ class TestUSPTOAdapter:
 
         adapter = USPTOCompanyAdapter(api_key="UK", client=_mock(handler))
         assert await adapter.search("Acme Inc") == []
-
-
-# --- IP-API geolocation ----------------------------------------------------------
-
-
-_IPAPI_GEO = {
-    "status": "success",
-    "query": "8.8.8.8",
-    "country": "United States",
-    "regionName": "Virginia",
-    "city": "Ashburn",
-    "lat": 39.03,
-    "lon": -77.5,
-    "timezone": "America/New_York",
-    "isp": "Google LLC",
-    "as": "AS15169 Google LLC",
-}
-
-
-class TestIPAPIAdapter:
-    async def test_ip_query_happy_path(self, patched_pool):
-        def handler(request: httpx.Request) -> httpx.Response:
-            assert "ip-api.com/json/8.8.8.8" in str(request.url)
-            return httpx.Response(200, json=_IPAPI_GEO)
-
-        patched_pool("app.retrieval.adapters.ipapi", handler)
-        results = await IPAPIGeolocationAdapter().search("server at 8.8.8.8 status")
-        assert len(results) == 1
-        r = results[0]
-        assert r.title == "Geolocation: United States, Ashburn, Virginia (8.8.8.8)"
-        assert "Coordinates: 39.03, -77.5" in r.snippet
-        assert "ISP: Google LLC" in r.snippet
-        assert r.url == "http://ip-api.com/#8.8.8.8"
-
-    async def test_domain_query_resolved_by_upstream(self, patched_pool):
-        def handler(request: httpx.Request) -> httpx.Response:
-            assert "ip-api.com/json/example.com" in str(request.url)
-            return httpx.Response(200, json=dict(_IPAPI_GEO, query="93.184.216.34"))
-
-        patched_pool("app.retrieval.adapters.ipapi", handler)
-        results = await IPAPIGeolocationAdapter().search("example.com")
-        assert len(results) == 1
-
-    async def test_failed_status_returns_empty(self, patched_pool):
-        patched_pool(
-            "app.retrieval.adapters.ipapi",
-            lambda r: httpx.Response(200, json={"status": "fail", "message": "reserved range"}),
-        )
-        assert await IPAPIGeolocationAdapter().search("127.0.0.1") == []
-
-    async def test_transport_error_degrades_to_empty(self, patched_pool):
-        # _fetch_geolocation swallows any Exception -> None -> empty results.
-        def handler(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("boom", request=request)
-
-        patched_pool("app.retrieval.adapters.ipapi", handler)
-        assert await IPAPIGeolocationAdapter().search("8.8.8.8") == []
-
-
-# --- Open Trivia DB --------------------------------------------------------------
-
-
-class TestOpenTriviaAdapter:
-    async def test_happy_path_decodes_entities(self, patched_pool):
-        def handler(request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            assert "opentdb.com/api.php" in url
-            assert "category=17" in url  # "science" maps to 17
-            assert "difficulty=easy" in url
-            assert "type=multiple" in url
-            return httpx.Response(
-                200,
-                json={
-                    "response_code": 0,
-                    "results": [
-                        {
-                            "category": "Science: Computers",
-                            "difficulty": "easy",
-                            "type": "multiple",
-                            "question": "What is 2 &amp; 2?",
-                            "correct_answer": "4 &lt;bits&gt;",
-                            "incorrect_answers": ["5", "3"],
-                        }
-                    ],
-                },
-            )
-
-        patched_pool("app.retrieval.adapters.opentdb", handler)
-        results = await OpenTriviaAdapter().search("science easy multiple choice", max_results=5)
-        assert len(results) == 1
-        r = results[0]
-        assert r.title == "Trivia: Science: Computers (Easy, Multiple)"
-        assert "Q: What is 2 & 2?" in r.snippet
-        assert "A: 4 <bits>" in r.snippet
-        assert r.url == "https://opentdb.com/"
-
-    async def test_no_results_response_code_returns_empty(self, patched_pool):
-        patched_pool(
-            "app.retrieval.adapters.opentdb",
-            lambda r: httpx.Response(200, json={"response_code": 1, "results": []}),
-        )
-        assert await OpenTriviaAdapter().search("history") == []
-
-    async def test_server_error_returns_empty(self, patched_pool):
-        patched_pool("app.retrieval.adapters.opentdb", lambda r: httpx.Response(500, text="boom"))
-        assert await OpenTriviaAdapter().search("history") == []
-
-    async def test_transport_error_degrades_to_empty(self, patched_pool):
-        # _fetch_trivia swallows any Exception -> None -> empty results.
-        def handler(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("boom", request=request)
-
-        patched_pool("app.retrieval.adapters.opentdb", handler)
-        assert await OpenTriviaAdapter().search("history") == []
-
-
-# --- Dog CEO ---------------------------------------------------------------------
-
-
-class TestDogCEOAdapter:
-    async def test_random_images(self, patched_pool):
-        def handler(request: httpx.Request) -> httpx.Response:
-            assert "breeds/image/random/2" in str(request.url)
-            return httpx.Response(
-                200,
-                json={
-                    "status": "success",
-                    "message": ["https://images.dog/a.jpg", "https://images.dog/b.jpg"],
-                },
-            )
-
-        patched_pool("app.retrieval.adapters.dogceo", handler)
-        results = await DogCEOAdapter().search("random dog", max_results=2)
-        assert len(results) == 2
-        assert results[0].title == "Random Dog"
-        assert results[0].url == "https://images.dog/a.jpg"
-
-    async def test_breeds_list(self, patched_pool):
-        def handler(request: httpx.Request) -> httpx.Response:
-            assert "breeds/list/all" in str(request.url)
-            return httpx.Response(
-                200,
-                json={
-                    "status": "success",
-                    "message": {"hound": ["afghan", "basset"], "poodle": ["toy"]},
-                },
-            )
-
-        patched_pool("app.retrieval.adapters.dogceo", handler)
-        results = await DogCEOAdapter().search("list all breeds")
-        assert len(results) == 1
-        # 3 sub-breeds + 2 parent breeds = 5 total
-        assert results[0].snippet == "Total breeds: 5 | Sample: hound, poodle"
-
-    async def test_breed_images(self, patched_pool):
-        def handler(request: httpx.Request) -> httpx.Response:
-            assert "breed/hound/images/random" in str(request.url)
-            return httpx.Response(
-                200, json={"status": "success", "message": ["https://images.dog/h1.jpg"]}
-            )
-
-        patched_pool("app.retrieval.adapters.dogceo", handler)
-        results = await DogCEOAdapter().search("hound")
-        assert len(results) == 1
-        assert results[0].title == "Hound Dog"
-
-    async def test_unknown_breed_falls_back_to_random(self, patched_pool):
-        def handler(request: httpx.Request) -> httpx.Response:
-            if "breed/notadog/" in str(request.url):
-                return httpx.Response(404, json={"status": "error"})
-            assert "breeds/image/random/1" in str(request.url)
-            return httpx.Response(
-                200, json={"status": "success", "message": ["https://images.dog/r.jpg"]}
-            )
-
-        patched_pool("app.retrieval.adapters.dogceo", handler)
-        results = await DogCEOAdapter().search("notadog")
-        assert len(results) == 1
-        assert results[0].title == "Random Dog (Breed not found)"
 
 
 # --- Yahoo Finance ---------------------------------------------------------------

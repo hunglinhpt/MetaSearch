@@ -74,6 +74,8 @@ _UA_INDEX = 0
 
 # Politeness throttle: DDG blocks bursts; serialize requests with a gap.
 _min_interval_s = 1.5
+# docs/36 S1: cooldown after an anomaly/429 page (the breaker caps it at 900 s).
+_BLOCK_COOLDOWN_S = 900.0
 _last_call = 0.0
 _lock = asyncio.Lock()
 
@@ -225,13 +227,19 @@ class DuckDuckGoAdapter:
             assert last_exc is not None  # nosec B101 - invariant guard
             raise last_exc
 
-        if resp.status_code in (202, 403, 429):
-            # 202 = DDG's soft anomaly throttle; treat like an explicit block.
+        if resp.status_code in (202, 429):
+            # 202 = DDG's "anomaly" page: an egress-wide throttle that lasts hours,
+            # not a parse failure. docs/36 S1: rate-limited with a long cooldown so
+            # the breaker stops probing every 30 s; persistent blocks end in the
+            # rate-based quarantine (engine_quarantine.py).
             raise AdapterError(
                 f"ddg bot-blocked (HTTP {resp.status_code})",
-                kind=Outcome.BLOCKED if resp.status_code != 429 else Outcome.RATE_LIMITED,
+                kind=Outcome.RATE_LIMITED,
                 retryable=False,
+                retry_after_s=_BLOCK_COOLDOWN_S,
             )
+        if resp.status_code == 403:
+            raise AdapterError("ddg bot-blocked (HTTP 403)", kind=Outcome.BLOCKED, retryable=False)
         if resp.status_code != 200:
             raise AdapterError(
                 f"ddg HTTP {resp.status_code}",

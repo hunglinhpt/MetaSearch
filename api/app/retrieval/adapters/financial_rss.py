@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import math
 import re
 import time
 from datetime import UTC, datetime
@@ -22,7 +23,7 @@ from defusedxml import ElementTree as DET
 
 from app.http import get_http_client
 from app.retrieval.models import RawResult
-from app.retrieval.scoring import tokenize
+from app.retrieval.scoring import fold_diacritics, tokenize
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
@@ -131,7 +132,14 @@ class GlobalFinancialRssAdapter:
         q = (query or "").strip()
         if not q:
             return []
-        q_terms = set(tokenize(q))
+        # Folding diacritics makes "nội"="nơi", "ngón"="ngon": an accented query
+        # matches headlines with its accents kept (unaccented queries still fold).
+        keep_accents = q != fold_diacritics(q)
+        q_terms = set(tokenize(q, fold=not keep_accents))
+        # A headline feed is not a search engine: on a long query, demand a third
+        # of its terms (min 2). 26/11: "cách nấu phở bò ngon đúng vị Hà Nội"
+        # matched "chanh ngón tay giá 2 triệu" on common Vietnamese words.
+        min_overlap = 1 if len(q_terms) <= 2 else max(2, math.ceil(len(q_terms) * 0.34))
         if not q_terms:
             return []
         raw_lang = (lang or "").split("-")[0].lower().strip()
@@ -181,9 +189,11 @@ class GlobalFinancialRssAdapter:
                 pub_dt = row.get("published_at")
                 if cutoff_ts is not None and pub_dt is not None and pub_dt.timestamp() < cutoff_ts:
                     continue
-                doc_terms = set(tokenize(f"{row['title']} {row['snippet']}"))
+                doc_terms = set(tokenize(f"{row['title']} {row['snippet']}", fold=not keep_accents))
                 overlap = len(q_terms & doc_terms)
-                if overlap == 0:
+                # docs/36 W2: one shared word let headlines ride along on any long
+                # query ("differ" -> a CNBC markets story for a PostgreSQL question).
+                if overlap < min_overlap:
                     continue
                 seen.add(u)
                 scored_rows.append((overlap, row, sid))

@@ -124,6 +124,12 @@ class LLMProviderPreset:
     free_tier_type: str = (
         "permanent_free"  # keyless_free | permanent_free | trial_credits | local_free | paid_or_byo
     )
+    # docs/36 A0: documented hard cap on prompt characters (all message contents);
+    # None = unknown. The gateway also learns a cap from a provider's 413 body.
+    max_prompt_chars: int | None = None
+    # docs/36 A0b: concurrent requests the provider accepts from one client IP;
+    # None = unbounded. Extra calls queue instead of being rejected with 429.
+    max_inflight: int | None = None
 
 
 LLM_PROVIDER_PRESETS: dict[str, LLMProviderPreset] = {
@@ -162,7 +168,8 @@ LLM_PROVIDER_PRESETS: dict[str, LLMProviderPreset] = {
         protocol="openai",
         base_url="https://text.pollinations.ai/openai",
         default_quick_model="openai",
-        default_report_model="openai-large",
+        # 2026-11-26 catalog (GET /models): only "openai-fast" (aliases openai, gpt-oss).
+        default_report_model="openai-fast",
         is_free=True,
         requires_api_key=False,
         env_key_name="",
@@ -170,18 +177,15 @@ LLM_PROVIDER_PRESETS: dict[str, LLMProviderPreset] = {
         docs_url="https://github.com/pollinations/pollinations/blob/master/APIDOCS.md",
         description=(
             "Zero-config community OpenAI-compatible endpoint requiring NO API key and no signup. "
-            "Supports multi-model routing (openai, mistral, llama, deepseek, qwen-coder) for "
-            "instant keyless answers and multi-model Council panels."
+            "The free Classic API serves one model (openai-fast), answers one request at a "
+            "time per IP and caps prompts at 16,000 characters."
         ),
-        recommended_models=[
-            "openai",
-            "openai-large",
-            "mistral",
-            "llama",
-            "deepseek",
-            "qwen-coder",
-        ],
+        recommended_models=["openai-fast", "openai"],
         free_tier_type="keyless_free",
+        # Measured 2026-11-26: HTTP 413 PAYLOAD_TOO_LARGE "16,000 characters max";
+        # HTTP 429 "answers 1 request at a time per IP".
+        max_prompt_chars=16_000,
+        max_inflight=1,
     ),
     "gemini": LLMProviderPreset(
         id="gemini",
@@ -1055,12 +1059,11 @@ def parse_council_endpoint_specs(
                             model=preset.recommended_models[1],
                         )
                     )
-        # Always top up to at least 3 heterogeneous panelists using keyless Pollinations models
-        pollinations_models = ["openai", "mistral", "llama", "deepseek"]
-        idx = 0
-        while len(auto_panel) < 3 and idx < len(pollinations_models):
-            auto_panel.append(LLMOverride(provider="pollinations", model=pollinations_models[idx]))
-            idx += 1
+        # Top up with keyless Pollinations. Its free tier serves ONE model
+        # (openai-fast; mistral/llama now 404) and one request per IP, so it adds
+        # a single panelist — repeating it would not make the panel heterogeneous.
+        if len(auto_panel) < 3:
+            auto_panel.append(LLMOverride(provider="pollinations", model="openai-fast"))
         return auto_panel[:5]
 
     parsed_overrides: list[LLMOverride] = []

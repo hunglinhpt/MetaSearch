@@ -118,6 +118,43 @@ class ClaimCheck:
     unverified_numbers: list[str] = field(default_factory=list)
 
 
+def grounding_summary(text: str, claims: ClaimCheck) -> dict[str, object]:
+    """docs/36 X1: how well is this answer grounded? (XERJ Query-1 declines with
+    UNKNOWN/UNSUPPORTED instead of guessing; we never suppress an answer, but we
+    state its grounding so a caller can choose to show, warn or discard.)
+
+    status: ``grounded`` (every cited sentence supported, >= half the prose cited,
+    numbers verified) | ``partial`` | ``weak`` (half or more of the cited
+    sentences unsupported, or most figures unverified) | ``ungrounded`` (nothing
+    cited).
+    """
+    prose = [
+        s
+        for s in split_sentences(text)
+        if not s.startswith(("#", "|")) and len(_CITATION_RE.sub("", s).split()) >= 3
+    ]
+    cited = [s for s in prose if _CITATION_RE.search(s)]
+    unsupported = len(claims.flagged_sentences)
+    coverage = round(len(cited) / len(prose), 3) if prose else 0.0
+    if not cited:
+        status = "ungrounded"
+    elif unsupported * 2 >= len(cited) or claims.numeric_fidelity < 0.5:
+        status = "weak"
+    elif unsupported or coverage < 0.5 or claims.unverified_numbers:
+        status = "partial"
+    else:
+        status = "grounded"
+    return {
+        "status": status,
+        "prose_sentences": len(prose),
+        "cited_sentences": len(cited),
+        "unsupported_sentences": unsupported,
+        "citation_coverage": coverage,
+        "numeric_fidelity": round(float(claims.numeric_fidelity), 3),
+        "unverified_numbers": list(claims.unverified_numbers)[:10],
+    }
+
+
 def split_sentences(text: str) -> list[str]:
     """Split into sentences; markdown list/table lines stay their own unit."""
     sentences: list[str] = []

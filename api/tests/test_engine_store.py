@@ -145,6 +145,7 @@ class TestDefaults:
             "fin_rss",
             # docs/32 §6 Lite global expansion (query-aware verticals only)
             "bing_web",
+            "mwmbl",
             "polymarket",
             "stocktwits",
             "uspto",

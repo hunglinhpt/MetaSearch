@@ -1,5 +1,50 @@
 # Changelog
 
+## [4.7.0] - 2026-11-27 — W1 "đo được & chạy lại được" + W2 "khôi phục answer & retrieval" (docs/36 §16–§19)
+
+### Fixed
+- **[P0 safety] `/v1/verify` ủng hộ tuyên bố SAI**: bộ vàng 60 tuyên bố mới đo được false_support_rate **0,53** ở v4.6.0 (16/30 tuyên bố sai bị "supported": sai năm, mâu thuẫn tri thức, tin đồn). 7 chốt mới trong `claim_verify.py` (chấm theo câu; thuật ngữ then chốt bắt buộc kể cả năm; thứ tự LCS; từ quan hệ; số liệu neo đúng quan hệ; chặn câu rào đón/ý định/câu hỏi; tín hiệu lân cận chỉ chặn support; "refutes" chặt như "supports") → **0,00** ở 2 lần chạy liên tiếp, precision 1,00, 0 tuyên bố đúng bị bác bỏ; recall 0,90 → 0,40 (đánh đổi có chủ đích). Field mới `evidence[].missing_terms`.
+- **[P0 reliability] Engine hỏng không bao giờ bị cách ly**: ddg thành công 1/37 cả tuần 19–25/11 (production) mà không bị tắt — auto-disable chỉ đếm lỗi liên tiếp (dừng đếm khi breaker mở) và bị xoá ở mỗi lần khởi động. Mới: `orchestration/engine_quarantine.py` — cách ly theo tỉ lệ thành công 24h/7d từ `engine_health` đã lưu, lý do `quarantine:` sống qua restart, gỡ bằng probe hoặc PATCH. Phát lại dữ liệu production: ddg/bluesky/reddit bị cách ly, 0 engine khoẻ bị đụng.
+
+### Added
+- `/v1/engines/health`: `calls_24h`, `success_rate_24h`, `calls_7d`, `success_rate_7d`, `quarantined`. Gauge `metasearch_engine_success_rate_24h`, `metasearch_engine_quarantined`; alert `EngineLowSuccessRate24h`, `EngineQuarantined`. Settings `ENGINE_QUARANTINE_*`.
+- **Baseline chất lượng trong repo** `api/evals/baselines/` (retrieval EN/VI, VI, verify, research offline) + gate hồi quy `app/eval_gate.py` / `scripts/eval_gate.py` + job nightly `quality-eval`. `scripts/eval_verify.py` (`--in-process`, không cần mở cổng) + `evals/verify_golden.json` (60 tuyên bố, nhãn tay).
+
+### Removed
+- 3 adapter ngoài phạm vi, không bao giờ chạy (không có EngineConfig): `dogceo`, `opentdb`, `ipapi`.
+
+### Fixed — W2 (docs/36 §17)
+- **[P0] A0 `/v1/answer` hỏng trên provider keyless**: provider tự báo trần **16.000 ký tự prompt** (HTTP 413 `PAYLOAD_TOO_LARGE`) và **1 câu trả lời / 45 s / IP** (HTTP 402 `FREE_LIMIT`, body "Retry after 40s"). Trước: 413 bị tính là provider hỏng → breaker → 503 cho mọi request; lỗi provider ra **500 internal**. Nay: 413 trung tính với breaker, trần prompt theo provider (`LLMProviderPreset.max_prompt_chars`, học thêm từ body 413), pipeline cắt nguồn xếp hạng thấp cho vừa trần và thử lại 1 lần với ½ ngữ cảnh; 402/429/503-có-"Retry after" → `overloaded` 503 + `Retry-After` đúng thời gian provider báo, không ngủ quá deadline; lỗi provider khác → `upstream_error` **502** (mã lỗi mới). **Thay đổi hành vi**: lỗi provider trước là 500, nay 502.
+- **A0b**: slot đồng thời theo provider (`max_inflight`, pollinations = 1) — request xếp hàng thay vì nhận 429; provider 1 slot bỏ query expansion, follow-ups và viết lại câu hỏi bằng LLM (thread carry dùng ghép câu tất định).
+- Preset pollinations: model báo cáo `openai-large` (đã bị provider gỡ) → `openai-fast`; council mặc định không còn gọi `pollinations:mistral/llama` (404).
+- **S1 web tổng hợp cho Lite**: adapter mới `mwmbl` (chỉ mục web phi lợi nhuận, mã nguồn mở, JSON keyless; probe 4/4); ddg 202 "anomaly" → rate-limited cooldown 900 s (cả html/lite đều bị chặn từ egress đã probe).
+- **S4**: polymarket chuyển sang `/public-search` (`/markets/search` trả 422 4/4; 1 request thay vì 1+N, odds chỉ từ API); bluesky (403), reddit (ConnectError), gdelt (8–18 s + 429) tắt mặc định; semanticscholar chỉ bật khi có key, 429 backoff theo Retry-After (mặc định 300 s).
+- **S5**: engine bị cách ly mà truy vấn lẽ ra dùng → status `quarantined` (không gọi, không làm `complete=false`); field mới `degraded_engines[]` trên `/v1/search`; `engines_failed` không còn liệt kê engine cách ly.
+- **S6**: deep = rộng *trong* ý định — luôn `general`+`reference`; `news`/`academic`/`financial`/`developer`/`social` chỉ khi suy ra từ truy vấn, được yêu cầu, hoặc skill ưu tiên.
+- **Vệ sinh xếp hạng Lite**: tin tức không còn chen vào mọi truy vấn (chỉ `wikipedia` luôn đi kèm; truy vấn tiếng Việt thêm `bing_news`/`google_news`), engine chỉ đi kèm tối đa 3 kết quả; fin_rss cần trùng ≥ ⅓ số từ của truy vấn dài và giữ dấu khi truy vấn có dấu ("nội"≠"nơi").
+- **[Safety] Lọc nội dung người lớn** cho mọi engine (`SAFE_SEARCH_ENABLED=true` mặc định, `app/retrieval/safety.py`, counter `metasearch_safe_search_dropped_total`): eval bắt `bing_web` trả 10 trang khiêu dâm cho "hướng dẫn dùng FastAPI dependency injection"; RSS Bing với `adlt=strict` trả rỗng nên phải lọc phía mình.
+
+### Added — W2
+- `rerank: {reranker, applied, reason}` trên `/v1/answer` và `/v1/context` — reranker fail-open không còn im lặng (mẫu `_rerank.applied` của XERJ, docs/36 §18).
+
+### Added — đợt 3 (docs/36 §19)
+- `grounding` trên `/v1/answer` (`grounded|partial|weak|ungrounded`, số câu có/không được hỗ trợ, độ phủ citation, numeric fidelity) + nhãn "bám nguồn" trên Web UI (X1).
+- `start_offset`/`end_offset`/`page` cho chunk trên `/v1/context` — span trong văn bản đã trích, `null` khi không định vị được (X2).
+- Khử trùng memory `query`/`observation` gần-giống (Jaccard ≥ 0,9, 50 bản ghi gần nhất); `feedback` không bị khử (X3).
+- Eval: metric **strict hit@k** (đúng tên miền *và* đúng chủ đề), `eval_v2.py --repeat N` (trung vị), `--answer-gap-s` (quota LLM keyless), URL top-10 trong record; harness research live `scripts/eval_research_live.py` + bộ 20 câu.
+
+### Fixed — đợt 3
+- Câu hỏi tài chính mất `fin_rss` sau W2 (nguyên nhân thật của hồi quy VI): ý định `financial` nay kéo `fin_rss`.
+- Safe search: dấu hiệu tiêu đề chỉ áp với nguồn không có tier tin cậy; xét cả tên miền gốc của link bọc Google News.
+- `_looks_vietnamese` coi `lang="auto"` là chưa biết ngôn ngữ (trước: "không phải tiếng Việt").
+- Slot đồng thời theo provider khoá theo chính đối tượng event loop (`id(loop)` có thể bị loop mới dùng lại → treo).
+- **Audit cuối đợt** (tự kiểm, 4 lỗi mới): (A1) `assign_offsets` tìm neo trong cửa sổ có trần — trước có thể quét lại cả tài liệu nhiều MB cho mỗi chunk; (A2) polymarket: timestamp thiếu múi giờ → UTC; (A4) **cách ly engine**: mốc gỡ cách ly/operator bật lại chỉ nằm trong RAM → sau restart engine vừa gỡ bị cách ly lại bằng lỗi cũ; nay lưu `disabled_reason="released:<ISO>"` trên engine đang bật (không đổi schema) và đánh giá bỏ qua lượt gọi trước mốc; (A5) council lỗi toàn bộ panel → `upstream_error` 502 thay vì `internal` 500. Vòng audit trước release: (A6) `PATCH /v1/engines/{id}` gửi lại `"enabled": true` cho engine **đang bật** (sửa weight/timeout) từng ghi mốc gỡ cách ly → xoá bằng chứng lỗi; nay chỉ ghi mốc khi engine thật sự đang tắt.
+- A1b: `/v1/answer` keyless đủ 29 câu: **29/29 thành công**, citation precision 1,00, claim_support 0,47, numeric fidelity 0,68 (`evals/baselines/eval_answer_keyless.lite.json`).
+
+### Đo (instance tách riêng, đối đầu v4.6.0 cùng điều kiện, tắt cache, trung vị 2 lần)
+- golden_v2 (29): hit@5 0,362 → **0,552**, strict@5 0,293 → **0,552**, MRR 0,200 → 0,390.
+- golden VI (25): strict@5 0,26 → **0,26** (hoà), strict@10 0,36 → 0,32, MRR 0,121 → 0,120. Hồi quy "0,28 → 0,12" ở lượt đo trước = nhiễu metric cấp tên miền + mất fin_rss (đã sửa). Baseline mới ở `api/evals/baselines/`, bản v4.6.0 giữ ở `*.v460.json`.
+
 ## [4.6.0] - 2026-11-26
 
 ### Fixed / Added — news-wire precision + TLS policy for `/v1/scrape` (`docs/35`, đề xuất M1–M4 của một hệ thống tích hợp)

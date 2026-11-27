@@ -26,7 +26,6 @@ from app.retrieval.adapters.careers import CareersAdapter
 from app.retrieval.adapters.coingecko import CoinGeckoAdapter
 from app.retrieval.adapters.crossref import CrossrefAdapter
 from app.retrieval.adapters.ddg import DuckDuckGoAdapter
-from app.retrieval.adapters.dogceo import DogCEOAdapter
 from app.retrieval.adapters.europepmc import EuropePmcAdapter
 from app.retrieval.adapters.fengshui import FengShuiAdapter
 from app.retrieval.adapters.financial_rss import GlobalFinancialRssAdapter
@@ -35,10 +34,9 @@ from app.retrieval.adapters.github import GitHubAdapter
 from app.retrieval.adapters.google_news import GoogleNewsAdapter
 from app.retrieval.adapters.hackernews import HackerNewsAdapter
 from app.retrieval.adapters.huggingface import HuggingFaceAdapter
-from app.retrieval.adapters.ipapi import IPAPIGeolocationAdapter
+from app.retrieval.adapters.mwmbl import MwmblAdapter
 from app.retrieval.adapters.newsapi import NewsAPIAdapter, NewsAPITopHeadlinesAdapter
 from app.retrieval.adapters.openalex import OpenAlexAdapter
-from app.retrieval.adapters.opentdb import OpenTriviaAdapter
 from app.retrieval.adapters.openweather import OpenWeatherMapAdapter
 from app.retrieval.adapters.polymarket import PolymarketAdapter, PolymarketTrendingAdapter
 from app.retrieval.adapters.pubmed import PubMedAdapter
@@ -81,6 +79,17 @@ class EngineRegistry:
         ]
         out.sort(key=lambda pair: -pair[0].weight)
         return out
+
+    async def quarantined(self) -> list[tuple[EngineConfig, SearchAdapter]]:
+        """docs/36 S5: engines held out by the rate-based quarantine (not by an operator)."""
+        from app.orchestration.engine_quarantine import is_quarantined
+
+        snapshot = await self.store.snapshot()
+        return [
+            (cfg, self._adapters[cfg.id])
+            for cfg in snapshot.values()
+            if not cfg.enabled and is_quarantined(cfg.disabled_reason) and cfg.id in self._adapters
+        ]
 
     async def configs(self) -> dict[str, EngineConfig]:
         return await self.store.snapshot()
@@ -126,6 +135,7 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         # v4.0 keyless verified live feeds
         "bing_news": BingNewsAdapter(),
         "bing_web": BingWebSearchAdapter(),
+        "mwmbl": MwmblAdapter(),
         "vn_wire": VnFinancialWireAdapter(),
         "fin_rss": GlobalFinancialRssAdapter(),
         # v4.1.2 Last30Days-inspired sources (docs/26)
@@ -140,9 +150,6 @@ def build_adapters(settings: Settings) -> dict[str, SearchAdapter]:
         "uspto": USPTOAdapter(api_key=getattr(settings, "uspto_api_key", None)),
         "uspto_company": USPTOCompanyAdapter(api_key=getattr(settings, "uspto_api_key", None)),
         # Public API adapters (no API key required)
-        "ipapi": IPAPIGeolocationAdapter(),
-        "opentdb": OpenTriviaAdapter(),
-        "dogceo": DogCEOAdapter(),
         # Giai Đoạn 2: Free API Keys (instant approval)
         # Alpha Vantage - Financial data
     }

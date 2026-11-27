@@ -281,7 +281,9 @@ class TestRouterPipelineAndExtraction:
         assert extract_implicit_freshness_days("tin mới nhất về VCB") == 14
         assert classify_complexity("định giá và triển vọng cổ phiếu FPT") == "deep"
 
-    async def test_lite_fallback_includes_news_and_wiki_when_searxng_disabled(self):
+    async def test_lite_fallback_wiki_always_news_only_on_news_intent(self):
+        # docs/36 W2: news feeds no longer join every Lite query (they buried
+        # technical answers under market headlines); wikipedia still does.
         class _DummyAdapter:
             def __init__(self, eid: str) -> None:
                 self.id = eid
@@ -330,12 +332,16 @@ class TestRouterPipelineAndExtraction:
         tok = current_api_key_id.set("test-key")
         try:
             outcome = await pipe.run(SearchParams(query="AI search overview", expansion=False))
+            news_outcome = await pipe.run(
+                SearchParams(query="AI search tin tức mới nhất hôm nay", expansion=False)
+            )
         finally:
             current_api_key_id.reset(tok)
         used = {s.engine for s in outcome.statuses}
-        assert "bing_news" in used
+        assert "bing_news" not in used
         assert "wikipedia" in used
         assert "fengshui" not in used
+        assert "bing_news" in {s.engine for s in news_outcome.statuses}
 
     async def test_hybrid_reranker_bm25_mmr_and_onnx_truncation(self, tmp_path):
         chunks = [

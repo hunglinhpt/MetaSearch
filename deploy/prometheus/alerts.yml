@@ -30,6 +30,19 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "Circuit breaker open for {{ $labels.engine }} over 10 minutes"
+      # docs/36 S3: a dead upstream used to fail silently for days (ddg 1/37 in a week).
+      - alert: EngineLowSuccessRate24h
+        expr: min(metasearch_engine_success_rate_24h) by (engine) < 0.5
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Engine {{ $labels.engine }} succeeded on fewer than half its calls in 24h"
+      - alert: EngineQuarantined
+        expr: max(metasearch_engine_quarantined) by (engine) == 1
+        for: 5m
+        labels: {severity: info}
+        annotations:
+          summary: "Engine {{ $labels.engine }} is quarantined (see /v1/engines/health disabled_reason)"
       - alert: PersistQueueBacklog
         expr: max(metasearch_background_queue_depth{queue="persist"}) > 500
         for: 5m

@@ -41,7 +41,13 @@ from app.core.auth import current_api_key_id
 from app.core.budget import get_current_budget
 from app.core.errors import ErrorCode, MetaSearchError
 from app.core.logging import get_logger
-from app.core.metrics import CACHE_EVENTS, ENGINE_CALLS, ENGINE_LATENCY, STAGE_DURATION
+from app.core.metrics import (
+    CACHE_EVENTS,
+    ENGINE_CALLS,
+    ENGINE_LATENCY,
+    SAFE_SEARCH_DROPPED,
+    STAGE_DURATION,
+)
 from app.core.offload import run_cpu
 from app.core.singleflight import SingleFlight
 from app.db.base import EMBEDDING_DIM
@@ -49,10 +55,17 @@ from app.db.models import Answer, SemanticCache
 from app.db.session import get_sessionmaker
 from app.extraction.chunker import Chunk, chunk_markdown
 from app.extraction.scraper import PageContent, PageFailure, Scraper
-from app.llm.citations import ClaimCheck, check_claims, validate_citations
+from app.llm.citations import ClaimCheck, check_claims, grounding_summary, validate_citations
 from app.llm.compressor import compress_chunks
 from app.llm.embeddings import EmbeddingClient, EmbeddingError
-from app.llm.gateway import LLMError, LLMGateway, Usage, record_usage
+from app.llm.gateway import (
+    LLMError,
+    LLMGateway,
+    LLMStatusError,
+    Usage,
+    prompt_chars,
+    record_usage,
+)
 from app.llm.prompts import (
     SYSTEM_PROMPT,
     build_context,
@@ -78,6 +91,7 @@ from app.retrieval.models import EngineConfig, EngineStatus, RawResult, ScoredRe
 from app.retrieval.query_expansion import expand_query, expansion_signature, parse_variants
 from app.retrieval.reranker import Reranker, RerankerUnavailable, heuristic_order
 from app.retrieval.router import classify_complexity, extract_implicit_freshness_days
+from app.retrieval.safety import is_adult
 from app.retrieval.scoring import heuristic_chunk_score
 from app.retrieval.vn_tickers import _VIET_STOCK_STOP_WORDS, is_vn_ticker
 
@@ -483,6 +497,37 @@ def _age_s(value: datetime | None) -> int | None:
     return max(0, int((datetime.now(UTC) - value).total_seconds()))
 
 
+# docs/36 S6: engine families a deep search always fans out to; the others
+# (news, academic, financial, developer, social, fengshui) join only on intent —
+# news via inferred time words / news=true / freshness_days, academic via
+# scholarly terms. 26/11 eval: an always-on academic family put arxiv/doi.org
+# on top of "review MacBook Air" and "so sánh machine learning và deep learning".
+_DEEP_BROAD_CATEGORIES = frozenset({"general", "reference"})
+# docs/36 W2: a Lite-fallback engine (joined without matching the query's intent)
+# contributes at most this many results — 26/11 eval: google_news wrappers took
+# 10/10 slots for "review laptop MacBook Air M4 2026 có nên mua".
+_FALLBACK_MAX_RESULTS = 3
+# docs/36 E1: engines filed under another family that an intent still needs —
+# fin_rss is a financial news wire ("news"), and a financial question without
+# it lost its on-topic VnExpress/VnEconomy results (strict VI hit@5 0.22 -> 0.16).
+_INTENT_EXTRA_ENGINES: dict[str, frozenset[str]] = {"financial": frozenset({"fin_rss"})}
+
+
+def _intent_extras(families: set[str] | frozenset[str]) -> set[str]:
+    return {eid for fam in families for eid in _INTENT_EXTRA_ENGINES.get(fam, ())}
+
+
+# Vietnamese letters outside ASCII (đ, ơ, ư, ă, â, ê, ô + tone marks).
+_VI_LETTER_RE = re.compile(r"[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]")
+
+
+def _looks_vietnamese(query: str, lang: str | None) -> bool:
+    code = (lang or "").split("-")[0].lower().strip()
+    if code and code not in ("auto", "all"):
+        return code == "vi"
+    return bool(_VI_LETTER_RE.search(query.lower()))
+
+
 _INCOMPLETE_ENGINE_STATUSES = frozenset(
     {"error", "timeout", "circuit_broken", "local_overload", "skipped_breaker", "cancelled"}
 )
@@ -490,6 +535,20 @@ _INCOMPLETE_ENGINE_STATUSES = frozenset(
 
 def _has_incomplete_status(statuses: list[EngineStatus]) -> bool:
     return any(s.status in _INCOMPLETE_ENGINE_STATUSES for s in statuses)
+
+
+# docs/36 S5: engines known to be unavailable before the query ran. "quarantined"
+# (rate-based, long-lived) never makes a response incomplete — the query got every
+# engine expected to answer; "skipped_breaker" (transient) still does.
+DEGRADED_ENGINE_STATUSES = frozenset({"quarantined", "skipped_breaker"})
+
+
+def degraded_engines(statuses: list[EngineStatus]) -> list[dict[str, str | None]]:
+    return [
+        {"engine": s.engine, "status": s.status, "reason": s.error}
+        for s in statuses
+        if s.status in DEGRADED_ENGINE_STATUSES
+    ]
 
 
 _OPTIONAL_CONTEXT_PARTS = frozenset(
@@ -675,6 +734,8 @@ class SearchPipeline:
             self.gateway is not None
             and self.settings.query_expansion_enabled
             and params.expansion  # Pass 1 P1: research sub-queries skip LLM expansion
+            # docs/36 A0b: a one-slot provider spends its slot on the answer, not on variants.
+            and not _llm_scarce(self.gateway)
         ):
             # Pass 1 P2: memoize (query, lang, deep) -> variants for 10
             # minutes — a cached-hit re-run of the same long query must not
@@ -825,6 +886,13 @@ class SearchPipeline:
             news_half_life_days=self.settings.freshness_half_life_days_news,
             other_half_life_days=self.settings.freshness_half_life_days_other,
         )
+        if self.settings.safe_search_enabled:
+            # docs/36 W2: keyless engines have no safe search of their own.
+            kept_safe = [r for r in results if not is_adult(r.url, r.title, domain=r.domain)]
+            if len(kept_safe) != len(results):
+                logger.info("safe_search_dropped", dropped=len(results) - len(kept_safe))
+                SAFE_SEARCH_DROPPED.inc(len(results) - len(kept_safe))
+            results = kept_safe
         results = diversity_cap(results, max_per_domain=2, limit=params.k)
 
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -894,11 +962,47 @@ class SearchPipeline:
             ttl_s=ttl_s,
         )
 
+    def _lite_fallback_ids(
+        self,
+        query: str,
+        params: SearchParams,
+        all_enabled: list[tuple[EngineConfig, SearchAdapter]],
+        general_only: bool,
+    ) -> set[str]:
+        """Engines that join every Lite query (no SearXNG, no paid web API).
+
+        docs/36 W2: news feeds used to join EVERY Lite query (added when DDG was
+        the only web index) and buried technical answers under market headlines.
+        With bing_web + mwmbl, the encyclopedia rides along always; for a
+        Vietnamese query, query-aware news search too — Vietnamese web content in
+        the keyless set comes mostly from VN publishers (golden VI hit@5 0.28 ->
+        0.12 without it, 26/11 eval). Applies to deep and standard fan-out alike.
+        """
+        if self.settings.searxng_enabled or general_only:
+            return set()
+        if any(cfg.id in ("tavily", "serper", "brave") for cfg, _ in all_enabled):
+            return set()
+        ids = {"wikipedia"}
+        if _looks_vietnamese(query, params.lang):
+            ids |= {"bing_news", "google_news"}
+        return ids
+
     async def _fanout(
         self, query: str, params: SearchParams, on_event: OnEvent, *, general_only: bool = False
     ) -> tuple[list[RawResult], list[EngineStatus]]:
         all_enabled = await self.registry.enabled()
-        candidates = list(all_enabled)
+        # Engines that joined only as the Lite fallback (not by intent): their
+        # contribution is capped so a fallback cannot take over the page.
+        fallback_only: set[str] = set()
+        # docs/36 S5: quarantined engines go through the same selection so the
+        # response can say which engine this query WOULD have used is held out.
+        quarantine_probe = getattr(self.registry, "quarantined", None)
+        held_out = await quarantine_probe() if callable(quarantine_probe) else []
+        held_out_ids = {cfg.id for cfg, _ in held_out}
+        enabled_ids = {c.id for c, _ in all_enabled}
+        candidates = list(all_enabled) + [
+            pair for pair in held_out if pair[0].id not in enabled_ids
+        ]
         categories = set(params.categories or [])
         inferred_cats = infer_categories_from_query(query, news=params.news)
         fengshui_wanted = ("fengshui" in categories) or ("fengshui" in inferred_cats)
@@ -915,12 +1019,42 @@ class SearchPipeline:
             wanted = set(params.engines)
             candidates = [(cfg, ad) for cfg, ad in candidates if cfg.id in wanted]
         elif params.deep:
-            # Deep mode (docs/19 W4): all enabled engines minus off-topic verticals.
+            # Deep mode (docs/19 W4) used to fan out to EVERY enabled engine; the
+            # 26/11 probe found 8 verticals answering ok-0 (stooq, viet_stock,
+            # stocktwits, stackexchange...) on unrelated queries while the query
+            # hit the 3.6 s budget. docs/36 S6: deep = broad WITHIN the intent —
+            # the broad families always, a vertical family only when requested,
+            # inferred from the query, or preferred by the matched skill.
+            deep_families = _DEEP_BROAD_CATEGORIES | categories | inferred_cats
+            if params.freshness_days:
+                deep_families = deep_families | {"news"}
+            deep_skill: set[str] = set()
+            if self.settings.skill_orchestration_enabled:
+                hit = select_skill(
+                    query,
+                    requested_domain="auto",
+                    deep=True,
+                    min_words_deep=self.settings.adaptive_router_min_words_deep,
+                )
+                if hit.domain_id != "general_discovery":
+                    deep_skill = set(hit.preferred_engines)
+            deep_fallback = self._lite_fallback_ids(query, params, all_enabled, general_only)
+            deep_skill |= _intent_extras(deep_families)
+            fallback_only = {
+                cfg.id
+                for cfg, _ in candidates
+                if cfg.id in deep_fallback
+                and cfg.category not in deep_families
+                and cfg.id not in deep_skill
+            }
             candidates = [
                 (cfg, ad)
                 for cfg, ad in candidates
                 if (cfg.id != "fengshui" or fengshui_wanted)
                 and (cfg.id not in ("pubmed", "europepmc") or biomed_wanted)
+                and (
+                    cfg.category in deep_families or cfg.id in deep_skill or cfg.id in deep_fallback
+                )
             ]
         else:
             # Vertical engines join when requested, inferred, or skill-preferred.
@@ -940,12 +1074,17 @@ class SearchPipeline:
                         for eid in skill_hit.preferred_engines
                         if eid != "fengshui" or fengshui_wanted
                     }
-            lite_fallback_ids: set[str] = set()
-            has_paid_general = any(
-                cfg.id in ("tavily", "serper", "brave") for cfg, _ in all_enabled
-            )
-            if not self.settings.searxng_enabled and not has_paid_general and not general_only:
-                lite_fallback_ids = {"bing_news", "google_news", "wikipedia", "fin_rss"}
+            lite_fallback_ids = self._lite_fallback_ids(query, params, all_enabled, general_only)
+            if not general_only:
+                skill_engines |= _intent_extras(categories)
+            fallback_only = {
+                cfg.id
+                for cfg, _ in candidates
+                if cfg.id in lite_fallback_ids
+                and cfg.category != "general"
+                and cfg.category not in categories
+                and cfg.id not in skill_engines
+            }
             candidates = [
                 (cfg, ad)
                 for cfg, ad in candidates
@@ -958,11 +1097,22 @@ class SearchPipeline:
                 )
             ]
 
+        quarantined_statuses = [
+            EngineStatus(
+                engine=cfg.id, status="quarantined", results=0, ms=0, error=cfg.disabled_reason
+            )
+            for cfg, _ in candidates
+            if cfg.id in held_out_ids
+        ]
+        candidates = [(cfg, ad) for cfg, ad in candidates if cfg.id not in held_out_ids]
         if not candidates:
             raise MetaSearchError(
                 ErrorCode.NO_RESULTS,
                 "No search engine is enabled for this request",
-                details={"requested_engines": params.engines or []},
+                details={
+                    "requested_engines": params.engines or [],
+                    "quarantined": [st.engine for st in quarantined_statuses],
+                },
             )
 
         candidate_map = {cfg.id: (cfg, ad) for cfg, ad in candidates}
@@ -970,7 +1120,7 @@ class SearchPipeline:
         allowed_ids, skipped_ids = self.health_registry.filter_candidates(candidate_ids)
 
         raws: list[RawResult] = []
-        statuses: list[EngineStatus] = []
+        statuses: list[EngineStatus] = list(quarantined_statuses)
 
         for sid in skipped_ids:
             statuses.append(EngineStatus(engine=sid, status="skipped_breaker", results=0, ms=0))
@@ -990,7 +1140,11 @@ class SearchPipeline:
                     lang=params.lang,
                     categories=params.categories,
                     freshness_days=params.freshness_days,
-                    max_results=cfg.max_results,
+                    max_results=(
+                        min(cfg.max_results, _FALLBACK_MAX_RESULTS)
+                        if cfg.id in fallback_only
+                        else cfg.max_results
+                    ),
                     timeout_s=engine_timeout,
                 )
             except Exception as exc:
@@ -1384,6 +1538,11 @@ class AnswerPipeline:
                     params.query,
                 )
                 rewritten = _REWRITE_MEMO.get(memo_key)
+                if rewritten is None and _llm_scarce(gateway):
+                    # docs/36 A0b: no LLM round-trip to spare — carry the prior
+                    # question's words instead (deterministic, still standalone).
+                    carried = f"{thread_context['prior_question']} {params.query}"
+                    rewritten = " ".join(carried.split())[:200]
                 if rewritten is None:
                     rewrite_prompt = (
                         f"Previous question: {thread_context['prior_question']}\n"
@@ -1583,7 +1742,7 @@ class AnswerPipeline:
                 details={"engines_status": _status_map(outcome.statuses)},
             )
 
-        chunks = await self._rerank(normalized_q, scored_chunks)
+        chunks, rerank_info = await self._rerank_info(normalized_q, scored_chunks)
         counter = make_counter(self.settings)
         skill_sel = (
             select_skill(
@@ -1646,7 +1805,10 @@ class AnswerPipeline:
                         compression_saved_pct=comp_outcome.stats.saved_pct,
                         error_code=getattr(exc, "code", "internal"),
                     )
-                yield ("error", {"code": "internal", "message": str(exc)[:200]})
+                yield (
+                    "error",
+                    {"code": getattr(exc, "code", "internal"), "message": str(exc)[:200]},
+                )
                 return
 
             verdict_text = str(verdict.get("verdict_md") or "")
@@ -1746,6 +1908,8 @@ class AnswerPipeline:
                 "council": council_meta,
                 "follow_ups": follow_ups,
                 "compression": comp_outcome.stats.to_dict(),
+                "rerank": rerank_info,
+                "grounding": grounding_summary(verdict_text, claims),
             }
             if skill_sel is not None:
                 done_council["skill"] = skill_sel.to_dict()
@@ -1766,13 +1930,18 @@ class AnswerPipeline:
         # queries — the domain_intelligence machinery was bypassed on the
         # answer surface where users judge quality.
         domain_sys = build_domain_system_prompt(SYSTEM_PROMPT, normalized_q, domain)
-        messages = build_messages(
-            normalized_q,
-            included,
-            system_prompt=domain_sys,
-            skill_prompt=skill_sel.prompt_instruction if skill_sel else "",
-            memory_context=memory_context,
-        )
+
+        def _messages_for(ctx: list[tuple[int, Chunk]]) -> list[dict[str, str]]:
+            return build_messages(
+                normalized_q,
+                ctx,
+                system_prompt=domain_sys,
+                skill_prompt=skill_sel.prompt_instruction if skill_sel else "",
+                memory_context=memory_context,
+            )
+
+        # docs/36 A0: never send a prompt the provider is known to reject (413).
+        included, messages = _fit_prompt(included, _messages_for, _prompt_limit(gateway))
 
         text_parts: list[str] = []
         usage = Usage()
@@ -1798,15 +1967,34 @@ class AnswerPipeline:
                         ]
                     },
                 )
-            async for delta in gateway.stream(messages, model=model):
-                if delta.text:
-                    text_parts.append(delta.text)
-                    yield ("token", {"t": delta.text})
-                if delta.finish_reason:
-                    finish_reasons.add(delta.finish_reason)
-                if delta.usage:
-                    usage.input_tokens += delta.usage.input_tokens
-                    usage.output_tokens += delta.usage.output_tokens
+            for shrink_attempt in range(2):
+                try:
+                    async for delta in gateway.stream(messages, model=model):
+                        if delta.text:
+                            text_parts.append(delta.text)
+                            yield ("token", {"t": delta.text})
+                        if delta.finish_reason:
+                            finish_reasons.add(delta.finish_reason)
+                        if delta.usage:
+                            usage.input_tokens += delta.usage.input_tokens
+                            usage.output_tokens += delta.usage.output_tokens
+                    break
+                except LLMStatusError as exc:
+                    # docs/36 A0: one retry with half the context after a 413 —
+                    # the gateway has learned the cap; numbering stays a prefix,
+                    # so the provisional citation_map remains valid.
+                    if (
+                        not exc.payload_too_large
+                        or text_parts
+                        or shrink_attempt
+                        or len(included) < 2
+                    ):
+                        raise
+                    half = max(1, len(included) // 2)
+                    included, messages = _fit_prompt(
+                        included[:half], _messages_for, _prompt_limit(gateway)
+                    )
+                    logger.info("answer_context_shrunk", kept=len(included))
         except LLMError as exc:
             logger.warning("llm_stream_failed", error=str(exc)[:200])
             if skill_sel is not None:
@@ -1943,6 +2131,8 @@ class AnswerPipeline:
             "cached": False,
             "follow_ups": follow_ups,
             "compression": comp_outcome.stats.to_dict(),
+            "rerank": rerank_info,
+            "grounding": grounding_summary(check.text, claims),
         }
         if skill_sel is not None:
             done_payload["skill"] = skill_sel.to_dict()
@@ -1956,6 +2146,8 @@ class AnswerPipeline:
         """
         if not self.settings.followups_enabled or getattr(gateway, "provider", "none") == "none":
             return []
+        if _llm_scarce(gateway):
+            return []  # docs/36 A0b: the one slot already served the answer
         # Perf guard: never spend the tail of a tight request budget on follow-ups.
         _b = get_current_budget()
         if _b is not None and _b.remaining() < 0.25 * _b.total_timeout_s:
@@ -2046,7 +2238,7 @@ class AnswerPipeline:
                 details={"engines_status": _status_map(outcome.statuses)},
             )
 
-        chunks = await self._rerank(normalized, scored_chunks)
+        chunks, rerank_info = await self._rerank_info(normalized, scored_chunks)
         eff_budget = budget or self.settings.answer_context_budget
         counter = make_counter(self.settings)
         skill_sel = (
@@ -2110,6 +2302,7 @@ class AnswerPipeline:
             "system_prompt": SYSTEM_PROMPT,
             "messages": messages,
             "compression": comp_outcome.stats.to_dict(),
+            "rerank": rerank_info,
             "skill": skill_sel.to_dict() if skill_sel is not None else None,
             "chunks": [
                 {
@@ -2120,6 +2313,10 @@ class AnswerPipeline:
                     "heading_path": chunk.heading_path,
                     "content": chunk.content,
                     "word_count": chunk.word_count,
+                    # docs/36 X2: span in the extracted text (None = not located).
+                    "start_offset": chunk.start_offset,
+                    "end_offset": chunk.end_offset,
+                    "page": chunk.page,
                     **chunk_marks(chunk.document_url),
                 }
                 for n, chunk in included
@@ -2184,12 +2381,29 @@ class AnswerPipeline:
     # -- rerank ------------------------------------------------------------
 
     async def _rerank(self, query: str, scored_chunks: list[tuple[float, Chunk]]) -> list[Chunk]:
+        chunks, _info = await self._rerank_info(query, scored_chunks)
+        return chunks
+
+    async def _rerank_info(
+        self, query: str, scored_chunks: list[tuple[float, Chunk]]
+    ) -> tuple[list[Chunk], dict[str, Any]]:
+        """Rerank and say what actually happened (docs/36 §17, XERJ ``_rerank.applied``).
+
+        A configured reranker that fails open used to be invisible to the caller;
+        now ``applied=false`` + ``reason`` travel with the answer/context.
+        """
+        name = str(getattr(self.reranker, "name", type(self.reranker).__name__))
         try:
             with _stage("rerank"):
-                return await self.reranker.rerank(query, scored_chunks)
+                chunks = await self.reranker.rerank(query, scored_chunks)
+            return chunks, {"reranker": name, "applied": True, "reason": None}
         except RerankerUnavailable as exc:
             logger.warning("rerank_fallback_heuristic", reason=str(exc)[:120])
-            return heuristic_order(scored_chunks)
+            return heuristic_order(scored_chunks), {
+                "reranker": name,
+                "applied": False,
+                "reason": str(exc)[:200],
+            }
 
     async def _score_chunks(
         self, query: str, results: list[ScoredResult], pages: list[PageContent]
@@ -2502,6 +2716,51 @@ def _no_results(statuses: list[EngineStatus]) -> MetaSearchError:
 
 def _status_map(statuses: list[EngineStatus]) -> dict[str, str]:
     return {s.engine: s.status for s in statuses}
+
+
+def _llm_scarce(gateway: Any) -> bool:
+    """docs/36 A0b: True when the gateway's provider serves one request at a time."""
+    probe = getattr(gateway, "is_scarce", None)
+    try:
+        return bool(probe()) if callable(probe) else False
+    except Exception:  # resolving the target must never break the request
+        return False
+
+
+def _prompt_limit(gateway: Any) -> int | None:
+    probe = getattr(gateway, "prompt_char_limit", None)
+    try:
+        limit = probe() if callable(probe) else None
+    except Exception:
+        return None
+    return int(limit) if isinstance(limit, int) and limit > 0 else None
+
+
+def _fit_prompt(
+    included: list[tuple[int, Chunk]],
+    build: Callable[[list[tuple[int, Chunk]]], list[dict[str, str]]],
+    limit: int | None,
+) -> tuple[list[tuple[int, Chunk]], list[dict[str, str]]]:
+    """docs/36 A0: drop trailing sources until the prompt fits ``limit`` chars.
+
+    Trailing = lowest-ranked, and dropping a suffix keeps every remaining [n]
+    marker stable. At least one source is kept; if that alone is too big, its
+    text is cut so the prompt fits (an answer from a clipped source beats a 413).
+    """
+    messages = build(included)
+    if limit is None:
+        return included, messages
+    budget = int(limit * 0.95)  # provider counting differs slightly from ours
+    while prompt_chars(messages) > budget and len(included) > 1:
+        included = included[:-1]
+        messages = build(included)
+    if prompt_chars(messages) > budget and included:
+        idx, chunk = included[0]
+        over = prompt_chars(messages) - budget
+        keep = max(200, len(chunk.content) - over)
+        included = [(idx, dataclasses.replace(chunk, content=chunk.content[:keep]))]
+        messages = build(included)
+    return included, messages
 
 
 def _domain(url: str) -> str:

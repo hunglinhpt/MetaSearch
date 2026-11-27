@@ -10,7 +10,9 @@ Category: financial, prediction
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime
+import json
+import re
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -21,6 +23,85 @@ from app.retrieval.health import Outcome
 from app.retrieval.models import RawResult
 
 DEFAULT_BASE_URL = "https://gamma-api.polymarket.com"
+
+
+_TERM_RE = re.compile(r"\w{3,}", re.UNICODE)
+
+
+def _query_terms(query: str) -> set[str]:
+    return {t.lower() for t in _TERM_RE.findall(query or "")}
+
+
+def _json_list(raw: Any) -> list[Any]:
+    """Gamma encodes ``outcomes``/``outcomePrices`` as JSON strings."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        with contextlib.suppress(ValueError):
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def _parse_dt(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # A naive timestamp would break freshness math against aware datetimes.
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def _event_to_result(event: Any, terms: set[str], *, adapter_id: str) -> RawResult | None:
+    """One open event -> one result. Odds/volume only as the API states them."""
+    if not isinstance(event, dict) or event.get("closed") or event.get("archived"):
+        return None
+    title = str(event.get("title") or "").strip()
+    slug = str(event.get("slug") or "").strip()
+    if not title or not slug or not re.fullmatch(r"[A-Za-z0-9-]{1,200}", slug):
+        return None
+    # Gamma search is fuzzy ("xyzzy nothing" -> "Nothing Ever Happens"): keep an
+    # event only when a query term appears in its title or description.
+    haystack = f"{title} {event.get('description') or ''}".lower()
+    if terms and not any(t in haystack for t in terms):
+        return None
+    parts: list[str] = []
+    raw_markets = event.get("markets")
+    markets: list[Any] = raw_markets if isinstance(raw_markets, list) else []
+    open_markets = [m for m in markets if isinstance(m, dict) and not m.get("closed")]
+    for market in open_markets[:3]:
+        names = _json_list(market.get("outcomes"))
+        prices = _json_list(market.get("outcomePrices"))
+        if not names or len(names) != len(prices):
+            continue
+        try:
+            odds = ", ".join(
+                f"{n}: {float(p) * 100:.0f}%" for n, p in zip(names, prices, strict=True)
+            )
+        except (TypeError, ValueError):
+            continue
+        question = str(market.get("question") or "").strip()
+        parts.append(f"{question} ({odds})" if question else odds)
+    volume = event.get("volume")
+    snippet = f"Polymarket: {title}"
+    if isinstance(volume, (int, float)) and volume >= 0:
+        snippet += f" | Volume: ${volume:,.0f}"
+    if parts:
+        snippet += " | " + " ; ".join(parts)
+    end = _parse_dt(event.get("endDate"))
+    if end is not None:
+        snippet += f" | Resolves: {end.date().isoformat()}"
+    return RawResult(
+        url=f"https://polymarket.com/event/{slug}",
+        title=f"Polymarket: {title}",
+        snippet=snippet[:600],
+        rank=0,
+        adapter=adapter_id,
+        source_engines=[adapter_id],
+        published_at=_parse_dt(event.get("createdAt")) or _parse_dt(event.get("startDate")),
+    )
 
 
 class PolymarketAdapter:
@@ -86,16 +167,13 @@ class PolymarketAdapter:
         client = self._client or get_http_client("search")
 
         try:
-            # Step 1: Search for markets matching the query
-            search_url = f"{self.base_url}/markets/search"
-            params: dict[str, Any] = {
-                "query": query,
-                "limit": str(min(max_results, 20)),
-            }
-
+            # docs/36 S4: ``/markets/search`` now answers 422 for every query
+            # (probe 2026-11-26, 4/4). The current Gamma search is
+            # ``/public-search`` and returns events with their markets inline —
+            # one request instead of 1 + N detail calls.
             resp = await client.get(
-                search_url,
-                params=params,
+                f"{self.base_url}/public-search",
+                params={"q": query, "limit_per_type": str(min(max_results, 20))},
                 headers=headers,
                 timeout=timeout_s,
             )
@@ -114,23 +192,22 @@ class PolymarketAdapter:
                     kind=Outcome.UPSTREAM_ERROR,
                     retryable=False,
                 )
-
-            search_data = resp.json()
-            market_ids = [m["id"] for m in search_data.get("markets", [])[:max_results]]
-
-            if not market_ids:
+            try:
+                payload = resp.json()
+            except ValueError as exc:
+                raise AdapterError("polymarket returned non-JSON body") from exc
+            events = payload.get("events") if isinstance(payload, dict) else None
+            if not isinstance(events, list):
                 return []
-
-            # Step 2: Fetch detailed data for each market
+            terms = _query_terms(query)
             results: list[RawResult] = []
-            for market_id in market_ids:
-                market_data = await self._fetch_market_details(
-                    client, market_id, headers, timeout_s
-                )
-                if market_data:
-                    result = self._parse_market_to_result(market_data, query)
+            for event in events:
+                result = _event_to_result(event, terms, adapter_id=self.id)
+                if result is not None:
+                    result.rank = len(results)
                     results.append(result)
-
+                if len(results) >= max_results:
+                    break
             return results
 
         except httpx.PoolTimeout as exc:

@@ -524,7 +524,9 @@ class _StubAdapter:
 
 
 @pytest.mark.asyncio
-async def test_deep_fans_out_to_all_categories():
+async def test_deep_fans_out_broadly_within_the_intent():
+    # docs/36 S6: deep = broad families always + vertical families on intent
+    # (it used to call every enabled engine, so verticals answered ok-0).
     from app.config import Settings
 
     configs = {
@@ -546,8 +548,22 @@ async def test_deep_fans_out_to_all_categories():
 
     deep = await pipeline.run(SearchParams(query="anything at all", deep=True))
     deep_engines = {s.engine for s in deep.statuses}
-    assert deep_engines == {"web", "reddit", "openalex", "stooq"}
-    assert len(deep.results) >= 4
+    assert deep_engines == {"web"}
+    assert len(deep.results) >= 1
+
+    acad = await pipeline.run(
+        SearchParams(query="peer-reviewed paper on transformer attention", deep=True)
+    )
+    assert "openalex" in {s.engine for s in acad.statuses}
+
+    fin = await pipeline.run(SearchParams(query="cổ phiếu FPT lợi nhuận quý 3", deep=True))
+    assert {"web", "stooq"} <= {s.engine for s in fin.statuses}
+    assert "reddit" not in {s.engine for s in fin.statuses}
+
+    asked = await pipeline.run(
+        SearchParams(query="anything at all", deep=True, categories=["social"])
+    )
+    assert "reddit" in {s.engine for s in asked.statuses}
 
 
 # --- engine store upgrade path (docs/19): new default engines appear on old DBs
@@ -733,7 +749,7 @@ async def test_deep_waits_past_soft_budget_for_all_engines():
         for c in [
             EngineConfig(id="fast1", name="f1", category="general", enabled=True),
             EngineConfig(id="fast2", name="f2", category="general", enabled=True),
-            EngineConfig(id="slow", name="s", category="social", enabled=True),
+            EngineConfig(id="slow", name="s", category="general", enabled=True),
         ]
     }
     adapters = {"fast1": _Ad("fast1"), "fast2": _Ad("fast2"), "slow": _Ad("slow", delay=0.6)}

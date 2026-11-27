@@ -173,7 +173,9 @@ async def test_llm_breaker_open_is_503():
     assert "event: error" in s.text and '"code": "overloaded"' in s.text
 
 
-async def test_llm_failure_is_still_internal():
+async def test_llm_failure_is_upstream_error_not_internal():
+    # docs/36 A0: a provider that refuses the call is a 502 upstream_error; 500
+    # "internal" is reserved for our own bugs (it was 500 before v4.7).
     _install(
         LLMGateway(
             get_settings(),
@@ -185,8 +187,8 @@ async def test_llm_failure_is_still_internal():
     )
     async with _client() as c:
         r = await c.post("/v1/answer", json={"query": f"postgres 401 {uuid.uuid4().hex}"})
-    assert r.status_code == 500
-    assert r.json()["error"]["code"] == "internal"
+    assert r.status_code == 502
+    assert r.json()["error"]["code"] == "upstream_error"
 
 
 def _real_scraper(handler):

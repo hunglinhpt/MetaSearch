@@ -22,6 +22,8 @@ class ErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     RATE_LIMITED = "rate_limited"
     UPSTREAM_TIMEOUT = "upstream_timeout"
+    # docs/36 A0: an upstream dependency (e.g. the LLM provider) refused or broke.
+    UPSTREAM_ERROR = "upstream_error"
     NO_RESULTS = "no_results"
     OVERLOADED = "overloaded"
     DEADLINE_EXCEEDED = "deadline_exceeded"
@@ -38,6 +40,7 @@ HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.NOT_FOUND: 404,
     ErrorCode.RATE_LIMITED: 429,
     ErrorCode.UPSTREAM_TIMEOUT: 502,
+    ErrorCode.UPSTREAM_ERROR: 502,
     ErrorCode.NO_RESULTS: 503,
     ErrorCode.OVERLOADED: 503,
     ErrorCode.TTS_DISABLED: 503,

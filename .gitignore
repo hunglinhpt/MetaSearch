@@ -57,3 +57,6 @@ build/
 *.log
 .retention_last_run
 coverage/
+
+# docs/36 S2: ad-hoc eval reports stay local; reviewed baselines live in api/evals/baselines/
+api/evals/reports/

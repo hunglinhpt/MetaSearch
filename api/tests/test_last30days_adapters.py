@@ -2,7 +2,7 @@
 
 Tests cover:
 - Last30Days-inspired: Careers, Polymarket, StockTwits, USPTO
-- Public APIs (no key required): IP-API, OpenTrivia, DogCEO
+- Public APIs (no key required)
 - New public API adapters: Alpha Vantage, NewsAPI, OpenWeather, CoinGecko
 """
 
@@ -12,10 +12,7 @@ from app.config import Settings, get_settings
 from app.retrieval.adapters.alpha_vantage import AlphaVantageAdapter
 from app.retrieval.adapters.careers import CareersAdapter
 from app.retrieval.adapters.coingecko import CoinGeckoAdapter
-from app.retrieval.adapters.dogceo import DogCEOAdapter
-from app.retrieval.adapters.ipapi import IPAPIGeolocationAdapter
 from app.retrieval.adapters.newsapi import NewsAPIAdapter, NewsAPITopHeadlinesAdapter
-from app.retrieval.adapters.opentdb import OpenTriviaAdapter
 from app.retrieval.adapters.openweather import OpenWeatherMapAdapter
 from app.retrieval.adapters.polymarket import PolymarketAdapter, PolymarketTrendingAdapter
 from app.retrieval.adapters.stocktwits import StockTwitsAdapter, StockTwitsTrendingAdapter
@@ -55,17 +52,6 @@ class TestAdapterInstantiation:
         assert adapter.id == "uspto_company"
 
     # Public API adapters (no API key required)
-    def test_ipapi_adapter_instantiation(self):
-        adapter = IPAPIGeolocationAdapter()
-        assert adapter.id == "ipapi"
-
-    def test_opentdb_adapter_instantiation(self):
-        adapter = OpenTriviaAdapter()
-        assert adapter.id == "opentdb"
-
-    def test_dogceo_adapter_instantiation(self):
-        adapter = DogCEOAdapter()
-        assert adapter.id == "dogceo"
 
     # New public API adapters
     def test_alpha_vantage_adapter_instantiation(self):
@@ -105,9 +91,6 @@ class TestAdapterRegistry:
         assert "uspto" in adapters
         assert "uspto_company" in adapters
         # Public API adapters (no key required)
-        assert "ipapi" in adapters
-        assert "opentdb" in adapters
-        assert "dogceo" in adapters
         # New public API adapters
         assert "alpha_vantage" in adapters
         assert "newsapi" in adapters
@@ -128,9 +111,6 @@ class TestAdapterRegistry:
         assert isinstance(adapters["uspto"], USPTOAdapter)
         assert isinstance(adapters["uspto_company"], USPTOCompanyAdapter)
         # Public API adapters
-        assert isinstance(adapters["ipapi"], IPAPIGeolocationAdapter)
-        assert isinstance(adapters["opentdb"], OpenTriviaAdapter)
-        assert isinstance(adapters["dogceo"], DogCEOAdapter)
         # New public API adapters
         assert isinstance(adapters["alpha_vantage"], AlphaVantageAdapter)
         assert isinstance(adapters["newsapi"], NewsAPIAdapter)

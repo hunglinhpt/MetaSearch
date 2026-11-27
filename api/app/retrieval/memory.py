@@ -54,6 +54,29 @@ def domain_of(url: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
+# docs/36 X3: near-duplicate suppression for high-volume kinds (feedback rows are
+# deliberate votes and are never deduplicated).
+_DEDUP_KINDS = frozenset({"query", "observation"})
+_DEDUP_WINDOW = 50
+_DEDUP_JACCARD = 0.9
+
+
+def is_near_duplicate_text(a: str, b: str) -> bool:
+    """Same normalized text, or word-set Jaccard >= 0.9 (accents folded)."""
+    from app.retrieval.scoring import fold_diacritics
+
+    na = " ".join(fold_diacritics(a).lower().split())
+    nb = " ".join(fold_diacritics(b).lower().split())
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    sa, sb = set(na.split()), set(nb.split())
+    if min(len(sa), len(sb)) < 4:  # short texts: only exact repeats count
+        return False
+    return len(sa & sb) / len(sa | sb) >= _DEDUP_JACCARD
+
+
 async def record_memory(
     owner: str,
     *,
@@ -77,6 +100,24 @@ async def record_memory(
 
         async def _write() -> bool:
             async with sqlite_write_lock(), get_sessionmaker()() as session:
+                if kind in _DEDUP_KINDS and text:
+                    # docs/36 X3 (XERJ memory dedup): a repeat of a recent row adds
+                    # nothing but evicts something older under the per-key cap.
+                    recent = (
+                        (
+                            await session.execute(
+                                select(MemoryItem.text)
+                                .where(MemoryItem.api_key_id == owner, MemoryItem.kind == kind)
+                                .order_by(MemoryItem.created_at.desc())
+                                .limit(_DEDUP_WINDOW)
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    if any(is_near_duplicate_text(text, prev or "") for prev in recent):
+                        logger.debug("memory_dedup_skipped", owner=owner, kind=kind)
+                        return True
                 count = (
                     await session.execute(
                         select(func.count())

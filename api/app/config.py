@@ -146,7 +146,9 @@ class Settings(BaseSettings):
     # allowlist or local/LAN self-hosted inference, before dispatch.
     # "open" restores legacy behavior (SSRF validation still applies).
     llm_endpoint_policy: Literal["trusted_only", "open"] = "trusted_only"
-    llm_council_endpoints: str = "pollinations:openai,pollinations:mistral,pollinations:llama"
+    # docs/36 A0: empty = auto-discover keyed free providers + one keyless panelist
+    # (the old default named pollinations models that the provider no longer serves).
+    llm_council_endpoints: str = ""
     llm_dream_rsi_enabled: bool = True
     llm_quick_model: str = "gpt-4o-mini"
     llm_report_model: str = "gpt-4o"
@@ -399,6 +401,17 @@ class Settings(BaseSettings):
     engine_store_db_timeout_s: float = 0.5
     engine_auto_disable_threshold: int = 3
     engine_recovery_probe_s: int = 300
+    # docs/36 S3: rate-based quarantine from persisted health windows (survives
+    # restarts; released by a successful probe or an operator PATCH).
+    # docs/36 W2: drop adult results from every engine (keyless engines have no
+    # safe search of their own; SearXNG additionally gets safesearch=1).
+    safe_search_enabled: bool = True
+    engine_quarantine_enabled: bool = True
+    engine_quarantine_interval_s: int = Field(default=600, ge=30, le=86_400)
+    engine_quarantine_probe_s: int = Field(default=3600, ge=60, le=86_400)
+    engine_quarantine_min_calls: int = Field(default=8, ge=1, le=10_000)
+    engine_quarantine_min_recent_calls: int = Field(default=2, ge=1, le=10_000)
+    engine_quarantine_max_success: float = Field(default=0.2, ge=0.0, le=1.0)
     # Context budget tokenizer: words (proxy) or tiktoken when installed.
     context_tokenizer: Literal["words", "tiktoken"] = "words"
 

@@ -35,7 +35,7 @@ from app.core.json_utils import extract_json_object
 from app.core.logging import get_logger
 from app.extraction.chunker import Chunk
 from app.llm.citations import validate_citations
-from app.llm.gateway import LLMError, LLMGateway, Usage
+from app.llm.gateway import LLMError, LLMGateway, LLMUpstreamError, Usage
 from app.llm.prompts import SYSTEM_PROMPT, render_context
 from app.llm.providers import LLMOverride, get_runtime_llm_store, parse_council_endpoint_specs
 from app.retrieval.domain_intelligence import (
@@ -366,7 +366,7 @@ class DreamRSICouncilEngine:
 
         if not ok_drafts:
             errors = [f"{d.provider}:{d.model} -> {d.error}" for d in drafts]
-            raise LLMError("All Council LLM endpoints failed: " + "; ".join(errors[:4]))
+            raise LLMUpstreamError("All Council LLM endpoints failed: " + "; ".join(errors[:4]))
 
         # Stage 2: Anonymous Cross-Review (Peer Critique + Deterministic Forensic Audit)
         cross_reviews: list[dict[str, Any]] = []

@@ -105,3 +105,52 @@ jobs:
           python-version: "3.12"
       - run: uv sync --locked --extra dev
       - run: uv run --locked python scripts/live_smoke.py
+
+  quality-eval:
+    name: Retrieval quality vs committed baselines (docs/36 S2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # Report-only on hosted runners: their egress differs from the production
+    # network the baselines were measured on (docs/36 S2). The gate is
+    # authoritative when run from the production egress (docs/36 §14).
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: api
+    env:
+      SEARXNG_ENABLED: "false"
+      DATABASE_URL: sqlite+aiosqlite:///./eval_ci.db
+      REDIS_URL: ""
+      LLM_PROVIDER: none
+      SERVE_UI: "false"
+      SCHEDULER_ENABLED: "false"
+      ENGINE_QUARANTINE_ENABLED: "false"
+      # docs/36 E2: baselines are a median of 2 cache-free runs.
+      CACHE_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --extra dev
+      - name: Eval both golden sets and gate against the baselines
+        run: |
+          .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8011 &
+          SRV=$!
+          trap 'kill $SRV' EXIT
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8011/v1/meta >/dev/null && break; sleep 1; done
+          rc=0
+          for pair in "golden_v2:eval_v2_golden_v2.lite.json" "golden_v3_vi:eval_v2_golden_v3_vi.lite.json"; do
+            g="${pair%%:*}"; b="${pair##*:}"
+            # eval_v2 exits 1 below its absolute targets (known, docs/36 F1): the gate decides.
+            .venv/bin/python scripts/eval_v2.py --base-url http://127.0.0.1:8011 \
+              --golden "evals/$g.json" --report-dir "evals/reports/$g" --concurrency 3 --repeat 2 || true
+            latest=$(ls -t "evals/reports/$g"/eval_v2_*.json | head -1)
+            .venv/bin/python scripts/eval_gate.py --baseline "evals/baselines/$b" --report "$latest" || rc=1
+          done
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quality-eval-reports
+          path: api/evals/reports/

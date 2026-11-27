@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.api import deps
 from app.core.auth import require_admin
 from app.core.errors import ErrorCode, MetaSearchError
+from app.orchestration.engine_quarantine import is_quarantined
 
 router = APIRouter(tags=["engines"])
 
@@ -84,8 +85,12 @@ async def engines() -> list[dict[str, Any]]:
 async def engines_health() -> list[dict[str, Any]]:
     store = deps.get_engine_store()
     recent = await store.recent_windows()
+    # docs/36 S3: persisted-history rates (empty dict on the in-memory store).
+    history_fn = getattr(store, "history_rates", None)
+    history = await history_fn() if history_fn is not None else {}
     out = []
     for summary in (await store.health()).values():
+        h = history.get(summary.engine_id)
         success_rate = summary.successes / summary.calls if summary.calls > 0 else None
         out.append(
             {
@@ -97,6 +102,11 @@ async def engines_health() -> list[dict[str, Any]]:
                 "success_rate": round(success_rate, 4) if success_rate is not None else None,
                 "consecutive_failures": summary.consecutive_failures,
                 "disabled_reason": summary.disabled_reason,
+                "quarantined": is_quarantined(summary.disabled_reason),
+                "calls_24h": h.calls_24h if h else None,
+                "success_rate_24h": h.success_rate_24h if h else None,
+                "calls_7d": h.calls_7d if h else None,
+                "success_rate_7d": h.success_rate_7d if h else None,
                 # docs/29 ISSUE-2: rolling last-10 window telemetry + alert.
                 "recent_window": recent.get(
                     summary.engine_id,

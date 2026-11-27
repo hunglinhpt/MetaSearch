@@ -41,6 +41,9 @@ export type SearchResponse = {
   // false when some engine failed or a domain filter removed every result:
   // an empty list is then "not known", not "nothing exists".
   complete?: boolean;
+  // docs/36 S5: engines held out before the query ran (rate-based quarantine or an
+  // open breaker). A quarantined engine does not make `complete` false.
+  degraded_engines?: { engine: string; status: string; reason: string | null }[];
   age_s?: number | null;
   // v2.5 P0-7: instant answer over the top results (extras=["answer"])
   answer?: string | null;
@@ -72,7 +75,35 @@ export type AnswerMeta = {
     chunks_in: number;
     chunks_out: number;
   };
+  // docs/36 §18 (XERJ): applied=false when the configured reranker failed open.
+  rerank?: { reranker: string; applied: boolean; reason: string | null };
+  // docs/36 X1: how well the answer is grounded in its cited sources.
+  grounding?: {
+    status: "grounded" | "partial" | "weak" | "ungrounded";
+    prose_sentences: number;
+    cited_sentences: number;
+    unsupported_sentences: number;
+    citation_coverage: number;
+    numeric_fidelity: number;
+    unverified_numbers: string[];
+  };
 };
+
+// docs/36 X1: short Vietnamese label for an answer's grounding status.
+export function groundingLabel(status: string | undefined): string {
+  switch (status) {
+    case "grounded":
+      return "✅ bám nguồn tốt";
+    case "partial":
+      return "🟡 bám nguồn một phần";
+    case "weak":
+      return "⚠️ bám nguồn yếu";
+    case "ungrounded":
+      return "⛔ không có nguồn trích dẫn";
+    default:
+      return "";
+  }
+}
 
 export type LLMOverridePayload = {
   provider?: string;

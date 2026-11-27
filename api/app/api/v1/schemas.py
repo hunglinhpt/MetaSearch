@@ -736,6 +736,10 @@ class SearchResponse(BaseModel):
     engines_used: list[str]
     engines_failed: list[str]
     engines_status: list[dict[str, Any]] = Field(default_factory=list)
+    # docs/36 S5: engines held out before the query ran — rate-based quarantine
+    # (does not make `complete` false) or an open breaker (does). Each item:
+    # {"engine", "status": "quarantined"|"skipped_breaker", "reason"}.
+    degraded_engines: list[dict[str, Any]] = Field(default_factory=list)
     latency_ms: int
     cached: bool = False
     complete: bool = True
@@ -764,6 +768,12 @@ class AnswerResponse(BaseModel):
     council: dict[str, Any] | None = None
     skill: dict[str, Any] | None = None
     compression: dict[str, Any] | None = None
+    # docs/36 §17: {"reranker", "applied", "reason"} — applied=false when the
+    # configured reranker failed open to the heuristic order.
+    rerank: dict[str, Any] | None = None
+    # docs/36 X1: {"status": grounded|partial|weak|ungrounded, "cited_sentences",
+    # "unsupported_sentences", "citation_coverage", "numeric_fidelity", ...}.
+    grounding: dict[str, Any] | None = None
 
 
 def new_id() -> str:
@@ -1553,6 +1563,9 @@ class VerifyEvidenceOut(BaseModel):
     polarity_flip: bool = False
     # The quote REPORTS a claim/rumour rather than asserting it (never support).
     hearsay: bool = False
+    # docs/36 T1: key terms of the claim (figures incl. years, capitalised
+    # entities) absent from the quoted sentence; non-empty -> never "supports".
+    missing_terms: list[str] = Field(default_factory=list, max_length=40)
     judge: Literal["lexical", "llm"] = "lexical"
     published_at: str | None = Field(default=None, max_length=64)
     fetched_at: str | None = Field(default=None, max_length=64)

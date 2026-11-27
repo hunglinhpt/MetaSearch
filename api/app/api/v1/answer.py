@@ -248,6 +248,13 @@ async def _json(
                 status_code=503,
                 headers={"Retry-After": str(max(1, wait))},
             )
+        if err.get("code") in (ErrorCode.UPSTREAM_ERROR.value, ErrorCode.UPSTREAM_TIMEOUT.value):
+            # docs/36 A0: the LLM provider failed this request — a 502, not our 500.
+            raise MetaSearchError(
+                ErrorCode(err["code"]),
+                err.get("message", "LLM provider failed"),
+                status_code=502,
+            )
         raise MetaSearchError(
             ErrorCode.INTERNAL,
             (error or {}).get("message", "answer pipeline produced no output"),
@@ -269,6 +276,8 @@ async def _json(
         council=council_data,
         skill=meta.get("skill"),
         compression=meta.get("compression"),
+        rerank=meta.get("rerank"),
+        grounding=meta.get("grounding"),
     )
 
 

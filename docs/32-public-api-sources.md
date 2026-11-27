@@ -8,6 +8,11 @@ This document lists **public APIs that require no API key or provide instant fre
 
 ## 🎯 Currently Integrated Public APIs (No Key Required)
 
+> **Cập nhật 2026-11-26 (docs/36 S8):** 3 adapter IP-API, Open Trivia DB và Dog CEO dưới đây đã được
+> **gỡ khỏi mã nguồn** — chúng chỉ được dựng trong registry, không có EngineConfig nên không bao giờ
+> chạy, và nằm ngoài phạm vi sản phẩm (tìm kiếm/nghiên cứu). Thông tin địa lý IP vẫn có qua
+> `GET /v1/net/ipgeo` (docs/32 §6, ipwho.is + IPinfo tuỳ chọn). Các mục 1–3 giữ lại chỉ để tham khảo lịch sử.
+
 ### 1. **IP-API (Geolocation)**
 - **Adapter**: `ipapi.py`
 - **Endpoint**: `http://ip-api.com/json/{ip}`
@@ -182,9 +187,9 @@ This document lists **public APIs that require no API key or provide instant fre
 ## 🚀 Integration Priority
 
 ### Priority 1: No API Key Required (Immediate)
-1. ✅ **IP-API** - Integrated
-2. ✅ **Open Trivia Database** - Integrated
-3. ✅ **Dog CEO API** - Integrated
+1. ~~IP-API~~ - đã gỡ 2026-11-26 (docs/36 S8; dùng `GET /v1/net/ipgeo`)
+2. ~~Open Trivia Database~~ - đã gỡ 2026-11-26 (ngoài phạm vi sản phẩm)
+3. ~~Dog CEO API~~ - đã gỡ 2026-11-26 (ngoài phạm vi sản phẩm)
 4. **Rest Countries** - High value for geography
 5. **Open Street Map** - Useful for geocoding
 6. **JSONPlaceholder** - Testing utility
@@ -208,7 +213,7 @@ This document lists **public APIs that require no API key or provide instant fre
 ### Integrated Adapters: **38 Total**
 - **Original**: 31 adapters
 - **Last30Days**: 7 adapters (careers, polymarket, stocktwits, uspto, etc.)
-- **Public APIs**: 3 adapters (ipapi, opentdb, dogceo)
+- **Public APIs**: 3 adapters (ipapi, opentdb, dogceo) — đã gỡ 2026-11-26 (docs/36 S8)
 
 ### Next Steps
 1. Integrate **Rest Countries** for geography data
@@ -222,12 +227,9 @@ This document lists **public APIs that require no API key or provide instant fre
 ## 💡 Recommendations
 
 ### For Immediate Use (No Registration)
-```python
-# These work immediately without any setup:
-from app.retrieval.adapters.ipapi import IPAPIGeolocationAdapter
-from app.retrieval.adapters.opentdb import OpenTriviaAdapter
-from app.retrieval.adapters.dogceo import DogCEOAdapter
-```
+Web search keyless cho Lite: `bing_web` (Bing RSS) và `mwmbl` (Mwmbl, chỉ mục web mã nguồn mở,
+thêm 2026-11-26 — docs/36 S1). DuckDuckGo (`ddg`) bị chặn 202 "anomaly" từ nhiều egress và được
+cơ chế cách ly theo tỉ lệ (docs/36 S3) tự tạm dừng khi hỏng kéo dài.
 
 ### For Financial Data
 ```bash
@@ -264,9 +266,7 @@ OPENWEATHERMAP_API_KEY=your_free_key
 
 ## 🔗 Quick Links
 
-- [IP-API](http://ip-api.com/docs) - Geolocation
-- [Open Trivia DB](https://opentdb.com/api_config.php) - Trivia Questions
-- [Dog CEO API](https://dog.ceo/dog-api/) - Dog Images
+- [Mwmbl](https://mwmbl.org) - Open-source web index (keyless JSON API)
 - [Rest Countries](https://restcountries.com/) - Country Data
 - [Alpha Vantage](https://www.alpha-vantage.co/) - Financial Data
 - [NewsAPI](https://newsapi.org/) - News Aggregator
@@ -274,5 +274,5 @@ OPENWEATHERMAP_API_KEY=your_free_key
 
 ---
 
-**Last Updated**: 2026-11-20
-**Total Public APIs**: 3 Integrated + 20+ Available for Integration
+**Last Updated**: 2026-11-26
+**Ghi chú**: 3 adapter thử nghiệm (IP-API, Open Trivia, Dog CEO) đã gỡ; xem docs/36 S8.

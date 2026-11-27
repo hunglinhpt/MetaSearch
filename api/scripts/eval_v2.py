@@ -43,6 +43,7 @@ from app.eval_metrics import (
     ndcg_at_k,
     numeric_fidelity_rate,
     recall_at_k,
+    strict_hit_at_k,
 )
 
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -51,6 +52,27 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 
 _GOLDEN = Path(__file__).resolve().parent.parent / "evals" / "golden_v2.json"
 _DEFAULT_REPORT_DIR = Path(__file__).resolve().parent.parent / "evals" / "reports"
+
+
+class _NullLock:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+def median_summary(runs: list[dict]) -> dict:
+    """docs/36 E2: per-metric median over repeated runs (live engines drift)."""
+    if len(runs) == 1:
+        return runs[0]
+    out: dict = {}
+    for key in runs[0]:
+        vals = sorted(float(r.get(key, 0.0)) for r in runs)
+        mid = len(vals) // 2
+        med = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
+        out[key] = int(med) if key == "n_queries" else round(med, 4)
+    return out
 
 
 def load_golden(path: Path) -> tuple[list[dict], dict]:
@@ -67,6 +89,8 @@ async def eval_query(
     with_judge: bool,
     gateway: object | None,
     concurrency_sem: asyncio.Semaphore,
+    answer_lock: asyncio.Lock | None = None,
+    answer_gap_s: float = 0.0,
 ) -> dict:
     query = q["query"]
     relevant = q.get("relevant") or []
@@ -108,9 +132,19 @@ async def eval_query(
     record["recall_at_10"] = recall_at_k(urls, relevant, 10)
     record["mrr"] = mrr(urls, relevant)
     record["ndcg_at_10"] = ndcg_at_k(urls, relevant, 10)
+    # docs/36 E1/E2: keep what was returned (debugging, future record/replay) and
+    # score a strict hit — right domain AND on topic.
+    items = [(u, snippet_by_url.get(u, "")) for u in urls]
+    record["urls"] = urls[:10]
+    record["strict_hit_at_5"] = strict_hit_at_k(items, relevant, query, 5)
+    record["strict_hit_at_10"] = strict_hit_at_k(items, relevant, query, 10)
 
     if with_answers and urls:
-        async with concurrency_sem:
+        async with concurrency_sem, answer_lock or _NullLock():
+            # docs/36 A1b: keyless LLM tiers allow ~1 reply / 45 s / IP; space the
+            # answer calls so the eval measures answers, not the provider's quota.
+            if answer_gap_s > 0:
+                await asyncio.sleep(answer_gap_s)
             try:
                 r = await client.post(
                     f"{base_url}/v1/answer",
@@ -122,12 +156,14 @@ async def eval_query(
                     },
                     timeout=180.0,
                 )
+                record["answer_status"] = r.status_code
                 r.raise_for_status()
                 payload = r.json()
             except Exception as exc:
                 record["error"] = f"answer: {type(exc).__name__}"
                 payload = {}
         answer_md = payload.get("answer_md") or ""
+        record["answer_ok"] = 1.0 if answer_md else 0.0
         citations = payload.get("citations") or []
         cited = cited_urls_from_answer(answer_md, citations)
         record["context_precision"] = context_precision(cited, relevant)
@@ -176,6 +212,19 @@ async def main() -> int:
     parser.add_argument("--judge", action="store_true", help="also run RAGAS LLM-as-judge")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--limit", type=int, default=0, help="only first N queries (debug)")
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="run the set N times and report the per-metric median (docs/36 E2; "
+        "run the server with CACHE_ENABLED=false or repeats replay the cache)",
+    )
+    parser.add_argument(
+        "--answer-gap-s",
+        type=float,
+        default=0.0,
+        help="serialize /v1/answer calls with this gap (keyless LLM quotas, docs/36 A1b)",
+    )
     args = parser.parse_args()
 
     queries, thresholds = load_golden(args.golden)
@@ -192,24 +241,31 @@ async def main() -> int:
             gateway = None
 
     sem = asyncio.Semaphore(max(1, args.concurrency))
+    answer_lock = asyncio.Lock() if args.answer_gap_s > 0 else None
     started = time.perf_counter()
+    runs: list[dict] = []
+    rec_list: list[dict] = []
     async with httpx.AsyncClient() as client:
-        records = await asyncio.gather(
-            *(
-                eval_query(
-                    client,
-                    args.base_url,
-                    q,
-                    with_answers=args.answers,
-                    with_judge=args.judge,
-                    gateway=gateway,
-                    concurrency_sem=sem,
+        for _ in range(max(1, args.repeat)):
+            records = await asyncio.gather(
+                *(
+                    eval_query(
+                        client,
+                        args.base_url,
+                        q,
+                        with_answers=args.answers,
+                        with_judge=args.judge,
+                        gateway=gateway,
+                        concurrency_sem=sem,
+                        answer_lock=answer_lock,
+                        answer_gap_s=args.answer_gap_s,
+                    )
+                    for q in queries
                 )
-                for q in queries
             )
-        )
-    rec_list = list(records)
-    summary = aggregate(rec_list)
+            rec_list = list(records)
+            runs.append(aggregate(rec_list))
+    summary = median_summary(runs)
     lat_stats = latency_percentiles(
         [float(r["search_latency_ms"]) for r in rec_list if r.get("search_latency_ms") is not None]
     )
@@ -224,6 +280,7 @@ async def main() -> int:
         "with_judge": args.judge,
         "elapsed_s": round(elapsed, 1),
         "summary": summary,
+        "runs": runs if len(runs) > 1 else None,
         "latency_percentiles": lat_stats,
         "by_slice": by_slice,
         "thresholds": thresholds,

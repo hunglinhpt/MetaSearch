@@ -223,6 +223,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.api.deps import get_scanner
 
         get_scanner().start_background_loop(settings.scheduler_interval_hours)
+    # docs/36 S3: rate-based engine quarantine from persisted health windows.
+    quarantine_stop = asyncio.Event()
+    quarantine_task: asyncio.Task | None = None
+    if settings.engine_quarantine_enabled and not settings.is_test:
+        from app.api import deps as _deps
+        from app.orchestration.engine_quarantine import EngineQuarantine
+
+        quarantine_task = asyncio.create_task(
+            EngineQuarantine(
+                _deps.get_engine_store(), _deps.build_adapters(settings), settings
+            ).loop(quarantine_stop),
+            name="engine-quarantine",
+        )
     from app.api import ops as ops_module
 
     ops_module.reset_readiness_state()
@@ -245,6 +258,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
             get_scanner().stop_background_loop()
         await health_writer.stop()
+        quarantine_stop.set()
+        if quarantine_task is not None:
+            quarantine_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await quarantine_task
         monitor.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await monitor

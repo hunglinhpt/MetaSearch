@@ -1,0 +1,372 @@
+{
+  "ts": "2026-11-26T12:06:55.993758+00:00",
+  "base_url": "http://127.0.0.1:8011",
+  "golden": "evals\\golden_v3_vi.json",
+  "with_answers": false,
+  "with_judge": false,
+  "elapsed_s": 9.2,
+  "summary": {
+    "hit_at_5": 0.28,
+    "hit_at_10": 0.44,
+    "recall_at_10": 0.1667,
+    "mrr": 0.1124,
+    "ndcg_at_10": 0.0963,
+    "context_precision": 0.0,
+    "context_recall": 0.0,
+    "claim_support": 0.0,
+    "numeric_fidelity": 0.0,
+    "citation_precision": 0.0,
+    "n_queries": 25
+  },
+  "latency_percentiles": {
+    "p50_ms": 3474.0,
+    "p95_ms": 7433.0,
+    "p99_ms": 9018.0
+  },
+  "by_slice": {
+    "vi:developer": {
+      "hit_at_5": 0.3333,
+      "hit_at_10": 0.5,
+      "recall_at_10": 0.2639,
+      "mrr": 0.125,
+      "ndcg_at_10": 0.1366,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "claim_support": 0.0,
+      "numeric_fidelity": 0.0,
+      "citation_precision": 0.0,
+      "n_queries": 6
+    },
+    "vi:financial": {
+      "hit_at_5": 0.2857,
+      "hit_at_10": 0.4286,
+      "recall_at_10": 0.119,
+      "mrr": 0.125,
+      "ndcg_at_10": 0.0804,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "claim_support": 0.0,
+      "numeric_fidelity": 0.0,
+      "citation_precision": 0.0,
+      "n_queries": 7
+    },
+    "vi:general": {
+      "hit_at_5": 0.25,
+      "hit_at_10": 0.25,
+      "recall_at_10": 0.0833,
+      "mrr": 0.0729,
+      "ndcg_at_10": 0.0546,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "claim_support": 0.0,
+      "numeric_fidelity": 0.0,
+      "citation_precision": 0.0,
+      "n_queries": 8
+    },
+    "vi:news": {
+      "hit_at_5": 0.25,
+      "hit_at_10": 0.75,
+      "recall_at_10": 0.2708,
+      "mrr": 0.1503,
+      "ndcg_at_10": 0.1469,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "claim_support": 0.0,
+      "numeric_fidelity": 0.0,
+      "citation_precision": 0.0,
+      "n_queries": 4
+    }
+  },
+  "thresholds": {
+    "hit_at_5": 0.6,
+    "recall_at_10": 0.5,
+    "ndcg_at_10": 0.5,
+    "context_precision": 0.6,
+    "claim_support": 0.7
+  },
+  "passed": false,
+  "records": [
+    {
+      "query": "cách tính thuế thu nhập cá nhân từ tiền lương 2026",
+      "lang": "vi",
+      "slice": "vi:general",
+      "search_latency_ms": 52,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "cach tinh thue thu nhap ca nhan tu tien luong 2026",
+      "lang": "vi",
+      "slice": "vi:general",
+      "search_latency_ms": 710,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "giá cổ phiếu VIC Vingroup biến động mới nhất",
+      "lang": "vi",
+      "slice": "vi:financial",
+      "search_latency_ms": 28,
+      "hit_at_5": 1.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.25,
+      "mrr": 0.5,
+      "ndcg_at_10": 0.24630238874073
+    },
+    {
+      "query": "gia co phieu VIC Vingroup bien dong moi nhat",
+      "lang": "vi",
+      "slice": "vi:financial",
+      "search_latency_ms": 1600,
+      "hit_at_5": 1.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.25,
+      "mrr": 0.25,
+      "ndcg_at_10": 0.16812753627111746
+    },
+    {
+      "query": "VN-Index có bao nhiêu mã chứng khoán niêm yết trên HOSE",
+      "lang": "vi",
+      "slice": "vi:financial",
+      "search_latency_ms": 1601,
+      "hit_at_5": 0.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.3333333333333333,
+      "mrr": 0.125,
+      "ndcg_at_10": 0.1480409554829326
+    },
+    {
+      "query": "khái niệm replication trong PostgreSQL khác gì streaming replication",
+      "lang": "vi",
+      "slice": "vi:general",
+      "search_latency_ms": 715,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "so sánh machine learning và deep learning khác nhau như thế nào",
+      "lang": "vi",
+      "slice": "vi:general",
+      "search_latency_ms": 2111,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "so sanh machine learning va deep learning khac nhau nhu the nao",
+      "lang": "vi",
+      "slice": "vi:general",
+      "search_latency_ms": 3518,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "thuật toán Dijkstra tìm đường đi ngắn nhất giải thích bằng ví dụ",
+      "lang": "vi",
+      "slice": "vi:developer",
+      "search_latency_ms": 2274,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "Mastra framework AI agent dùng để làm gì",
+      "lang": "vi",
+      "slice": "vi:developer",
+      "search_latency_ms": 2494,
+      "hit_at_5": 1.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 1.0,
+      "mrr": 0.25,
+      "ndcg_at_10": 0.45749452618986164
+    },
+    {
+      "query": "tin tức công nghệ AI mới nhất Việt Nam hôm nay",
+      "lang": "vi",
+      "slice": "vi:news",
+      "search_latency_ms": 2277,
+      "hit_at_5": 1.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.5,
+      "mrr": 0.3333333333333333,
+      "ndcg_at_10": 0.3080351663449861
+    },
+    {
+      "query": "bảng giá xăng dầu mới nhất hôm nay",
+      "lang": "vi",
+      "slice": "vi:news",
+      "search_latency_ms": 2948,
+      "hit_at_5": 0.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.25,
+      "mrr": 0.125,
+      "ndcg_at_10": 0.123151194370365
+    },
+    {
+      "query": "lịch thi đấu Ngoại hạng Anh vòng mới nhất",
+      "lang": "vi",
+      "slice": "vi:news",
+      "search_latency_ms": 3066,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "thủ tục đăng ký hộ khẩu thường trú mới nhất",
+      "lang": "vi",
+      "slice": "vi:general",
+      "search_latency_ms": 3474,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "cách nấu phở bò ngon đúng vị Hà Nội",
+      "lang": "vi",
+      "slice": "vi:general",
+      "search_latency_ms": 3942,
+      "hit_at_5": 1.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.3333333333333333,
+      "mrr": 0.3333333333333333,
+      "ndcg_at_10": 0.23463936301137822
+    },
+    {
+      "query": "review laptop MacBook Air M4 2026 có nên mua",
+      "lang": "vi",
+      "slice": "vi:general",
+      "search_latency_ms": 4568,
+      "hit_at_5": 1.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.3333333333333333,
+      "mrr": 0.25,
+      "ndcg_at_10": 0.20210734650054757
+    },
+    {
+      "query": "phân tích báo cáo tài chính doanh nghiệp cần đọc chỉ số nào",
+      "lang": "vi",
+      "slice": "vi:financial",
+      "search_latency_ms": 6395,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "phan tich bao cao tai chinh doanh nghiep can doc chi so nao",
+      "lang": "vi",
+      "slice": "vi:financial",
+      "search_latency_ms": 6700,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "Altman Z-Score là gì và cách tính",
+      "lang": "vi",
+      "slice": "vi:financial",
+      "search_latency_ms": 5195,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "Ichimoku Cloud là gì cách đọc biểu đồ",
+      "lang": "vi",
+      "slice": "vi:financial",
+      "search_latency_ms": 6753,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "hướng dẫn dùng FastAPI dependency injection",
+      "lang": "vi",
+      "slice": "vi:developer",
+      "search_latency_ms": 6812,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "Redis pub sub khác gì Stream như thế nào",
+      "lang": "vi",
+      "slice": "vi:developer",
+      "search_latency_ms": 7433,
+      "hit_at_5": 0.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.3333333333333333,
+      "mrr": 0.16666666666666666,
+      "ndcg_at_10": 0.16716045496620227
+    },
+    {
+      "query": "kiến trúc microservices khác monolith ở điểm nào",
+      "lang": "vi",
+      "slice": "vi:developer",
+      "search_latency_ms": 7299,
+      "hit_at_5": 1.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.25,
+      "mrr": 0.3333333333333333,
+      "ndcg_at_10": 0.19519002499605084
+    },
+    {
+      "query": "kien truc microservices khac monolith o diem nao",
+      "lang": "vi",
+      "slice": "vi:developer",
+      "search_latency_ms": 7347,
+      "hit_at_5": 0.0,
+      "hit_at_10": 0.0,
+      "recall_at_10": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0
+    },
+    {
+      "query": "thời tiết Hà Nội và TP.HCM dự báo 7 ngày tới",
+      "lang": "vi",
+      "slice": "vi:news",
+      "search_latency_ms": 9018,
+      "hit_at_5": 0.0,
+      "hit_at_10": 1.0,
+      "recall_at_10": 0.3333333333333333,
+      "mrr": 0.14285714285714285,
+      "ndcg_at_10": 0.15642624200758548
+    }
+  ],
+  "baseline_meta": {
+    "measured_on": "2026-11-26",
+    "version": "4.6.0",
+    "profile": "lite (SEARXNG_ENABLED=false, LLM_PROVIDER=none, isolated instance, scratch DB)",
+    "golden": "evals/golden_v3_vi.json",
+    "note": "ddg was bot-blocked (HTTP 202) during this run; see docs/36 F1/F2"
+  }
+}

@@ -18,7 +18,7 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from sqlalchemy import select, update
@@ -76,6 +76,8 @@ ADAPTER_PATHS = {
     "fin_rss": "app.retrieval.adapters.financial_rss:GlobalFinancialRssAdapter",
     # docs/32 Lite global expansion (keyless; query-aware Last30Days verticals)
     "bing_web": "app.retrieval.adapters.bing_web:BingWebSearchAdapter",
+    # docs/36 S1: third keyless general-web index (non-profit, open source).
+    "mwmbl": "app.retrieval.adapters.mwmbl:MwmblAdapter",
     "polymarket": "app.retrieval.adapters.polymarket:PolymarketAdapter",
     "stocktwits": "app.retrieval.adapters.stocktwits:StockTwitsAdapter",
     "uspto": "app.retrieval.adapters.uspto:USPTOAdapter",
@@ -209,7 +211,9 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             name="Reddit (social)",
             category="social",
             weight=0.9,
-            enabled=True,
+            # docs/36 S4: unauthenticated JSON is refused from most egress
+            # (probe 2026-11-26: ConnectError 4/4; production 0/12). Opt in via PATCH.
+            enabled=False,
             timeout_ms=4000,
             max_results=10,
             requires_key=False,
@@ -253,7 +257,9 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             name="Semantic Scholar (academic)",
             category="academic",
             weight=1.0,
-            enabled=True,
+            # docs/36 S4: the keyless tier answers 429 to every call (probe 4/4);
+            # on only with SEMANTICSCHOLAR_API_KEY.
+            enabled=bool(settings.semanticscholar_api_key),
             timeout_ms=4000,
             max_results=10,
             requires_key=False,
@@ -353,7 +359,9 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             name="Bluesky public search (ATProto)",
             category="social",
             weight=0.9,
-            enabled=True,
+            # docs/36 S4: public.api.bsky.app searchPosts now needs auth (403 4/4,
+            # production 0/12). Opt in via PATCH once an authenticated route exists.
+            enabled=False,
             timeout_ms=4000,
             max_results=10,
             requires_key=False,
@@ -397,7 +405,9 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             name="GDELT global news/events (100+ languages)",
             category="news",
             weight=1.1,
-            enabled=True,
+            # docs/36 S4: answers after 8-18 s and allows 1 request / 5 s per IP
+            # (probe: timeout x3 + 429; production 0/9) - beyond any search budget.
+            enabled=False,
             timeout_ms=5000,
             max_results=15,
             requires_key=False,
@@ -448,6 +458,19 @@ def default_configs(settings: Settings) -> dict[str, EngineConfig]:
             max_results=12,
             requires_key=False,
             adapter_path=ADAPTER_PATHS["bing_web"],
+        ),
+        # docs/36 S1: Lite had one working general-web index once DDG got
+        # bot-blocked (ddg 1/37 successes 19-25/11). Mwmbl: keyless JSON API.
+        "mwmbl": EngineConfig(
+            id="mwmbl",
+            name="Mwmbl (keyless open-source web index)",
+            category="general",
+            weight=0.9,
+            enabled=True,
+            timeout_ms=3500,
+            max_results=12,
+            requires_key=False,
+            adapter_path=ADAPTER_PATHS["mwmbl"],
         ),
         # docs/26 Last30Days-inspired verticals (query-aware only — the two
         # *_trending adapters ignore the query and stay adapter-only).
@@ -554,6 +577,21 @@ class InMemoryEngineStore:
                 self._configs[eid] = replace(cfg, enabled=True, disabled_reason=None)
                 count += 1
         return count
+
+    async def quarantine(self, engine_id: str, reason: str) -> bool:
+        cfg = self._configs.get(engine_id)
+        if cfg is None:
+            return False
+        self._configs[engine_id] = replace(cfg, enabled=False, disabled_reason=reason)
+        return True
+
+    async def release(self, engine_id: str) -> bool:
+        cfg = self._configs.get(engine_id)
+        if cfg is None:
+            return False
+        self._configs[engine_id] = replace(cfg, enabled=True, disabled_reason=None)
+        self._failures[engine_id] = 0
+        return True
 
     async def update(self, engine_id: str, fields: dict[str, Any]) -> EngineConfig | None:
         cfg = self._configs.get(engine_id)
@@ -801,10 +839,19 @@ class DbEngineStore:
         if not changes:
             return (await self.snapshot()).get(engine_id)
         if changes.get("enabled") is True:
-            # Re-enabling (manually or via the recovery probe) clears the
-            # auto-disable state, mirroring InMemoryEngineStore.update.
-            changes["disabled_reason"] = None
-            changes["consecutive_failures"] = 0
+            current = (await self.snapshot()).get(engine_id)
+            if current is None or not current.enabled:
+                # Re-enabling (manually or via the recovery probe) clears the
+                # auto-disable state, mirroring InMemoryEngineStore.update. docs/36
+                # audit A4: the release time is kept so the quarantine evaluator never
+                # re-judges failures from before it, even after a restart.
+                from app.orchestration.engine_quarantine import release_marker
+
+                changes["disabled_reason"] = release_marker(datetime.now(UTC))
+                changes["consecutive_failures"] = 0
+            # audit A6: "enabled": true on an engine that is ALREADY enabled (a
+            # weight/timeout edit that resends the flag) is not a release — it must
+            # not wipe the failure evidence the quarantine evaluator relies on.
 
         async def _do_update() -> None:
             async with self._get_sm()() as session:
@@ -968,6 +1015,83 @@ class DbEngineStore:
                 consecutive_failures=int(row.consecutive_failures or 0),
             )
         return out
+
+    async def history_rates(
+        self,
+        *,
+        now: datetime | None = None,
+        ignore_before: dict[str, datetime] | None = None,
+        timeout_s: float = 5.0,
+    ) -> dict[str, Any]:
+        """6h/24h/7d success rates from persisted per-minute windows (docs/36 S3).
+
+        Background/diagnostic path only (never the search hot path), so it has
+        its own, larger timeout. Returns {} when the DB is unavailable."""
+        from app.orchestration.engine_quarantine import rates_from_rows
+
+        ref = now or datetime.now(UTC)
+        since = ref - timedelta(days=7)
+
+        async def _load() -> list[tuple[str, datetime, int, int]]:
+            async with self._get_sm()() as session:
+                result = await session.execute(
+                    select(
+                        EngineHealthRow.engine_id,
+                        EngineHealthRow.window_start,
+                        EngineHealthRow.calls,
+                        EngineHealthRow.successes,
+                    )
+                    .where(EngineHealthRow.window_start >= since)
+                    .limit(500_000)
+                )
+                return [(r[0], r[1], int(r[2] or 0), int(r[3] or 0)) for r in result.all()]
+
+        try:
+            async with asyncio.timeout(timeout_s):
+                rows = await _load()
+        except Exception as exc:
+            logger.warning("engine_history_rates_failed", error=type(exc).__name__)
+            return {}
+        return rates_from_rows(rows, now=ref, ignore_before=ignore_before)
+
+    async def _set_state(self, engine_id: str, values: dict[str, Any]) -> bool:
+        async def _do() -> None:
+            async with sqlite_write_lock(), self._get_sm()() as session:
+                await session.execute(
+                    _dialect_insert(session)(EngineRow)
+                    .values(id=engine_id, **self._row_values(engine_id, values))
+                    .on_conflict_do_update(index_elements=["id"], set_=values)
+                )
+                await session.commit()
+
+        try:
+            async with asyncio.timeout(5.0):
+                await _do()
+        except Exception as exc:
+            logger.warning("engine_state_update_failed", engine=engine_id, error=type(exc).__name__)
+            return False
+        self._cache_gen += 1
+        self._cache = None
+        if values.get("enabled") is False:
+            await self._fallback.quarantine(engine_id, str(values.get("disabled_reason") or ""))
+        else:
+            await self._fallback.release(engine_id)
+        return True
+
+    async def quarantine(self, engine_id: str, reason: str) -> bool:
+        return await self._set_state(engine_id, {"enabled": False, "disabled_reason": reason})
+
+    async def release(self, engine_id: str) -> bool:
+        from app.orchestration.engine_quarantine import release_marker
+
+        return await self._set_state(
+            engine_id,
+            {
+                "enabled": True,
+                "disabled_reason": release_marker(datetime.now(UTC)),
+                "consecutive_failures": 0,
+            },
+        )
 
     async def _load_auto_disabled(self) -> list[str]:
         async with self._get_sm()() as session:

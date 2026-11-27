@@ -21,7 +21,7 @@ from app.api.v1.schemas import (
 from app.core.admission import admit
 from app.core.budget import create_budget_for_route, use_budget
 from app.core.errors import ErrorCode, MetaSearchError
-from app.orchestration.pipeline import SearchParams
+from app.orchestration.pipeline import SearchParams, degraded_engines
 
 router = APIRouter(tags=["search"])
 
@@ -159,7 +159,10 @@ async def search(request: SearchRequest) -> SearchResponse:
                     for i, r in enumerate(outcome.results, start=1)
                 ],
                 engines_used=[s.engine for s in outcome.statuses if s.status == "ok"],
-                engines_failed=[s.engine for s in outcome.statuses if s.status != "ok"],
+                engines_failed=[
+                    s.engine for s in outcome.statuses if s.status not in ("ok", "quarantined")
+                ],
+                degraded_engines=degraded_engines(outcome.statuses),
                 engines_status=[
                     {
                         "engine": s.engine,

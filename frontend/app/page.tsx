@@ -65,6 +65,7 @@ import {
   resolveSuperAgentEscalation,
   search,
   streamAnswer,
+  groundingLabel,
   testLLMConnection,
   validateLLMKeys,
   triggerScan,
@@ -1114,6 +1115,8 @@ export default function HomePage() {
                           {meta.compression?.compressed
                             ? ` · 🗜️ -${meta.compression.saved_pct.toFixed(0)}% ctx`
                             : ""}
+                          {meta.grounding ? ` · ${groundingLabel(meta.grounding.status)}` : ""}
+                          {meta.rerank && !meta.rerank.applied ? " · ↕️ rerank dự phòng" : ""}
                         </span>
                       )}
                       {(ttsReady || (vsEnabled && effectiveTtsEngine === "voicestudio")) && (
